@@ -142,19 +142,50 @@ client.once(
           transferButton
         );
 
-    await atmChannel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor('#57F287')
-          .setTitle('🏦 星雨 ATM')
-          .setDescription(
-`歡迎使用星雨銀行 ☔
+   // ===== 發送 ATM =====
 
-請點擊下方按鈕查詢餘額`
-          )
-      ],
-      components: [atmRow]
-    });
+      await channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#00ff99')
+            .setTitle('🏦 星雨銀行 ATM')
+
+            .setDescription(
+      `╔════════════╗
+      💳 歡迎使用 星雨ATM
+      ╚════════════╝
+
+      💰 查詢餘額
+      💸 星雨轉帳
+      🔒 安全交易系統
+
+      請點擊下方按鈕操作
+
+      🏧 狀態
+      🟢 線上
+
+      ☔ 幣別
+      星雨幣
+
+      🔒 安全
+      已啟用`
+             )
+
+            .setImage(
+     'https://i.imgur.com/e5ebINT.png'
+            )
+
+            .setFooter({
+              text:
+                'Rain Bank ATM System'
+            })
+   
+        ],
+
+        components: [row]
+
+      });
+
 
     // ===== 簽到頻道 =====
 
