@@ -107,7 +107,6 @@ async function addTransferRecord(
 
 }
 
-
 // ===== Bot 上線 =====
 
 client.once(
@@ -132,7 +131,7 @@ client.once(
     const transferButton =
       new ButtonBuilder()
         .setCustomId('transfer_menu')
-        .setLabel('💸 轉帳')
+        .setLabel('💸 星雨轉帳')
         .setStyle(ButtonStyle.Primary);
 
     const atmRow =
@@ -142,50 +141,39 @@ client.once(
           transferButton
         );
 
-   // ===== 發送 ATM =====
+    const atmEmbed =
+      new EmbedBuilder()
+        .setColor('#00ff99')
+        .setTitle('🏦 星雨銀行 ATM')
 
-      await channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#00ff99')
-            .setTitle('🏦 星雨銀行 ATM')
+        .setDescription(
+`╔════════════╗
+💳 歡迎使用 星雨ATM
+╚════════════╝
 
-            .setDescription(
-      `╔════════════╗
-      💳 歡迎使用 星雨ATM
-      ╚════════════╝
+💰 查詢餘額
+💸 星雨轉帳
+🔒 安全交易系統
 
-      💰 查詢餘額
-      💸 星雨轉帳
-      🔒 安全交易系統
+請點擊下方按鈕操作
 
-      請點擊下方按鈕操作
+🏧 狀態 ☔ 幣別 🔒 安全
+🟢 線上  星雨幣  已啟用
+        )
 
-      🏧 狀態
-      🟢 線上
+        .setImage(
+'https://cdn.discordapp.com/attachments/1501098193276895360/1503008880513253406/ChatGPT_Image_2026510_08_19_56.png?ex=6a01c999&is=6a007819&hm=6c10e8db7f2f31aa3991255cf8270280d58aa3ec5da616a7adb649e8d7aeae7c&'
+        )
 
-      ☔ 幣別
-      星雨幣
+        .setFooter({
+          text:
+            'Rain Bank ATM System'
+        });
 
-      🔒 安全
-      已啟用`
-             )
-
-            .setImage(
-     'https://i.imgur.com/e5ebINT.png'
-            )
-
-            .setFooter({
-              text:
-                'Rain Bank ATM System'
-            })
-   
-        ],
-
-        components: [row]
-
-      });
-
+    await atmChannel.send({
+      embeds: [atmEmbed],
+      components: [atmRow]
+    });
 
     // ===== 簽到頻道 =====
 
@@ -206,21 +194,21 @@ client.once(
           checkinButton
         );
 
+    const checkinEmbed =
+      new EmbedBuilder()
+        .setColor('#5865F2')
+        .setTitle('☔ 每日簽到')
+        .setDescription(
+`每天都可以來領一次10枚星雨幣 ✨`
+        );
+
     await checkinChannel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor('#5865F2')
-          .setTitle('☔ 每日簽到')
-          .setDescription(
-`每天都可以來領一次星雨幣 ✨`
-          )
-      ],
+      embeds: [checkinEmbed],
       components: [checkinRow]
     });
 
   }
 );
-
 
 // ===== 所有互動 =====
 
@@ -265,7 +253,6 @@ client.on(
         const today =
           new Date().toDateString();
 
-        // 已簽到
         if (
           userData.last_checkin === today
         ) {
@@ -301,7 +288,6 @@ client.on(
 
       }
 
-    
       // 開啟轉帳選單
       if (
         interaction.customId ===
@@ -330,44 +316,171 @@ client.on(
 
       }
 
-        // 領取掉落
-        if (
-          interaction.customId.startsWith(
-            'claim_'
-          )
-        ) {
+      // 確認轉帳
+      if (
+        interaction.customId.startsWith(
+          'confirm_transfer_'
+        )
+      ) {
 
-          const reward =
-            parseInt(
-              interaction.customId.replace(
-                 'claim_',
-                ''
-              )
-            );
-
-          const userId =
-            interaction.user.id;
-
-          const userData =
-            await getUser(userId);
-
-          const newCoins =
-            userData.coins + reward;
-
-          await updateCoins(
-            userId,
-            newCoins
+        const targetId =
+          interaction.customId.replace(
+            'confirm_transfer_',
+            ''
           );
+
+        const amount = 100;
+
+        const userId =
+          interaction.user.id;
+
+        if (targetId === userId) {
 
           return interaction.reply({
             content:
-        `☔ 你領取了 ${reward} 星雨幣！`,
+              '❌ 不能轉給自己哦！',
             flags: 64
           });
 
         }
 
-     }
+        const senderData =
+          await getUser(userId);
+
+        if (senderData.coins < amount) {
+
+          return interaction.reply({
+            content:
+              '❌ 星雨幣不足，快去存錢吧！',
+            flags: 64
+          });
+
+        }
+
+        const targetData =
+          await getUser(targetId);
+
+        await updateCoins(
+          userId,
+          senderData.coins - amount
+        );
+
+        await updateCoins(
+          targetId,
+          targetData.coins + amount
+        );
+
+        await addTransferRecord(
+          userId,
+          targetId,
+          amount
+        );
+
+        return interaction.reply({
+          content:
+`✅ 已轉帳 100 星雨幣給 <@${targetId}>`,
+          flags: 64
+        });
+
+      }
+
+      // 取消轉帳
+      if (
+        interaction.customId ===
+        'cancel_transfer'
+      ) {
+
+        return interaction.reply({
+          content:
+            '❌ 您已取消轉帳',
+          flags: 64
+        });
+
+      }
+
+      // 領取掉落
+      if (
+        interaction.customId.startsWith(
+          'claim_'
+        )
+      ) {
+
+        const reward =
+          parseInt(
+            interaction.customId.replace(
+              'claim_',
+              ''
+            )
+          );
+
+        const userId =
+          interaction.user.id;
+
+        const userData =
+          await getUser(userId);
+
+        const newCoins =
+          userData.coins + reward;
+
+        await updateCoins(
+          userId,
+          newCoins
+        );
+
+        return interaction.reply({
+          content:
+`☔ 你領取了 ${reward} 星雨幣！`,
+          flags: 64
+        });
+
+      }
+
+    }
+
+    // ===== User Select =====
+    if (interaction.isUserSelectMenu()) {
+
+      if (
+        interaction.customId ===
+        'select_transfer_user'
+      ) {
+
+        const targetId =
+          interaction.values[0];
+
+        const confirmButton =
+          new ButtonBuilder()
+            .setCustomId(
+              `confirm_transfer_${targetId}`
+            )
+            .setLabel('✅ 確認轉帳 100')
+            .setStyle(ButtonStyle.Success);
+
+        const cancelButton =
+          new ButtonBuilder()
+            .setCustomId(
+              'cancel_transfer'
+            )
+            .setLabel('❌ 取消')
+            .setStyle(ButtonStyle.Danger);
+
+        const row =
+          new ActionRowBuilder()
+            .addComponents(
+              confirmButton,
+              cancelButton
+            );
+
+        return interaction.reply({
+          content:
+`💸 確定轉帳 100 星雨幣給 <@${targetId}>？`,
+          components: [row],
+          flags: 64
+        });
+
+      }
+
+    }
 
     // ===== Slash 指令 =====
     if (interaction.isChatInputCommand()) {
@@ -403,104 +516,104 @@ client.on(
       }
 
 
-// /簽到
-if (
-  interaction.commandName === '簽到'
-) {
+      // /簽到
+      if (
+        interaction.commandName === '簽到'
+      ) {
 
-  const userData =
-    await getUser(userId);
+        const userData =
+        await getUser(userId);
 
-  const today =
-    new Date().toDateString();
+        const today =
+          new Date().toDateString();
 
-  // 已簽到
-  if (
-    userData.last_checkin === today
-  ) {
+        // 已簽到
+        if (
+          userData.last_checkin === today
+        ) {
 
-    return interaction.reply({
-      content:
-        '❌ 今天已經簽到過了',
-      flags: 64
-    });
+          return interaction.reply({
+            content:
+              '❌ 今天已經簽到過了',
+            flags: 64
+          });
 
-  }
+       }
 
-  const newCoins =
-    userData.coins + 100;
+        const newCoins =
+          userData.coins + 10;
 
-  await updateCoins(
-    userId,
-    newCoins
-  );
+        await updateCoins(
+          userId,
+          newCoins
+        );
 
-  await updateCheckin(
-    userId,
-    today
-  );
+        await updateCheckin(
+          userId,
+          today
+        );
 
-  return interaction.reply({
-    content:
-`☔ 簽到成功！
+        return interaction.reply({
+          content:
+      `☔ 簽到成功！
 
-獲得 100 星雨幣`,
-    flags: 64
-  });
+      獲得 100 星雨幣`,
+          flags: 64
+        });
 
-  }
+        }
 
-// /排行榜
-if (
-  interaction.commandName === '排行榜'
-) {
+      // /排行榜
+      if (
+        interaction.commandName === '排行榜'
+      ) {
 
-  const { data, error } =
-    await supabase
-      .from('users')
-      .select('*')
-      .order('coins', {
-        ascending: false
-      });
+        const { data, error } =
+         await supabase
+            .from('users')
+            .select('*')
+            .order('coins', {
+              ascending: false
+            });
 
-  if (error) {
+        if (error) {
 
-    console.log(error);
+          console.log(error);
 
-    return interaction.reply({
-      content:
-        '❌ 排行榜讀取失敗',
-      flags: 64
-    });
+          return interaction.reply({
+            content:
+              '❌ 排行榜讀取失敗',
+            flags: 64
+          });
 
-  }
+        }
 
-  if (!data || data.length === 0) {
+        if (!data || data.length === 0) {
 
-    return interaction.reply({
-      content:
-        '目前還沒有排行榜資料',
-      flags: 64
-    });
+          return interaction.reply({
+           content:
+              '目前還沒有排行榜資料',
+            flags: 64
+          });
 
-  }
+        }
 
-  let text =
-`🏆 星雨排行榜
+        let text =
+       `🏆 星雨排行榜
 
-`;
+       `;
 
-  data
-    .slice(0, 10)
-    .forEach((user, index) => {
+        data
+          .slice(0, 10)
+          .forEach((user, index) => {
 
-      text +=
-`${index + 1}. <@${user.user_id}>
-💰 ${user.coins} 星雨幣
+            text +=
+      `${index + 1}. <@${user.user_id}>
+      💰 ${user.coins} 星雨幣
 
-`;
+      `;
 
-    });
+          });
 
   return interaction.reply({
     content: text
