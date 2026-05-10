@@ -158,8 +158,8 @@ client.once(
 請點擊下方按鈕操作
 
 🏧 狀態 ☔ 幣別 🔒 安全
-🟢 線上  星雨幣  已啟用
-        )
+🟢 線上  星雨幣  已啟用`
+)
 
         .setImage(
 'https://cdn.discordapp.com/attachments/1501098193276895360/1503008880513253406/ChatGPT_Image_2026510_08_19_56.png?ex=6a01c999&is=6a007819&hm=6c10e8db7f2f31aa3991255cf8270280d58aa3ec5da616a7adb649e8d7aeae7c&'
@@ -615,183 +615,183 @@ client.on(
 
           });
 
-  return interaction.reply({
-    content: text
-  });
+      return interaction.reply({
+        content: text
+      });
 
-  }
+      }
 
-// /轉帳
-if (
-  interaction.commandName === '轉帳'
-) {
+    // /轉帳 
+    if (
+      interaction.commandName === '轉帳'
+    ) {
 
-  const target =
-    interaction.options.getUser('玩家');
+      const target =
+        interaction.options.getUser('玩家');
 
-  const amount =
-    interaction.options.getInteger('金額');
+      const amount =
+        interaction.options.getInteger('金額');
 
-  // 不能轉自己
-  if (target.id === userId) {
+      // 不能轉自己
+      if (target.id === userId) {
 
-    return interaction.reply({
+        return interaction.reply({
+          content:
+            '❌ 不能轉帳給自己',
+          flags: 64
+        });
+
+      }
+
+      // 金額錯誤
+      if (amount <= 0) {
+
+        return interaction.reply({
+          content:
+            '❌ 金額錯誤',
+          flags: 64
+        });
+
+      }
+
+      const senderData =
+        await getUser(userId);
+
+      // 餘額不足
+      if (senderData.coins < amount) {
+
+        return interaction.reply({
+          content:
+            '❌ 星雨幣不足',
+          flags: 64
+        });
+
+      }
+
+      const targetData =
+        await getUser(target.id);
+
+      // 扣款
+      await updateCoins(
+        userId,
+        senderData.coins - amount
+      );
+
+      // 加款
+      await updateCoins(
+        target.id,
+        targetData.coins + amount
+      );
+
+      // 紀錄交易
+       await addTransferRecord(
+         userId,
+         target.id,
+         amount
+       );
+
+
+       return interaction.reply({
+         content:
+       `💸 轉帳成功！
+
+       給了 <@${target.id}>
+       ${amount} 星雨幣`,
+         flags: 64
+       });
+
+      }
+
+    // /交易紀錄
+    if (
+      interaction.commandName === '交易紀錄'
+    ) {
+
+      const { data, error } =
+        await supabase
+          .from('transfers')
+          .select('*')
+          .or(
+    `sender_id.eq.${userId},receiver_id.eq.${userId}`
+          )
+          .order('created_at', {
+            ascending: false
+          })
+          .limit(10);
+
+      if (error) {
+
+        console.log(error);
+
+        return interaction.reply({
+          content:
+            '❌ 讀取失敗',
+          flags: 64
+        });
+
+      }
+
+      if (!data || data.length === 0) {
+
+        return interaction.reply({
+          content:
+            '目前沒有交易紀錄',
+          flags: 64
+        });
+
+      }
+
+      let text =
+    `📜 最近交易紀錄
+
+    `;
+
+      data.forEach(record => {
+
+        const type =
+          record.sender_id === userId
+            ? '📤 匯出'
+            : '📥 收入';
+
+        const target =
+          record.sender_id === userId
+            ? record.receiver_id
+            : record.sender_id;
+
+        text +=
+    `${type} 
+    對象：<@${target}>
+    金額：${record.amount} 星雨幣
+
+    `;
+
+      });
+
+      return interaction.reply({
+        content: text,
+        flags: 64
+      });
+
+      }
+
+    // /給予
+    if (
+      interaction.commandName === '給予'
+    ) {
+
+      // 只有群主可用
+      if (
+        interaction.guild.ownerId !==
+        interaction.user.id
+      ) {
+
+        return interaction.reply({
       content:
-        '❌ 不能轉帳給自己',
-      flags: 64
-    });
+            '❌ 只有群組擁有者可以使用',
+          flags: 64
+        });
 
-  }
-
-  // 金額錯誤
-  if (amount <= 0) {
-
-    return interaction.reply({
-      content:
-        '❌ 金額錯誤',
-      flags: 64
-    });
-
-  }
-
-  const senderData =
-    await getUser(userId);
-
-  // 餘額不足
-  if (senderData.coins < amount) {
-
-    return interaction.reply({
-      content:
-        '❌ 星雨幣不足',
-      flags: 64
-    });
-
-  }
-
-  const targetData =
-    await getUser(target.id);
-
-  // 扣款
-  await updateCoins(
-    userId,
-    senderData.coins - amount
-  );
-
-  // 加款
-  await updateCoins(
-    target.id,
-    targetData.coins + amount
-  );
-
-  // 紀錄交易
-   await addTransferRecord(
-     userId,
-     target.id,
-     amount
-   );
-
-
-   return interaction.reply({
-     content:
-   `💸 轉帳成功！
-
-   給了 <@${target.id}>
-   ${amount} 星雨幣`,
-     flags: 64
-   });
-
-  }
-
-// /交易紀錄
-if (
-  interaction.commandName === '交易紀錄'
-) {
-
-  const { data, error } =
-    await supabase
-      .from('transfers')
-      .select('*')
-      .or(
-`sender_id.eq.${userId},receiver_id.eq.${userId}`
-      )
-      .order('created_at', {
-        ascending: false
-      })
-      .limit(10);
-
-  if (error) {
-
-    console.log(error);
-
-    return interaction.reply({
-      content:
-        '❌ 讀取失敗',
-      flags: 64
-    });
-
-  }
-
-  if (!data || data.length === 0) {
-
-    return interaction.reply({
-      content:
-        '目前沒有交易紀錄',
-      flags: 64
-    });
-
-  }
-
-  let text =
-`📜 最近交易紀錄
-
-`;
-
-  data.forEach(record => {
-
-    const type =
-      record.sender_id === userId
-        ? '📤 匯出'
-        : '📥 收入';
-
-    const target =
-      record.sender_id === userId
-        ? record.receiver_id
-        : record.sender_id;
-
-    text +=
-`${type}
-對象：<@${target}>
-金額：${record.amount} 星雨幣
-
-`;
-
-  });
-
-  return interaction.reply({
-    content: text,
-    flags: 64
-  });
-
-  }
-
-// /給予
-if (
-  interaction.commandName === '給予'
-) {
-
-  // 只有群主可用
-  if (
-    interaction.guild.ownerId !==
-    interaction.user.id
-  ) {
-
-    return interaction.reply({
-      content:
-        '❌ 只有群組擁有者可以使用',
-      flags: 64
-    });
-
-  }
+      }
 
   const target =
     interaction.options.getUser('玩家');
