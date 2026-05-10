@@ -170,10 +170,54 @@ client.once(
             'Rain Bank ATM System'
         });
 
-    await atmChannel.send({
-      embeds: [atmEmbed],
-      components: [atmRow]
-    });
+        let atmMessage;
+
+        try {
+
+          // 已存在 -> 更新
+          if (process.env.ATM_MESSAGE_ID) {
+
+            atmMessage =
+              await atmChannel.messages.fetch(
+                process.env.ATM_MESSAGE_ID
+              );
+
+            await atmMessage.edit({
+              embeds: [atmEmbed],
+              components: [atmRow]
+            });
+
+          } else {
+
+            // 不存在 -> 新建
+            atmMessage =
+              await atmChannel.send({
+                embeds: [atmEmbed],
+                components: [atmRow]
+              });
+
+            console.log(
+              'ATM_MESSAGE_ID=' +
+              atmMessage.id
+            );
+
+          }
+
+        } catch (err) {
+
+          // 找不到訊息 -> 重建
+          atmMessage =
+            await atmChannel.send({
+              embeds: [atmEmbed],
+              components: [atmRow]
+            });
+
+          console.log(
+            'ATM_MESSAGE_ID=' +
+            atmMessage.id
+          );
+
+        }
 
     // ===== 簽到頻道 =====
 
@@ -202,10 +246,51 @@ client.once(
 `每天都可以來領一次10枚星雨幣 ✨`
         );
 
+let checkinMessage;
+
+try {
+
+  if (process.env.CHECKIN_MESSAGE_ID) {
+
+    checkinMessage =
+      await checkinChannel.messages.fetch(
+        process.env.CHECKIN_MESSAGE_ID
+      );
+
+    await checkinMessage.edit({
+      embeds: [checkinEmbed],
+      components: [checkinRow]
+    });
+
+  } else {
+
+    checkinMessage =
+      await checkinChannel.send({
+        embeds: [checkinEmbed],
+        components: [checkinRow]
+      });
+
+    console.log(
+      'CHECKIN_MESSAGE_ID=' +
+      checkinMessage.id
+    );
+
+  }
+
+} catch (err) {
+
+  checkinMessage =
     await checkinChannel.send({
       embeds: [checkinEmbed],
       components: [checkinRow]
     });
+
+  console.log(
+    'CHECKIN_MESSAGE_ID=' +
+    checkinMessage.id
+  );
+
+  }
 
   }
 );
