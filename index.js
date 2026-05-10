@@ -17,7 +17,10 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
-  UserSelectMenuBuilder
+  UserSelectMenuBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle
 } = require('discord.js');
 
 const client = new Client({
@@ -419,7 +422,7 @@ client.on(
         const userId =
           interaction.user.id;
 
-        if (targetId === userId) {
+        if (modalTargetId === userId) {
 
           return interaction.reply({
             content:
@@ -443,7 +446,7 @@ client.on(
         }
 
         const targetData =
-          await getUser(targetId);
+          await getUser(modalTargetId);
 
         await updateCoins(
           userId,
@@ -463,7 +466,7 @@ client.on(
 
         return interaction.reply({
           content:
-`✅ 已轉帳 100 星雨幣給 <@${targetId}>`,
+`✅ 已轉帳 100 星雨幣給 <@${modalTargetId}>`,
           flags: 64
         });
 
@@ -529,43 +532,135 @@ client.on(
         interaction.customId ===
         'select_transfer_user'
       ) {
+const modalTargetId =
+  interaction.values[0];
 
-        const targetId =
-          interaction.values[0];
+const modal =
+  new ModalBuilder()
+    .setCustomId(
+      `transfer_modal_${targetId}`
+    )
+    .setTitle('星雨轉帳');
 
-        const confirmButton =
-          new ButtonBuilder()
-            .setCustomId(
-              `confirm_transfer_${targetId}`
-            )
-            .setLabel('✅ 確認轉帳 100')
-            .setStyle(ButtonStyle.Success);
+const amountInput =
+  new TextInputBuilder()
+    .setCustomId('transfer_amount')
+    .setLabel('輸入轉帳金額')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('例如：100')
+    .setRequired(true);
 
-        const cancelButton =
-          new ButtonBuilder()
-            .setCustomId(
-              'cancel_transfer'
-            )
-            .setLabel('❌ 取消')
-            .setStyle(ButtonStyle.Danger);
+const row =
+  new ActionRowBuilder()
+    .addComponents(amountInput);
 
-        const row =
-          new ActionRowBuilder()
-            .addComponents(
-              confirmButton,
-              cancelButton
-            );
+modal.addComponents(row);
 
-        return interaction.reply({
-          content:
-`💸 確定轉帳 100 星雨幣給 <@${targetId}>？`,
-          components: [row],
-          flags: 64
-        });
+return interaction.showModal(modal);
+
 
       }
 
     }
+
+
+// ===== Modal =====
+if (interaction.isModalSubmit()) {
+
+  if (
+    interaction.customId.startsWith(
+      'transfer_modal_'
+    )
+  ) {
+
+    const modalTargetId =
+      interaction.customId.replace(
+        'transfer_modal_',
+        ''
+      );
+
+    const amount =
+      parseInt(
+        interaction.fields.getTextInputValue(
+          'transfer_amount'
+        )
+      );
+
+    const userId =
+      interaction.user.id;
+
+    // 金額錯誤
+    if (
+      isNaN(amount) ||
+      amount <= 0
+    ) {
+
+      return interaction.reply({
+        content:
+          '❌ 金額錯誤',
+        flags: 64
+      });
+
+    }
+
+    // 不能轉自己
+    if (modalTargetId === userId) {
+
+      return interaction.reply({
+        content:
+          '❌ 不能轉給自己',
+        flags: 64
+      });
+
+    }
+
+    const senderData =
+      await getUser(userId);
+
+    // 餘額不足
+    if (
+      senderData.coins < amount
+    ) {
+
+      return interaction.reply({
+        content:
+          '❌ 星雨幣不足',
+        flags: 64
+      });
+
+    }
+
+    const targetData =
+      await getUser(modalTargetId);
+
+    // 扣款
+      targetId,await updateCoins(
+      userId,
+      senderData.coins - amount
+    );
+
+    // 加款
+    await updateCoins(
+      modalTargetId,
+      targetData.coins + amount
+    );
+
+    // 紀錄
+    await addTransferRecord(
+      userId,
+      targetId,
+      amount
+    );
+
+    return interaction.reply({
+      content:
+`✅ 成功轉帳 ${amount} 星雨幣給 <@${modalTargetId}>`,
+      flags: 64
+    });
+
+  }
+
+}
 
     // ===== Slash 指令 =====
     if (interaction.isChatInputCommand()) {
