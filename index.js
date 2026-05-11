@@ -12,6 +12,7 @@ const {
   ButtonBuilder,
   ButtonStyle,
   EmbedBuilder,
+  StringSelectMenuBuilder,
   UserSelectMenuBuilder,
   ModalBuilder,
   TextInputBuilder,
@@ -293,7 +294,7 @@ async function refreshShop(client) {
     await msg.delete().catch(() => {});
   }
   // 商品內容
-  let text = ''；
+  let text = '';
   if (items.length === 0) {
     text = '目前商店沒有商品';
   } else {
@@ -311,8 +312,33 @@ async function refreshShop(client) {
       .setColor('#FEE75C')
       .setTitle('🛒 星雨商店')
       .setDescription(text);
+  let components = [];
+
+  if (items.length > 0) {
+
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId('shop_select')
+        .setPlaceholder('選擇要購買的商品')
+        .addOptions(
+          items.map(item => ({
+            label: item.item_name,
+            description:
+              `${item.price} 星雨幣`,
+            value: String(item.id)
+          }))
+        );
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+
+    components.push(row);
+  }
+
   await shopChannel.send({
-    embeds: [embed]
+    embeds: [embed],
+    components
   });
 }
 
@@ -579,31 +605,111 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
     }
 
-    // ===== User Select =====
+// ===== User Select =====
 
-    if (interaction.isUserSelectMenu()) {
-      if (interaction.customId === 'select_transfer_user') {
-        const modalTargetId = interaction.values[0];
+if (interaction.isUserSelectMenu()) {
 
-        const modal = new ModalBuilder()
-          .setCustomId(`transfer_modal_${modalTargetId}`)
-          .setTitle('星雨轉帳');
+  if (interaction.customId === 'select_transfer_user') {
 
-        const amountInput = new TextInputBuilder()
-          .setCustomId('transfer_amount')
-          .setLabel('輸入轉帳金額')
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder('例如：100')
-          .setRequired(true);
+    const modalTargetId =
+      interaction.values[0];
 
-        const row = new ActionRowBuilder().addComponents(amountInput);
-        modal.addComponents(row);
+    const modal =
+      new ModalBuilder()
+        .setCustomId(
+          `transfer_modal_${modalTargetId}`
+        )
+        .setTitle('星雨轉帳');
 
-        await interaction.showModal(modal);
-        return;
-      }
+    const amountInput =
+      new TextInputBuilder()
+        .setCustomId('transfer_amount')
+        .setLabel('輸入轉帳金額')
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder('例如：100')
+        .setRequired(true);
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(amountInput);
+
+    modal.addComponents(row);
+
+    await interaction.showModal(modal);
+
+    return;
+  }
+}
+
+// ===== 商店選單 =====
+
+if (interaction.isStringSelectMenu()) {
+
+  if (interaction.customId === 'shop_select') {
+
+    const itemId =
+      interaction.values[0];
+
+    // 讀取商品
+    const { data: item } =
+      await supabase
+        .from('shop_items')
+        .select('*')
+        .eq('id', itemId)
+        .single();
+
+    if (!item) {
+
+      return replyError(
+        interaction,
+        '商品不存在'
+      );
     }
 
+    // 玩家資料
+    const userData =
+      await getUser(
+        interaction.user.id
+      );
+
+    // 餘額不足
+    if (
+      userData.coins <
+      item.price
+    ) {
+
+      return replyError(
+        interaction,
+        '星雨幣不足'
+      );
+    }
+
+    // 扣款
+    await updateCoins(
+      interaction.user.id,
+      userData.coins - item.price
+    );
+
+    // 成功訊息
+    return interaction.reply({
+
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('🛒 購買成功')
+          .setDescription(
+
+`你購買了：
+
+📦 ${item.item_name}
+💰 ${item.price} 星雨幣`
+)
+],
+      flags: 64
+
+    });
+  }
+}
     // ===== Modal =====
 
     if (interaction.isModalSubmit()) {
