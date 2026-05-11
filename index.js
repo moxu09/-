@@ -449,6 +449,13 @@ new REST({ version: '10' })
 (async () => {
 try {
 
+console.log('[BOT] 清除 Global Commands');
+await rest.put(
+Routes.applicationCommands(
+process.env.CLIENT_ID
+),
+{ body: [] }
+);
 console.log('[BOT] 清除舊指令');
 await rest.put(
   Routes.applicationGuildCommands(
