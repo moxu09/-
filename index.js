@@ -447,8 +447,24 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 (async () => {
   try {
-    console.log('[BOT] 開始註冊 Slash Commands');
+    console.log('[BOT] 清除舊指令');
     await rest.put(
+      Routes.applicationGuildCommands(
+        process.env.CLIENT_ID,
+        process.env.GUILD_ID
+    ),
+    { body: [] }
+    );
+    console.log('[BOT] 重新註冊指令');
+
+    await rest.put(
+      Routes.applicationGuildCommands(
+        process.env.CLIENT_ID,
+        process.env.GUILD_ID
+    ),
+    { body: commands }
+    );
+
       Routes.applicationGuildCommands(
         process.env.CLIENT_ID,
         process.env.GUILD_ID
