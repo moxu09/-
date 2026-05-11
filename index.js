@@ -21,7 +21,6 @@ const {
   REST,
   Routes,
 } = require('discord.js');
-
 // ===== Supabase =====
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
@@ -205,6 +204,26 @@ async function addShopItem(
   }
 }
 
+// 刪除商品
+async function removeShopItem(
+itemName
+) {
+const { error } =
+await supabase
+.from('shop_items')
+.delete()
+.eq('item_name', itemName);
+if (error) {
+console.error(
+  '[DB] 刪除商品失敗:',
+  error
+);
+throw new Error(
+  '刪除商品失敗'
+);
+}
+}
+
 // 安全轉帳函數
 async function safeTransfer(
   senderId,
@@ -346,6 +365,12 @@ async function refreshShop(client) {
 // ===== 指令註冊 =====
 
 const commands = [
+  new SlashCommandBuilder()
+    .setName('刪除商品')
+    .setDescription('刪除商店商品') 
+    .addStringOption(option =>
+      option.setName('名稱').setDescription('商品名稱').setRequired(true)
+    )
   new SlashCommandBuilder().setName('ping').setDescription('測試機器人'),
   new SlashCommandBuilder().setName('我的排名').setDescription('查看自己的排名'),
   new SlashCommandBuilder()
@@ -890,6 +915,49 @@ if (interaction.isStringSelectMenu()) {
   	  flags: 64,
   	});
       }
+  // /刪除商品
+  if (
+    interaction.commandName === '刪除商品'
+  ) {
+    // 只有群主可用
+    if (
+      interaction.guild.ownerId !==
+      interaction.user.id
+    ) {
+      return replyError(
+        interaction,
+        '只有群主可以使用'
+      );
+    }
+    const itemName =
+      interaction.options.getString('名稱');
+// 檢查商品是否存在
+const { data: existingItem } =
+  await supabase
+    .from('shop_items')
+    .select('*')
+    .eq('item_name', itemName)
+    .single();
+if (!existingItem) {
+  return replyError(
+    interaction,
+    '找不到這個商品'
+  );
+}
+// 刪除商品
+await removeShopItem(
+  itemName
+);
+    // 刷新商店
+    await refreshShop(client);
+    return interaction.reply({
+      content:
+        `🗑️ 已刪除商品：${itemName}`,
+
+      flags: 64,
+
+    });
+  }
     }
   } catch (err) {
     console.error('[互動] 錯誤:', err);
