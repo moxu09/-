@@ -1071,8 +1071,7 @@ client.on(
           const text =
             records.map(record => {
 
-              return
-`💸 <@${record.sender_id}>
+              return`💸 <@${record.sender_id}>
 ➡️ <@${record.receiver_id}>
 💰 ${record.amount} 星雨幣`;
 
