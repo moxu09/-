@@ -48,7 +48,7 @@ const claimedDrops =
 // ===== 轉帳冷卻 =====
 
 const transferCooldown =
-  new Set();
+  new Map();
 
 // ===== Function 區 =====
 
@@ -97,12 +97,18 @@ async function updateCoins(
   coins
 ) {
 
-  await supabase
-    .from('users')
-    .update({
-      coins: coins
-    })
-    .eq('user_id', userId);
+  const { error } = 
+    await supabase
+      .from('users')
+      .update({
+        coins: coins
+      })
+      .eq('user_id', userId);
+
+  if (error) {
+    console.error('更新金額失敗:', error);
+    throw new Error('無法更新金額');
+  }
 
 }
 
@@ -113,12 +119,18 @@ async function updateCheckin(
   date
 ) {
 
-  await supabase
-    .from('users')
-    .update({
-      last_checkin: date
-    })
-    .eq('user_id', userId);
+  const { error } = 
+    await supabase
+      .from('users')
+      .update({
+        last_checkin: date
+      })
+      .eq('user_id', userId);
+
+  if (error) {
+    console.error('更新簽到失敗:', error);
+    throw new Error('無法更新簽到');
+  }
 
 }
 
@@ -130,15 +142,21 @@ async function addTransferRecord(
   amount
 ) {
 
-  await supabase
-    .from('transfers')
-    .insert([
-      {
-        sender_id: senderId,
-        receiver_id: receiverId,
-        amount: amount
-      }
-    ]);
+  const { error } = 
+    await supabase
+      .from('transfers')
+      .insert([
+        {
+          sender_id: senderId,
+          receiver_id: receiverId,
+          amount: amount
+        }
+      ]);
+
+  if (error) {
+    console.error('新增交易紀錄失敗:', error);
+    throw new Error('無法記錄交易');
+  }
 
 }
 
@@ -377,7 +395,7 @@ client.once(
         )
 
         .setImage(
-'https://cdn.discordapp.com/attachments/1501098193276895360/1503008880513253406/ChatGPT_Image_2026510_08_19_56.png?ex=6a01c999&is=6a007819&hm=6c10e8db7f2f31aa3991255cf8270280d58aa3ec5da616a7adb649e8d7aeae7c&'
+'https://cdn.discordapp.com/attachments/1501098193276895360/1503008880513253406/ChatGPT_Image_2026510_08_19_56.png?ex=6a01c999&is=6a007819&hm=6c10e8db7f2f31aa3991255cf8270280d58aa3ec5da616a7adb64[...]
         )
 
         .setFooter({
@@ -770,28 +788,16 @@ client.on(
           }
 
 
-          // 轉帳冷卻
-          if (
-            transferCooldown.has(userId)
-          ) {
-
+          // 轉帳冷卻 - 修復版本
+          if (transferCooldown.has(userId)) {
+            const cooldownTime = transferCooldown.get(userId);
+            const remainingTime = Math.ceil((cooldownTime - Date.now()) / 1000);
+            
             return replyError(
               interaction,
-              '轉帳太快了，請稍後再試'
+              `轉帳太快了，請在 ${remainingTime} 秒後再試`
             );
-
           }
-
-          transferCooldown.add(userId);
-
-          setTimeout(() => {
-
-            transferCooldown.delete(
-              userId
-            );
-
-          }, 10000);
-
 
           // 禁止轉自己
           if (
@@ -825,30 +831,47 @@ client.on(
               modalTargetId
             );
 
-          // 扣款
-          await updateCoins(
-            userId,
-            senderData.coins - amount
-          );
+          try {
+            // 扣款
+            await updateCoins(
+              userId,
+              senderData.coins - amount
+            );
 
-          // 加款
-          await updateCoins(
-            modalTargetId,
-            targetData.coins + amount
-          );
+            // 加款
+            await updateCoins(
+              modalTargetId,
+              targetData.coins + amount
+            );
 
-          // 新增紀錄
-          await addTransferRecord(
-            userId,
-            modalTargetId,
-            amount
-          );
+            // 新增紀錄
+            await addTransferRecord(
+              userId,
+              modalTargetId,
+              amount
+            );
 
-          return interaction.reply({
-            content:
+            // 設置冷卻 15 秒
+            transferCooldown.set(userId, Date.now() + 15000);
+            
+            // 15 秒後移除冷卻
+            setTimeout(() => {
+              transferCooldown.delete(userId);
+            }, 15000);
+
+            return interaction.reply({
+              content:
 `✅ 成功轉帳 ${amount} 星雨幣給 <@${modalTargetId}>`,
-            flags: 64
-          });
+              flags: 64
+            });
+
+          } catch (transferError) {
+            console.error('轉帳失敗:', transferError);
+            return replyError(
+              interaction,
+              '轉帳失敗，請稍後再試'
+            );
+          }
 
         }
 
