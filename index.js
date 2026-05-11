@@ -239,6 +239,81 @@ async function getTransferRecords(
 
 }
 
+// ===== 安全轉帳函數 (完整驗證) =====
+
+async function safeTransfer(
+  senderId,
+  receiverId,
+  amount
+) {
+
+  try {
+    // 1. 驗證金額
+    if (isNaN(amount) || amount <= 0) {
+      throw new Error('金額無效');
+    }
+
+    if (amount > 10000) {
+      throw new Error('單次轉帳不能超過 10000');
+    }
+
+    // 2. 確認不是轉給自己
+    if (senderId === receiverId) {
+      throw new Error('不能轉給自己');
+    }
+
+    // 3. 獲取發送者資料
+    const senderData = await getUser(senderId);
+    if (!senderData) {
+      throw new Error('發送者不存在');
+    }
+
+    // 4. 驗證餘額
+    if (senderData.coins < amount) {
+      throw new Error('星雨幣不足');
+    }
+
+    // 5. 獲取接收者資料
+    const receiverData = await getUser(receiverId);
+    if (!receiverData) {
+      throw new Error('接收者不存在');
+    }
+
+    // 6. 計算新金額 (先驗證計算無誤)
+    const newSenderCoins = senderData.coins - amount;
+    const newReceiverCoins = receiverData.coins + amount;
+
+    if (newSenderCoins < 0) {
+      throw new Error('計算錯誤：發送者金額無效');
+    }
+
+    // 7. 執行扣款
+    console.log(`[轉帳] 扣款：${senderId} -${amount}`);
+    await updateCoins(senderId, newSenderCoins);
+
+    // 8. 執行加款
+    console.log(`[轉帳] 加款：${receiverId} +${amount}`);
+    await updateCoins(receiverId, newReceiverCoins);
+
+    // 9. 記錄交易
+    console.log(`[轉帳] 記錄：${senderId} -> ${receiverId} ${amount}`);
+    await addTransferRecord(senderId, receiverId, amount);
+
+    console.log(`[轉帳] 成功：${senderId} -> ${receiverId} ${amount}星雨幣`);
+
+    return {
+      success: true,
+      senderNewCoins: newSenderCoins,
+      receiverNewCoins: newReceiverCoins
+    };
+
+  } catch (error) {
+    console.error('[轉帳] 失敗:', error.message);
+    throw error;
+  }
+
+}
+
 // ===== Slash Commands =====
 
 const commands = [
@@ -760,34 +835,6 @@ client.on(
           const userId =
             interaction.user.id;
 
-          // 金額錯誤
-          if (
-            isNaN(amount) ||
-            amount <= 0
-          ) {
-
-            return replyError(
-              interaction,
-              '金額錯誤'
-            );
-
-          }
-
-
-
-          // 防止洗錢
-          if (
-            amount > 10000
-          ) {
-
-            return replyError(
-              interaction,
-              '單次轉帳不能超過 10000'
-            );
-
-          }
-
-
           // 轉帳冷卻 - 修復版本
           if (transferCooldown.has(userId)) {
             const cooldownTime = transferCooldown.get(userId);
@@ -799,59 +846,15 @@ client.on(
             );
           }
 
-          // 禁止轉自己
-          if (
-            modalTargetId === userId
-          ) {
-
-            return replyError(
-              interaction,
-              '不能轉給自己'
-            );
-
-          }
-
-          const senderData =
-            await getUser(userId);
-
-          // 餘額不足
-          if (
-            senderData.coins < amount
-          ) {
-
-            return replyError(
-              interaction,
-              '星雨幣不足'
-            );
-
-          }
-
-          const targetData =
-            await getUser(
-              modalTargetId
-            );
-
           try {
-            // 扣款
-            await updateCoins(
-              userId,
-              senderData.coins - amount
-            );
-
-            // 加款
-            await updateCoins(
-              modalTargetId,
-              targetData.coins + amount
-            );
-
-            // 新增紀錄
-            await addTransferRecord(
+            // 使用安全轉帳函數 (完整驗證 + 錯誤檢查)
+            const result = await safeTransfer(
               userId,
               modalTargetId,
               amount
             );
 
-            // 設置冷卻 15 秒
+            // 轉帳成功才設置冷卻
             transferCooldown.set(userId, Date.now() + 15000);
             
             // 15 秒後移除冷卻
@@ -866,10 +869,10 @@ client.on(
             });
 
           } catch (transferError) {
-            console.error('轉帳失敗:', transferError);
+            console.error('[轉帳] 使用者互動失敗:', transferError.message);
             return replyError(
               interaction,
-              '轉帳失敗，請稍後再試'
+              transferError.message
             );
           }
 
