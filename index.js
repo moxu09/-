@@ -1,5 +1,8 @@
 require('dotenv').config();
 
+process.on('unhandledRejection', console.error);
+process.on('uncaughtException', console.error);
+
 const { createClient } = require('@supabase/supabase-js');
 const {
   Client,
@@ -32,6 +35,7 @@ const client = new Client({
 
 const claimedDrops = new Set();
 const transferCooldown = new Map();
+const dropCooldown = new Map();
 
 // ===== 工具函數 =====
 
@@ -95,12 +99,21 @@ async function addTransferRecord(senderId, receiverId, amount) {
 
 // 錯誤回覆
 async function replyError(interaction, message) {
+
+  if (interaction.replied || interaction.deferred) {
+
+    return await interaction.followUp({
+      content: `❌ ${message}`,
+      flags: 64,
+    }).catch(() => {});
+
+  }
+
   return await interaction.reply({
     content: `❌ ${message}`,
     flags: 64,
-  });
+  }).catch(() => {});
 }
-
 // 查詢玩家排名
 async function getUserRank(userId) {
   const { data, error } = await supabase.from('users').select('*').order('coins', { ascending: false });
@@ -141,60 +154,109 @@ async function getTransferRecords(userId) {
   return data || [];
 }
 
+// 讀取商店商品
+async function getShopItems() {
+  const { data, error } =
+    await supabase
+      .from('shop_items')
+      .select('*')
+      .order('price', {
+        ascending: true
+      });
+  if (error) {
+    console.error(
+      '[DB] 商店讀取失敗:',
+      error
+    );
+
+    return [];
+  }
+  return data || [];
+}
+// 新增商品
+async function addShopItem(
+  itemName,
+  price,
+  description
+) {
+
+  const { error } =
+    await supabase
+      .from('shop_items')
+      .insert([
+        {
+          item_name: itemName,
+          price,
+          description
+        }
+      ]);
+
+  if (error) {
+
+    console.error(
+      '[DB] 新增商品失敗:',
+      error
+    );
+
+    throw new Error(
+      '新增商品失敗'
+    );
+  }
+}
+
 // 安全轉帳函數
-async function safeTransfer(senderId, receiverId, amount) {
-  try {
-    // 1. 驗證金額
-    if (isNaN(amount) || amount <= 0) {
-      throw new Error('金額無效');
-    }
-
-    if (amount > 10000) {
-      throw new Error('單次轉帳不能超過 10000');
-    }
-
-    // 2. 驗證不是轉給自己
-    if (senderId === receiverId) {
-      throw new Error('不能轉給自己');
-    }
-
-    // 3. 獲取發送者資料
-    const senderData = await getUser(senderId);
-    if (!senderData) {
-      throw new Error('發送者不存在');
-    }
-
-    // 4. 驗證餘額
-    if (senderData.coins < amount) {
+async function safeTransfer(
+  senderId,
+  receiverId,
+  amount
+) {
+  // 檢查金額
+  if (
+    isNaN(amount) ||
+    amount <= 0
+  ) {
+    throw new Error('金額無效');
+  }
+  // 限制最大轉帳
+  if (amount > 10000) {
+    throw new Error('單次轉帳不能超過10000');
+  }
+  // 禁止轉給自己
+  if (senderId === receiverId) {
+    throw new Error('不能轉給自己');
+  }
+  // 呼叫 Supabase SQL Function
+  const { error } =
+    await supabase.rpc(
+      'transfer_coins',
+      {
+        sender_id: senderId,
+        receiver_id: receiverId,
+        transfer_amount: amount
+      }
+    );
+  // 錯誤處理
+  if (error) {
+    console.error(
+      '[轉帳失敗]',
+      error
+    );
+    // 餘額不足
+    if (
+      error.message.includes('餘額不足')
+    ) {
       throw new Error('星雨幣不足');
     }
-
-    // 5. 獲取接收者資料
-    const receiverData = await getUser(receiverId);
-    if (!receiverData) {
-      throw new Error('接收者不存在');
-    }
-
-    // 6. 計算新金額
-    const newSenderCoins = senderData.coins - amount;
-    const newReceiverCoins = receiverData.coins + amount;
-
-    if (newSenderCoins < 0) {
-      throw new Error('計算錯誤');
-    }
-
-    // 7. 執行交易
-    console.log(`[轉帳] 開始: ${senderId} -> ${receiverId} ${amount}枚`);
-    await updateCoins(senderId, newSenderCoins);
-    await updateCoins(receiverId, newReceiverCoins);
-    await addTransferRecord(senderId, receiverId, amount);
-    console.log(`[轉帳] 成功: ${senderId} -> ${receiverId} ${amount}枚`);
-
-    return { success: true };
-  } catch (error) {
-    console.error('[轉帳] 失敗:', error.message);
-    throw error;
+    // 其它錯誤
+    throw new Error('轉帳失敗');
   }
+  // 成功 log
+  console.log(
+    `[轉帳成功] ${senderId} -> ${receiverId} ${amount}枚`
+  );
+  return {
+    success: true
+  };
 }
 
 // 取得今日日期 (UTC+8)
@@ -203,6 +265,57 @@ function getTodayDateString() {
   const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   return utc8.toISOString().split('T')[0];
 }
+
+
+// 刷新商店
+async function refreshShop(client) {
+  const shopChannel =
+    await client.channels.fetch(
+      process.env.SHOP_CHANNEL_ID
+    );
+  if (!shopChannel) return;
+  // 讀取商品
+  const items =
+    await getShopItems();
+  // 刪除舊商店
+  const messages =
+    await shopChannel.messages.fetch({
+      limit: 20
+    });
+  const oldShop =
+    messages.filter(
+      (msg) =>
+        msg.author.id === client.user.id &&
+        msg.embeds.length > 0 &&
+        msg.embeds[0].title === '🛒 星雨商店'
+    );
+  for (const msg of oldShop.values()) {
+    await msg.delete().catch(() => {});
+  }
+  // 商品內容
+  let text = ''；
+  if (items.length === 0) {
+    text = '目前商店沒有商品';
+  } else {
+    text =
+      items.map(
+        (item, index) =>
+`${index + 1}. ${item.item_name}
+💰 ${item.price} 星雨幣
+📦 ${item.description}`
+      ).join('\n\n');
+  }
+  // Embed
+  const embed =
+    new EmbedBuilder()
+      .setColor('#FEE75C')
+      .setTitle('🛒 星雨商店')
+      .setDescription(text);
+  await shopChannel.send({
+    embeds: [embed]
+  });
+}
+
 
 // ===== 指令註冊 =====
 
@@ -228,14 +341,40 @@ const commands = [
       option.setName('金額').setDescription('輸入金額').setRequired(true)
     ),
   new SlashCommandBuilder().setName('交易紀錄').setDescription('查看最近交易'),
-].map((command) => command.toJSON());
-
+  new SlashCommandBuilder()
+    .setName('新增商品')
+    .setDescription('新增商店商品')
+    .addStringOption(option =>
+      option
+        .setName('名稱')
+        .setDescription('商品名稱')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('價格')
+        .setDescription('商品價格')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('介紹')
+        .setDescription('商品介紹')
+        .setRequired(true)
+    ),
+ ].map((command) => command.toJSON());
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 (async () => {
   try {
     console.log('[BOT] 開始註冊 Slash Commands');
-    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: commands });
+    await rest.put(
+      Routes.applicationGuildCommands(
+        process.env.CLIENT_ID,
+        process.env.GUILD_ID
+      ),
+      { body: commands }
+    );
     console.log('[BOT] Slash Commands 註冊成功');
   } catch (error) {
     console.error('[BOT] 指令註冊失敗:', error);
@@ -251,7 +390,10 @@ client.once(Events.ClientReady, async () => {
     // ===== ATM 頻道 =====
 
     const atmChannel = await client.channels.fetch(process.env.CHANNEL_ID);
-
+    if (!atmChannel) {
+      console.log('[BOT] 找不到 ATM 頻道');
+      return;
+    }
     // 刪除舊訊息
     const atmMessages = await atmChannel.messages.fetch({ limit: 20 });
     const oldATM = atmMessages.filter(
@@ -303,7 +445,10 @@ client.once(Events.ClientReady, async () => {
     // ===== 簽到頻道 =====
 
     const checkinChannel = await client.channels.fetch(process.env.CHECKIN_CHANNEL_ID);
-
+    if (!checkinChannel) {
+      console.log('[BOT] 找不到簽到頻道');
+      return;
+    }
     // 刪除舊訊息
     const checkinMessages = await checkinChannel.messages.fetch({ limit: 20 });
     const oldCheckin = checkinMessages.filter(
@@ -332,10 +477,13 @@ client.once(Events.ClientReady, async () => {
       .setDescription('每天都可以來領一次 10 枚星雨幣 ✨');
 
     await checkinChannel.send({ embeds: [checkinEmbed], components: [checkinRow] });
+    // ===== 商店 =====
+    await refreshShop(client);
   } catch (error) {
     console.error('[BOT] Ready 事件出錯:', error);
   }
 });
+
 
 // ===== Interaction Handler =====
 
@@ -465,9 +613,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const userId = interaction.user.id;
 
         // 冷卻檢查
-        if (transferCooldown.has(userId)) {
-          const cooldownTime = transferCooldown.get(userId);
-          const remainingTime = Math.ceil((cooldownTime - Date.now()) / 1000);
+        const cooldownTime = transferCooldown.get(userId);
+        if (
+          cooldownTime &&
+          cooldownTime > Date.now()
+        ) { 
+         const remainingTime = Math.ceil((cooldownTime - Date.now()) / 1000);
 
           return replyError(interaction, `轉帳太快了，請在 ${remainingTime} 秒後再試`);
         }
@@ -475,17 +626,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
         try {
           // 執行安全轉帳
           await safeTransfer(userId, modalTargetId, amount);
-
-          // 設置冷卻
-          transferCooldown.set(userId, Date.now() + 15000);
-          setTimeout(() => {
-            transferCooldown.delete(userId);
-          }, 15000);
-
-          return interaction.reply({
-            content: `✅ 成功轉帳 ${amount} 星雨幣給 <@${modalTargetId}>`,
-            flags: 64,
-          });
+	  // 寫入交易紀錄
+	  await addTransferRecord(userId, modalTargetId, amount);
+	  // 設置冷卻
+	  transferCooldown.set(userId, Date.now() + 15000);
+	  setTimeout(() => {
+ 	    transferCooldown.delete(userId);
+	  }, 15000);
+	  return interaction.reply({
+  	    content: `✅ 成功轉帳 ${amount} 星雨幣給 <@${modalTargetId}>`,
+	    flags: 64,
+	  });
         } catch (transferError) {
           console.error('[轉帳] 使用者互動失敗:', transferError.message);
           return replyError(interaction, transferError.message);
@@ -596,6 +747,43 @@ client.on(Events.InteractionCreate, async (interaction) => {
           flags: 64,
         });
       }
+
+      // /新增商品
+      if (
+	interaction.commandName === '新增商品'	
+      ) {
+	// 只有群主可用
+	if (
+    	  interaction.guild.ownerId !==
+    	  interaction.user.id
+  	) {
+  	  return replyError(
+     	    interaction,
+      	    '只有群主可以使用'
+   	  );
+ 	 }
+
+ 	 const itemName =
+     	   interaction.options.getString('名稱');
+ 	 const price =
+    	   interaction.options.getInteger('價格');
+	 const description =
+    	   interaction.options.getString('介紹');
+	 // 新增商品
+  	 await addShopItem(
+   	   itemName,
+   	   price,
+   	   description
+  	 );
+
+  	// 刷新商店
+  	await refreshShop(client);
+ 	return interaction.reply({
+    	  content:
+      	    `✅ 已新增商品：${itemName}`,
+  	  flags: 64,
+  	});
+      }
     }
   } catch (err) {
     console.error('[互動] 錯誤:', err);
@@ -628,6 +816,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  const channelId = message.channel.id;
+
+  if (dropCooldown.has(channelId)) return;
+
   const random = Math.floor(Math.random() * 100);
 
   if (random < 5) {
@@ -645,7 +837,14 @@ client.on('messageCreate', async (message) => {
       .setTitle('☔ 星雨幣掉落')
       .setDescription(`有人掉了 ${reward} 星雨幣！\n\n快點擊下方按鈕領取 ✨`);
 
-    await message.channel.send({ embeds: [embed], components: [row] });
+    dropCooldown.set(channelId, true);
+    await message.channel.send({
+      embeds: [embed],
+      components: [row]
+    });
+    setTimeout(() => {
+      dropCooldown.delete(channelId);
+    }, 30000);
   }
 });
 
