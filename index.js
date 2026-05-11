@@ -191,6 +191,36 @@ async function getUserRank(
 
 }
 
+
+// 查詢交易紀錄
+async function getTransferRecords(
+  userId
+) {
+
+  const { data, error } =
+    await supabase
+      .from('transfers')
+      .select('*')
+      .or(
+        `sender_id.eq.${userId},receiver_id.eq.${userId}`
+      )
+      .order('created_at', {
+        ascending: false
+      })
+      .limit(10);
+
+  if (error) {
+
+    console.error(error);
+
+    return [];
+
+  }
+
+  return data;
+
+}
+
 // ===== Slash Commands =====
 
 const commands = [
@@ -233,7 +263,11 @@ const commands = [
         .setName('金額')
         .setDescription('輸入金額')
         .setRequired(true)
-    )
+    ),
+
+  new SlashCommandBuilder()
+    .setName('交易紀錄')
+    .setDescription('查看最近交易')
 
 ].map(command => command.toJSON());
 
@@ -1002,6 +1036,63 @@ client.on(
             content:
 `❌ 已扣除 <@${target.id}> ${amount} 星雨幣`,
             flags: 64
+          });
+
+        }
+
+
+        // ===== /交易紀錄 =====
+
+        if (
+          interaction.commandName ===
+          '交易紀錄'
+        ) {
+
+          const records =
+            await getTransferRecords(
+              interaction.user.id
+            );
+
+          if (
+            records.length === 0
+          ) {
+
+            return interaction.reply({
+
+              content:
+                '目前沒有交易紀錄',
+
+              flags: 64
+
+            });
+
+          }
+
+          const text =
+            records.map(record => {
+
+              return
+`💸 <@${record.sender_id}>
+➡️ <@${record.receiver_id}>
+💰 ${record.amount} 星雨幣`;
+
+            }).join('\n\n');
+
+          return interaction.reply({
+
+            embeds: [
+
+              new EmbedBuilder()
+                .setColor('#00ffff')
+                .setTitle(
+                  '📜 最近交易紀錄'
+                )
+                .setDescription(text)
+
+            ],
+
+            flags: 64
+
           });
 
         }
