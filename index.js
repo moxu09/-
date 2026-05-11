@@ -363,57 +363,86 @@ async function refreshShop(client) {
 
 
 // ===== 指令註冊 =====
-
 const commands = [
-  new SlashCommandBuilder()
-    .setName('刪除商品')
-    .setDescription('刪除商店商品'),
-    .addStringOption(option =>
-      option.setName('名稱').setDescription('商品名稱').setRequired(true)
-    )
-  new SlashCommandBuilder().setName('ping').setDescription('測試機器人'),
-  new SlashCommandBuilder().setName('我的排名').setDescription('查看自己的排名'),
-  new SlashCommandBuilder()
-    .setName('發錢')
-    .setDescription('給予玩家星雨幣')
-    .addUserOption((option) =>
-      option.setName('玩家').setDescription('選擇玩家').setRequired(true)
-    )
-    .addIntegerOption((option) =>
-      option.setName('金額').setDescription('輸入金額').setRequired(true)
-    ),
-  new SlashCommandBuilder()
-    .setName('扣錢')
-    .setDescription('扣除玩家星雨幣')
-    .addUserOption((option) =>
-      option.setName('玩家').setDescription('選擇玩家').setRequired(true)
-    )
-    .addIntegerOption((option) =>
-      option.setName('金額').setDescription('輸入金額').setRequired(true)
-    ),
-  new SlashCommandBuilder().setName('交易紀錄').setDescription('查看最近交易'),
-  new SlashCommandBuilder()
-    .setName('新增商品')
-    .setDescription('新增商店商品')
-    .addStringOption(option =>
-      option
-        .setName('名稱')
-        .setDescription('商品名稱')
-        .setRequired(true)
-    )
-    .addIntegerOption(option =>
-      option
-        .setName('價格')
-        .setDescription('商品價格')
-        .setRequired(true)
-    )
-    .addStringOption(option =>
-      option
-        .setName('介紹')
-        .setDescription('商品介紹')
-        .setRequired(true)
-    ),
- ].map((command) => command.toJSON());
+
+new SlashCommandBuilder()
+.setName('刪除商品')
+.setDescription('刪除商店商品')
+.addStringOption(option =>
+option
+.setName('名稱')
+.setDescription('商品名稱')
+.setRequired(true)
+),
+
+new SlashCommandBuilder()
+.setName('ping')
+.setDescription('測試機器人'),
+
+new SlashCommandBuilder()
+.setName('我的排名')
+.setDescription('查看自己的排名'),
+
+new SlashCommandBuilder()
+.setName('發錢')
+.setDescription('給予玩家星雨幣')
+.addUserOption(option =>
+option
+.setName('玩家')
+.setDescription('選擇玩家')
+.setRequired(true)
+)
+.addIntegerOption(option =>
+option
+.setName('金額')
+.setDescription('輸入金額')
+.setRequired(true)
+),
+
+new SlashCommandBuilder()
+.setName('扣錢')
+.setDescription('扣除玩家星雨幣')
+.addUserOption(option =>
+option
+.setName('玩家')
+.setDescription('選擇玩家')
+.setRequired(true)
+)
+.addIntegerOption(option =>
+option
+.setName('金額')
+.setDescription('輸入金額')
+.setRequired(true)
+),
+
+new SlashCommandBuilder()
+.setName('交易紀錄')
+.setDescription('查看最近交易'),
+
+new SlashCommandBuilder()
+.setName('新增商品')
+.setDescription('新增商店商品')
+.addStringOption(option =>
+option
+.setName('名稱')
+.setDescription('商品名稱')
+.setRequired(true)
+)
+.addIntegerOption(option =>
+option
+.setName('價格')
+.setDescription('商品價格')
+.setRequired(true)
+)
+.addStringOption(option =>
+option
+.setName('介紹')
+.setDescription('商品介紹')
+.setRequired(true)
+)
+
+].map(command => command.toJSON());
+
 const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 (async () => {
