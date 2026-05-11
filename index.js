@@ -367,7 +367,7 @@ async function refreshShop(client) {
 const commands = [
   new SlashCommandBuilder()
     .setName('刪除商品')
-    .setDescription('刪除商店商品') 
+    .setDescription('刪除商店商品'),
     .addStringOption(option =>
       option.setName('名稱').setDescription('商品名稱').setRequired(true)
     )
