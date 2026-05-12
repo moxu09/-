@@ -44,184 +44,136 @@ function isAdmin(interaction) {
 }
 // 讀取玩家資料
 async function getUser(userId) {
-  try {
-    const { data, error } = await supabase.from('users').select('*').eq('user_id', userId).single();
+  const { data, error } = await supabase.from('users').select('*').eq('user_id', userId).single();
 
-    if (error && error.code !== 'PGRST116') {
-      console.error('[DB] 讀取玩家資料失敗:', error.message);
-    }
-
-    if (!data) {
-      const { error: insertError } = await supabase.from('users').insert([{ user_id: userId, coins: 0 }]);
-
-      if (insertError) {
-        console.error('[DB] 建立玩家失敗:', insertError.message);
-      }
-
-      return { user_id: userId, coins: 0, last_checkin: null };
-    }
-
-    return data;
-  } catch (err) {
-    console.error('[DB] getUser 異常:', err);
-    return null;
+  if (error && error.code !== 'PGRST116') {
+    console.error('[DB] 讀取玩家資料失敗:', error);
   }
+
+  if (!data) {
+    const { error: insertError } = await supabase.from('users').insert([{ user_id: userId, coins: 0 }]);
+
+    if (insertError) {
+      console.error('[DB] 建立玩家失敗:', insertError);
+    }
+
+    return { user_id: userId, coins: 0, last_checkin: null };
+  }
+
+  return data;
 }
 
 // 更新金額
 async function updateCoins(userId, coins) {
-  try {
-    if (coins < 0) {
-      throw new Error('金額不能為負數');
-    }
+  if (coins < 0) {
+    throw new Error('金額不能為負數');
+  }
 
-    const { error } = await supabase.from('users').update({ coins }).eq('user_id', userId);
+  const { error } = await supabase.from('users').update({ coins }).eq('user_id', userId);
 
-    if (error) {
-      console.error('[DB] 更新金額失敗:', error.message);
-      throw new Error('無法更新金額');
-    }
-  } catch (err) {
-    console.error('[DB] updateCoins 異常:', err.message);
-    throw err;
+  if (error) {
+    console.error('[DB] 更新金額失敗:', error);
+    throw new Error('無法更新金額');
   }
 }
 
 // 更新簽到
 async function updateCheckin(userId, date) {
-  try {
-    const { error } = await supabase.from('users').update({ last_checkin: date }).eq('user_id', userId);
+  const { error } = await supabase.from('users').update({ last_checkin: date }).eq('user_id', userId);
 
-    if (error) {
-      console.error('[DB] 更新簽到失敗:', error.message);
-      throw new Error('無法更新簽到');
-    }
-  } catch (err) {
-    console.error('[DB] updateCheckin 異常:', err.message);
-    throw err;
+  if (error) {
+    console.error('[DB] 更新簽到失敗:', error);
+    throw new Error('無法更新簽到');
   }
 }
 
 // 新增交易紀錄
 async function addTransferRecord(senderId, receiverId, amount) {
-  try {
-    const { error } = await supabase.from('transfers').insert([{ sender_id: senderId, receiver_id: receiverId, amount }]);
+  const { error } = await supabase
+    .from('transfers')
+    .insert([{ sender_id: senderId, receiver_id: receiverId, amount }]);
 
-    if (error) {
-      console.error('[DB] 記錄交易失敗:', error.message);
-      throw new Error('無法記錄交易');
-    }
-  } catch (err) {
-    console.error('[DB] addTransferRecord 異常:', err.message);
-    throw err;
+  if (error) {
+    console.error('[DB] 記錄交易失敗:', error);
+    throw new Error('無法記錄交易');
   }
 }
 
-// 錯誤回覆
+// 錯誤回覆 (自動判斷回覆或追蹤)
 async function replyError(interaction, message) {
-  try {
-    if (interaction.replied || interaction.deferred) {
-      return await interaction.followUp({ content: `❌ ${message}`, flags: 64 }).catch(() => {});
-    }
-
-    return await interaction.reply({ content: `❌ ${message}`, flags: 64 }).catch(() => {});
-  } catch (err) {
-    console.error('[error] replyError 異常:', err.message);
+  if (interaction.replied || interaction.deferred) {
+    return await interaction.followUp({ content: `❌ ${message}`, flags: 64 }).catch(() => {});
   }
+
+  return await interaction.reply({ content: `❌ ${message}`, flags: 64 }).catch(() => {});
 }
 
 // 查詢玩家排名
 async function getUserRank(userId) {
-  try {
-    const { data, error } = await supabase.from('users').select('*').order('coins', { ascending: false });
+  const { data, error } = await supabase.from('users').select('*').order('coins', { ascending: false });
 
-    if (error) {
-      console.error('[DB] 查詢排名失敗:', error.message);
-      return null;
-    }
-
-    if (!data || data.length === 0) {
-      return null;
-    }
-
-    const rank = data.findIndex((user) => user.user_id === userId);
-    return rank === -1 ? null : rank + 1;
-  } catch (err) {
-    console.error('[DB] getUserRank 異常:', err.message);
+  if (error) {
+    console.error('[DB] 查詢排名失敗:', error);
     return null;
   }
+
+  if (!data || data.length === 0) {
+    return null;
+  }
+
+  const rank = data.findIndex((user) => user.user_id === userId);
+  return rank === -1 ? null : rank + 1;
 }
 
 // 查詢交易紀錄
 async function getTransferRecords(userId) {
-  try {
-    const { data, error } = await supabase
-      .from('transfers')
-      .select('*')
-      .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
-      .order('created_at', { ascending: false })
-      .limit(10);
+  const { data, error } = await supabase
+    .from('transfers')
+    .select('*')
+    .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
+    .order('created_at', { ascending: false })
+    .limit(10);
 
-    if (error) {
-      console.error('[DB] 查詢交易紀錄失敗:', error.message);
-      return [];
-    }
-
-    return data || [];
-  } catch (err) {
-    console.error('[DB] getTransferRecords 異常:', err.message);
+  if (error) {
+    console.error('[DB] 查詢交易紀錄失敗:', error);
     return [];
   }
+
+  return data || [];
 }
 
 // 讀取商店商品
 async function getShopItems() {
-  try {
-    const { data, error } = await supabase.from('shop_items').select('*').order('price', { ascending: true });
+  const { data, error } = await supabase.from('shop_items').select('*').order('price', { ascending: true });
 
-    if (error) {
-      console.error('[DB] 商店讀取失敗:', error.message);
-      return [];
-    }
-
-    return data || [];
-  } catch (err) {
-    console.error('[DB] getShopItems 異常:', err.message);
+  if (error) {
+    console.error('[DB] 商店讀取失敗:', error);
     return [];
   }
+
+  return data || [];
 }
 
 // 新增商品
 async function addShopItem(itemName, price, description) {
-  try {
-    const { error } = await supabase.from('shop_items').insert([{ item_name: itemName, price, description }]);
+  const { error } = await supabase.from('shop_items').insert([{ item_name: itemName, price, description }]);
 
-    if (error) {
-      console.error('[DB] 新增商品失敗:', error.message);
-      throw new Error('新增商品失敗');
-    }
-  } catch (err) {
-    console.error('[DB] addShopItem 異常:', err.message);
-    throw err;
+  if (error) {
+    console.error('[DB] 新增商品失敗:', error);
+    throw new Error('新增商品失敗');
   }
 }
 
 // 刪除商品
 async function removeShopItem(itemName) {
-  try {
-    const { error } = await supabase.from('shop_items').delete().eq('item_name', itemName);
+  const { error } = await supabase.from('shop_items').delete().eq('item_name', itemName);
 
-    if (error) {
-      console.error('[DB] 刪除商品失敗:', error.message);
-      throw new Error('刪除商品失敗');
-    }
-  } catch (err) {
-    console.error('[DB] removeShopItem 異常:', err.message);
-    throw err;
+  if (error) {
+    console.error('[DB] 刪除商品失敗:', error);
+    throw new Error('刪除商品失敗');
   }
 }
 
-<<<<<<< HEAD
 // 新增玩家商品
 async function addUserItem(userId, itemName) {
 
@@ -258,50 +210,39 @@ async function getUserItems(userId) {
 }
 
 // 安全轉帳函數
-=======
-// 安全轉帳
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
 async function safeTransfer(senderId, receiverId, amount) {
-  try {
-    if (isNaN(amount) || amount <= 0) {
-      throw new Error('金額無效');
-    }
+  if (isNaN(amount) || amount <= 0) {
+    throw new Error('金額無效');
+  }
 
-    if (amount > 10000) {
-      throw new Error('單次轉帳不能超過 10000');
-    }
+  if (amount > 10000) {
+    throw new Error('單次轉帳不能超過 10000');
+  }
 
-    if (senderId === receiverId) {
-      throw new Error('不能轉給自己');
-    }
+  if (senderId === receiverId) {
+    throw new Error('不能轉給自己');
+  }
 
-    const senderData = await getUser(senderId);
-    if (!senderData) {
-      throw new Error('發送者不存在');
-    }
+  const { error } = await supabase.rpc('transfer_coins', {
+    sender_id: senderId,
+    receiver_id: receiverId,
+    transfer_amount: amount,
+  });
 
-    const receiverData = await getUser(receiverId);
-    if (!receiverData) {
-      throw new Error('接收者不存在');
-    }
+  if (error) {
+    console.error('[轉帳失敗]', error);
 
-    if (senderData.coins < amount) {
+    if (error.message.includes('餘額不足')) {
       throw new Error('星雨幣不足');
     }
 
-    const newSenderCoins = senderData.coins - amount;
-    const newReceiverCoins = receiverData.coins + amount;
-
-    await updateCoins(senderId, newSenderCoins);
-    await updateCoins(receiverId, newReceiverCoins);
-    await addTransferRecord(senderId, receiverId, amount);
-
-    console.log(`[轉帳成功] ${senderId} -> ${receiverId} ${amount}枚`);
-    return { success: true };
-  } catch (err) {
-    console.error('[轉帳] 異常:', err.message);
-    throw err;
+    throw new Error('轉帳失敗');
   }
+
+  console.log(`[轉帳成功] ${senderId} -> ${receiverId} ${amount}枚`);
+  await addTransferRecord(senderId, receiverId, amount);
+
+  return { success: true };
 }
 
 // 取得今日日期 (UTC+8)
@@ -313,59 +254,45 @@ function getTodayDateString() {
 
 // 刷新商店
 async function refreshShop(client) {
-  try {
-    const shopChannel = await client.channels.fetch(process.env.SHOP_CHANNEL_ID);
-    if (!shopChannel) {
-      console.log('[BOT] 商店頻道未設定');
-      return;
-    }
+  const shopChannel = await client.channels.fetch(process.env.SHOP_CHANNEL_ID);
+  if (!shopChannel) return;
 
-    const items = await getShopItems();
+  const items = await getShopItems();
 
-    // 刪除舊商店
-    const messages = await shopChannel.messages.fetch({ limit: 20 });
-    const oldShop = messages.filter(
-      (msg) =>
-        msg.author.id === client.user.id && msg.embeds.length > 0 && msg.embeds[0].title === '🛒 星雨商店'
-    );
+  // 刪除舊商店
+  const messages = await shopChannel.messages.fetch({ limit: 20 });
+  const oldShop = messages.filter(
+    (msg) =>
+      msg.author.id === client.user.id && msg.embeds.length > 0 && msg.embeds[0].title === '🛒 星雨商店'
+  );
 
-    for (const msg of oldShop.values()) {
-      await msg.delete().catch(() => {});
-    }
-
-    // 商品內容
-    let text = '';
-    if (items.length === 0) {
-      text = '目前商店沒有商品';
-    } else {
-      text = items.map((item, index) => `${index + 1}. ${item.item_name}\n💰 ${item.price} 星雨幣\n📦 ${item.description}`).join('\n\n');
-    }
-
-    // Embed
-    const embed = new EmbedBuilder().setColor('#FEE75C').setTitle('🛒 星雨商店').setDescription(text);
-
-    let components = [];
-    if (items.length > 0) {
-      const menu = new StringSelectMenuBuilder()
-        .setCustomId('shop_select')
-        .setPlaceholder('選擇要購買的商品')
-        .addOptions(
-          items.map((item) => ({
-            label: item.item_name.substring(0, 25),
-            description: `${item.price} 星雨幣`,
-            value: String(item.id),
-          }))
-        );
-
-      const row = new ActionRowBuilder().addComponents(menu);
-      components.push(row);
-    }
-
-    await shopChannel.send({ embeds: [embed], components });
-    console.log('[BOT] 商店已刷新');
-  } catch (err) {
-    console.error('[BOT] refreshShop 異常:', err.message);
+  for (const msg of oldShop.values()) {
+    await msg.delete().catch(() => {});
   }
+
+  // 商品內容
+  let text = '';
+  if (items.length === 0) {
+    text = '目前商店沒有商品';
+  } else {
+    text = items.map((item, index) => `${index + 1}. ${item.item_name}\n💰 ${item.price} 星雨幣\n📦 ${item.description}`).join('\n\n');
+  }
+
+  // Embed
+  const embed = new EmbedBuilder().setColor('#FEE75C').setTitle('🛒 星雨商店').setDescription(text);
+
+  let components = [];
+  if (items.length > 0) {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId('shop_select')
+      .setPlaceholder('選擇要購買的商品')
+      .addOptions(items.map((item) => ({ label: item.item_name, description: `${item.price} 星雨幣`, value: String(item.id) })));
+
+    const row = new ActionRowBuilder().addComponents(menu);
+    components.push(row);
+  }
+
+  await shopChannel.send({ embeds: [embed], components });
 }
 
 // ===== 指令定義 =====
@@ -434,11 +361,18 @@ const commands = [
         .setRequired(true)
     ),  
   new SlashCommandBuilder()
-    .setName('刪除扭蛋')
-    .setDescription('刪除一個扭蛋')
+    .setName('刪除獎勵')
+    .setDescription('刪除卡池獎勵')
+    .addIntegerOption(option =>
+      option
+        .setName('卡池id')
+        .setDescription('卡池 ID')
+        .setRequired(true)
+    )
     .addStringOption(option =>
-      option.setName('名稱')
-        .setDescription('扭蛋名稱')
+      option
+        .setName('名稱')
+        .setDescription('獎勵名稱')
         .setRequired(true)
     ),
 
@@ -519,51 +453,66 @@ const rest = new REST({ version: '10' }).setToken(process.env.TOKEN);
 
 (async () => {
   try {
-    console.log('[BOT] 開始重新註冊指令...');
+    console.log('[BOT] 清除 Global Commands');
+    await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: [] });
+
+    console.log('[BOT] 清除舊指令');
+    await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: [] });
+
+    console.log('[BOT] 重新註冊指令');
     await rest.put(Routes.applicationGuildCommands(process.env.CLIENT_ID, process.env.GUILD_ID), { body: commands });
+
     console.log('[BOT] Slash Commands 註冊成功');
   } catch (error) {
-    console.error('[BOT] 指令註冊失敗:', error.message);
+    console.error('[BOT] 指令註冊失敗:', error);
   }
 })();
 
 // ===== Bot Ready =====
 
 client.once(Events.ClientReady, async () => {
+  console.log({
+    CHANNEL_ID: process.env.CHANNEL_ID,
+    CHECKIN_CHANNEL_ID: process.env.CHECKIN_CHANNEL_ID,
+    SHOP_CHANNEL_ID: process.env.SHOP_CHANNEL_ID,
+    GACHA_CHANNEL_ID: process.env.GACHA_CHANNEL_ID
+  });
   console.log('[BOT] 機器人已上線');
-
+  
   try {
     // ATM 頻道
-    const atmChannel = await client.channels.fetch(process.env.CHANNEL_ID).catch(() => null);
+    const atmChannel = await client.channels.fetch(process.env.CHANNEL_ID);
     if (!atmChannel) {
-      console.error('[BOT] ATM 頻道設定錯誤');
-    } else {
-      const atmMessages = await atmChannel.messages.fetch({ limit: 20 });
-      const oldATM = atmMessages.filter(
-        (msg) => msg.author.id === client.user.id && msg.embeds.length > 0 && msg.embeds[0].title === '🏦 星雨銀行 ATM'
-      );
+      console.log('[BOT] 找不到 ATM 頻道');
+      return;
+    }
 
-      for (const msg of oldATM.values()) {
-        await msg.delete().catch(() => {});
-      }
+    const atmMessages = await atmChannel.messages.fetch({ limit: 20 });
+    const oldATM = atmMessages.filter(
+      (msg) => msg.author.id === client.user.id && msg.embeds.length > 0 && msg.embeds[0].title === '🏦 星雨銀行 ATM'
+    );
 
-      const walletButton = new ButtonBuilder()
-        .setCustomId('check_coins')
-        .setLabel('💰 餘額查詢')
-        .setStyle(ButtonStyle.Success);
+    for (const msg of oldATM.values()) {
+      await msg.delete().catch(() => {});
+    }
 
-      const transferButton = new ButtonBuilder()
-        .setCustomId('transfer_menu')
-        .setLabel('💸 星雨轉帳')
-        .setStyle(ButtonStyle.Primary);
+    const walletButton = new ButtonBuilder()
+      .setCustomId('check_coins')
+      .setLabel('💰 餘額查詢')
+      .setStyle(ButtonStyle.Success);
 
-      const atmRow = new ActionRowBuilder().addComponents(walletButton, transferButton);
+    const transferButton = new ButtonBuilder()
+      .setCustomId('transfer_menu')
+      .setLabel('💸 星雨轉帳')
+      .setStyle(ButtonStyle.Primary);
 
-      const atmEmbed = new EmbedBuilder()
-        .setColor('#00ff99')
-        .setTitle('🏦 星雨銀行 ATM')
-        .setDescription(
-          `╔════════════╗
+    const atmRow = new ActionRowBuilder().addComponents(walletButton, transferButton);
+
+    const atmEmbed = new EmbedBuilder()
+      .setColor('#00ff99')
+      .setTitle('🏦 星雨銀行 ATM')
+      .setDescription(
+        `╔════════════╗
 💳 歡迎使用 星雨ATM
 ╚════════════╝
 
@@ -575,43 +524,42 @@ client.once(Events.ClientReady, async () => {
 
 🏧 狀態 ☔ 幣別 🔒 安全
 🟢 線上 星雨幣 已啟用`
-        )
-        .setFooter({ text: 'Rain Bank ATM System' });
+      )
+      .setFooter({ text: 'Rain Bank ATM System' });
 
-      await atmChannel.send({ embeds: [atmEmbed], components: [atmRow] });
-    }
+    await atmChannel.send({ embeds: [atmEmbed], components: [atmRow] });
 
     // 簽到頻道
-    const checkinChannel = await client.channels.fetch(process.env.CHECKIN_CHANNEL_ID).catch(() => null);
+    const checkinChannel = await client.channels.fetch(process.env.CHECKIN_CHANNEL_ID);
     if (!checkinChannel) {
-      console.error('[BOT] 簽到頻道設定錯誤');
-    } else {
-      const checkinMessages = await checkinChannel.messages.fetch({ limit: 20 });
-      const oldCheckin = checkinMessages.filter(
-        (msg) => msg.author.id === client.user.id && msg.embeds.length > 0 && msg.embeds[0].title === '☔ 每日簽到'
-      );
-
-      for (const msg of oldCheckin.values()) {
-        await msg.delete().catch(() => {});
-      }
-
-      const checkinButton = new ButtonBuilder()
-        .setCustomId('daily_checkin')
-        .setLabel('☔ 每日簽到')
-        .setStyle(ButtonStyle.Primary);
-
-      const checkinRow = new ActionRowBuilder().addComponents(checkinButton);
-
-      const checkinEmbed = new EmbedBuilder()
-        .setColor('#5865F2')
-        .setTitle('☔ 每日簽到')
-        .setDescription('每天都可以來領一次 10 枚星雨幣 ✨');
-
-      await checkinChannel.send({ embeds: [checkinEmbed], components: [checkinRow] });
+      console.log('[BOT] 找不到簽到頻道');
+      return;
     }
 
+    const checkinMessages = await checkinChannel.messages.fetch({ limit: 20 });
+    const oldCheckin = checkinMessages.filter(
+      (msg) => msg.author.id === client.user.id && msg.embeds.length > 0 && msg.embeds[0].title === '☔ 每日簽到'
+    );
+
+    for (const msg of oldCheckin.values()) {
+      await msg.delete().catch(() => {});
+    }
+
+    const checkinButton = new ButtonBuilder()
+      .setCustomId('daily_checkin')
+      .setLabel('☔ 每日簽到')
+      .setStyle(ButtonStyle.Primary);
+
+    const checkinRow = new ActionRowBuilder().addComponents(checkinButton);
+
+    const checkinEmbed = new EmbedBuilder()
+      .setColor('#5865F2')
+      .setTitle('☔ 每日簽到')
+      .setDescription('每天都可以來領一次 10 枚星雨幣 ✨');
+
+    await checkinChannel.send({ embeds: [checkinEmbed], components: [checkinRow] });
+
     // 商店
-<<<<<<< HEAD
     await refreshShop(client);
 
     // ===== 扭蛋頻道 =====
@@ -654,13 +602,9 @@ client.once(Events.ClientReady, async () => {
         embeds: [embed],
         components: [row]
       });
-=======
-    if (process.env.SHOP_CHANNEL_ID) {
-      await refreshShop(client);
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
     }
   } catch (error) {
-    console.error('[BOT] Ready 事件出錯:', error.message);
+    console.error('[BOT] Ready 事件出錯:', error);
   }
 });
 
@@ -708,7 +652,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const userData = await getUser(interaction.user.id);
-<<<<<<< HEAD
 
         if (userData.coins < pool.price) {
 
@@ -785,15 +728,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 }
               )
           ]
-=======
-        if (!userData) {
-          return replyError(interaction, '讀取使用者資料失敗');
-        }
-
-        return await interaction.reply({
-          content: `💰 你目前有 ${userData.coins} 星雨幣`,
-          flags: 64,
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
         });
 
       }
@@ -937,7 +871,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // ===== 每日簽到 =====
 
       if (interaction.customId === 'daily_checkin') {
-<<<<<<< HEAD
 
         const userId = interaction.user.id;
         const userData = await getUser(userId);
@@ -960,32 +893,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           flags: 64
         });
 
-=======
-        try {
-          const userId = interaction.user.id;
-          const userData = await getUser(userId);
-          if (!userData) {
-            return replyError(interaction, '讀取使用者資料失敗');
-          }
-
-          const today = getTodayDateString();
-
-          if (userData.last_checkin === today) {
-            return replyError(interaction, '今天已經簽到過了');
-          }
-
-          const newCoins = userData.coins + 10;
-          await updateCoins(userId, newCoins);
-          await updateCheckin(userId, today);
-
-          return interaction.reply({
-            content: `☔ 簽到成功！\n\n獲得 10 星雨幣`,
-            flags: 64,
-          });
-        } catch (err) {
-          return replyError(interaction, err.message);
-        }
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
       }
 
       // ===== 開啟轉帳 =====
@@ -1010,7 +917,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // ===== 掉落 =====
 
       if (interaction.customId.startsWith('claim_')) {
-<<<<<<< HEAD
 
         if (claimedDrops.has(interaction.message.id)) {
 
@@ -1020,16 +926,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
 
         }
-=======
-        try {
-          if (claimedDrops.has(interaction.message.id)) {
-            return replyError(interaction, '這個掉落已經被搶走了');
-          }
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
 
-          claimedDrops.add(interaction.message.id);
+        claimedDrops.add(interaction.message.id);
 
-<<<<<<< HEAD
         const reward = parseInt(
           interaction.customId.replace('claim_', '')
         );
@@ -1067,50 +966,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }, 24 * 60 * 60 * 1000);
 
         return;
-=======
-          const reward = parseInt(interaction.customId.replace('claim_', ''));
-          const userId = interaction.user.id;
-          const userData = await getUser(userId);
-          if (!userData) {
-            claimedDrops.delete(interaction.message.id);
-            return replyError(interaction, '讀取使用者資料失敗');
-          }
-
-          const newCoins = userData.coins + reward;
-
-          await updateCoins(userId, newCoins);
-
-          const disabledButton = new ButtonBuilder()
-            .setCustomId(interaction.customId)
-            .setLabel('☔ 已被領取')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(true);
-
-          const disabledRow = new ActionRowBuilder().addComponents(disabledButton);
-
-          await interaction.update({
-            embeds: [
-              new EmbedBuilder()
-                .setColor('#808080')
-                .setTitle('☔ 星雨幣已被領取')
-                .setDescription(`${interaction.user} 搶到了 ${reward} 星雨幣！`),
-            ],
-            components: [disabledRow],
-          });
-
-          // 清理 Set (24 小時後自動移除)
-          setTimeout(() => {
-            claimedDrops.delete(interaction.message.id);
-          }, 24 * 60 * 60 * 1000);
-
-          return;
-        } catch (err) {
-          claimedDrops.delete(interaction.message.id);
-          return replyError(interaction, err.message);
-        }
-      }
-    }
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
 
       }
 
@@ -1150,7 +1005,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isStringSelectMenu()) {
 
       if (interaction.customId === 'shop_select') {
-<<<<<<< HEAD
 
         const itemId = interaction.values[0];
 
@@ -1195,40 +1049,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           flags: 64
         });
 
-=======
-        try {
-          const itemId = interaction.values[0];
-
-          const { data: item, error: itemError } = await supabase.from('shop_items').select('*').eq('id', itemId).single();
-
-          if (itemError || !item) {
-            return replyError(interaction, '商品不存在');
-          }
-
-          const userData = await getUser(interaction.user.id);
-          if (!userData) {
-            return replyError(interaction, '讀取使用者資料失敗');
-          }
-
-          if (userData.coins < item.price) {
-            return replyError(interaction, '星雨幣不足');
-          }
-
-          await updateCoins(interaction.user.id, userData.coins - item.price);
-
-          return interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setColor('#57F287')
-                .setTitle('🛒 購買成功')
-                .setDescription(`你購買了：\n\n📦 ${item.item_name}\n💰 ${item.price} 星雨幣`),
-            ],
-            flags: 64,
-          });
-        } catch (err) {
-          return replyError(interaction, err.message);
-        }
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
       }
 
     }
@@ -1236,7 +1056,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ===== MODAL =====
 
     if (interaction.isModalSubmit()) {
-<<<<<<< HEAD
 
       if (interaction.customId.startsWith('transfer_modal_')) {
 
@@ -1262,29 +1081,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             targetId,
             amount
           );
-=======
-      if (interaction.customId.startsWith('transfer_modal_')) {
-        try {
-          const modalTargetId = interaction.customId.replace('transfer_modal_', '');
-          const amount = parseInt(interaction.fields.getTextInputValue('transfer_amount'));
-          const userId = interaction.user.id;
-
-          // 冷卻檢查
-          const cooldownTime = transferCooldown.get(userId);
-          if (cooldownTime && cooldownTime > Date.now()) {
-            const remainingTime = Math.ceil((cooldownTime - Date.now()) / 1000);
-            return replyError(interaction, `轉帳太快了，請在 ${remainingTime} 秒後再試`);
-          }
-
-          await safeTransfer(userId, modalTargetId, amount);
-
-          // 設置冷卻
-          transferCooldown.set(userId, Date.now() + 15000);
-          setTimeout(() => {
-            transferCooldown.delete(userId);
-          }, 15000);
-
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
           return interaction.reply({
             content: `✅ 成功轉帳 ${amount} 星雨幣`,
             flags: 64
@@ -1294,11 +1090,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             content: `❌ ${error.message}`,
             flags: 64
           });
-<<<<<<< HEAD
-=======
-        } catch (transferError) {
-          return replyError(interaction, transferError.message);
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
         }
       }
     }
@@ -1313,39 +1104,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       }
 
-<<<<<<< HEAD
       // 扭蛋列表
       if (interaction.commandName === '扭蛋列表') {
-        const { data, error } = await supabase
+
+        const { data } = await supabase
           .from('gacha_pools')
           .select('*')
           .eq('guild_id', interaction.guild.id);
-        if (error) {
-          console.error(error);
-          return interaction.reply({
-            content: '❌ 讀取扭蛋失敗',
-            flags: 64
-          });
-        }
-        if (!data || data.length === 0) {
-          return interaction.reply({
-            content: '目前沒有扭蛋',
-            flags: 64
-          });
-        }
-        const text = data.map(g =>
-          `🎰 ${g.pool_name}｜💰 ${g.price}`
-        ).join('\n');
-        return interaction.reply({
-          embeds: [
-            new EmbedBuilder()
-              .setColor('#ff66cc')
-              .setTitle('🎰 扭蛋列表')
-              .setDescription(text)
-            ],
-          flags: 64
-        });
-      }
+
         if (!data.length) {
 
           return interaction.reply('目前沒有扭蛋');
@@ -1353,7 +1119,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const text = data.map(g =>
-          `🎰 ${g.name}｜💰 ${g.price}｜🎁 ${g.reward}｜🍀 權重 ${g.chance}`
+          `🎰 ${g.pool_name}｜💰 ${g.price}｜🎁 ${g.reward}｜🍀 權重 ${g.chance}`
         ).join('\n');
 
         return interaction.reply({
@@ -1417,6 +1183,28 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return interaction.reply({
           content:
             `✅ 已新增獎勵：${rewardName}`
+        });
+      }
+      // 刪除獎勵
+      if (interaction.commandName === '刪除獎勵') {
+        if (!isAdmin(interaction)) {
+          return replyError(interaction, '你沒有權限');
+        }
+        const poolId =
+          interaction.options.getInteger('卡池id');
+        const rewardName =
+          interaction.options.getString('名稱');
+        const { error } = await supabase
+          .from('gacha_rewards')
+          .delete()
+          .eq('pool_id', poolId)
+          .eq('reward_name', rewardName);
+        if (error) {
+          console.error(error);
+          return replyError(interaction, '刪除失敗');
+        }
+        return interaction.reply({
+          content: `🗑️ 已刪除獎勵：${rewardName}`
         });
       }
       // 我的排名
@@ -1562,158 +1350,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           content: `✅ 已新增商品：${itemName}`
         });
 
-=======
-      // /我的排名
-      if (interaction.commandName === '我的排名') {
-        try {
-          const userId = interaction.user.id;
-          const userData = await getUser(userId);
-          if (!userData) {
-            return replyError(interaction, '讀取使用者資料失敗');
-          }
-
-          const rank = await getUserRank(userId);
-
-          if (!rank) {
-            return replyError(interaction, '無法查詢排名');
-          }
-
-          return interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setColor('#FFD700')
-                .setTitle('🏆 星雨排名')
-                .setDescription(`你的目前排名：\n\n🥇 第 ${rank} 名\n💰 ${userData.coins} 星雨幣`),
-            ],
-            flags: 64,
-          });
-        } catch (err) {
-          return replyError(interaction, err.message);
-        }
-      }
-
-      // /發錢
-      if (interaction.commandName === '發錢') {
-        try {
-          if (interaction.guild.ownerId !== interaction.user.id) {
-            return replyError(interaction, '只有群主可以使用');
-          }
-
-          const target = interaction.options.getUser('玩家');
-          const amount = interaction.options.getInteger('金額');
-
-          if (isNaN(amount) || amount <= 0) {
-            return replyError(interaction, '金額錯誤');
-          }
-
-          const targetData = await getUser(target.id);
-          if (!targetData) {
-            return replyError(interaction, '玩家不存在');
-          }
-
-          await updateCoins(target.id, targetData.coins + amount);
-
-          return interaction.reply({
-            content: `✅ 已給予 <@${target.id}> ${amount} 星雨幣`,
-            flags: 64,
-          });
-        } catch (err) {
-          return replyError(interaction, err.message);
-        }
-      }
-
-      // /扣錢
-      if (interaction.commandName === '扣錢') {
-        try {
-          if (interaction.guild.ownerId !== interaction.user.id) {
-            return replyError(interaction, '只有群主可以使用');
-          }
-
-          const target = interaction.options.getUser('玩家');
-          const amount = interaction.options.getInteger('金額');
-
-          if (isNaN(amount) || amount <= 0) {
-            return replyError(interaction, '金額錯誤');
-          }
-
-          const targetData = await getUser(target.id);
-          if (!targetData) {
-            return replyError(interaction, '玩家不存在');
-          }
-
-          const newCoins = Math.max(0, targetData.coins - amount);
-          await updateCoins(target.id, newCoins);
-
-          return interaction.reply({
-            content: `❌ 已扣除 <@${target.id}> ${amount} 星雨幣`,
-            flags: 64,
-          });
-        } catch (err) {
-          return replyError(interaction, err.message);
-        }
-      }
-
-      // /交易紀錄
-      if (interaction.commandName === '交易紀錄') {
-        try {
-          const records = await getTransferRecords(interaction.user.id);
-
-          if (records.length === 0) {
-            return interaction.reply({
-              content: '目前沒有交易紀錄',
-              flags: 64,
-            });
-          }
-
-          const text = records
-            .map((record) => `💸 <@${record.sender_id}>\n➡️ <@${record.receiver_id}>\n💰 ${record.amount} 星雨幣`)
-            .join('\n\n');
-
-          return interaction.reply({
-            embeds: [
-              new EmbedBuilder()
-                .setColor('#00ffff')
-                .setTitle('📜 最近交易紀錄')
-                .setDescription(text),
-            ],
-            flags: 64,
-          });
-        } catch (err) {
-          return replyError(interaction, err.message);
-        }
-      }
-
-      // /新增商品
-      if (interaction.commandName === '新增商品') {
-        try {
-          if (interaction.guild.ownerId !== interaction.user.id) {
-            return replyError(interaction, '只有群主可以使用');
-          }
-
-          const itemName = interaction.options.getString('名稱');
-          const price = interaction.options.getInteger('價格');
-          const description = interaction.options.getString('介紹');
-
-          if (price <= 0) {
-            return replyError(interaction, '價格必須大於 0');
-          }
-
-          await addShopItem(itemName, price, description);
-          await refreshShop(client);
-
-          return interaction.reply({
-            content: `✅ 已新增商品：${itemName} (${price} 星雨幣)`,
-            flags: 64,
-          });
-        } catch (err) {
-          return replyError(interaction, err.message);
-        }
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
       }
 
       // 刪除商品
       if (interaction.commandName === '刪除商品') {
-<<<<<<< HEAD
 
         const itemName =
           interaction.options.getString('名稱');
@@ -1728,14 +1368,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       }
 
-      // 刪除扭蛋
+      // 刪除卡池
       if (interaction.commandName === '刪除扭蛋') {
 
         const name =
           interaction.options.getString('名稱');
 
         await supabase
-          .from('gacha_pools')
+          .from('gacha_rewards')
           .delete()
           .eq('guild_id', interaction.guild.id)
           .eq('pool_name', name);
@@ -1774,40 +1414,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
   } catch (err) {
     console.error('[互動錯誤]', err);
-=======
-        try {
-          if (interaction.guild.ownerId !== interaction.user.id) {
-            return replyError(interaction, '只有群主可以使用');
-          }
-
-          const itemName = interaction.options.getString('名稱');
-
-          const { data: existingItem, error: queryError } = await supabase
-            .from('shop_items')
-            .select('*')
-            .eq('item_name', itemName)
-            .single();
-
-          if (queryError || !existingItem) {
-            return replyError(interaction, '找不到這個商品');
-          }
-
-          await removeShopItem(itemName);
-          await refreshShop(client);
-
-          return interaction.reply({
-            content: `🗑️ 已刪除商品：${itemName}`,
-            flags: 64,
-          });
-        } catch (err) {
-          return replyError(interaction, err.message);
-        }
-      }
-    }
-  } catch (err) {
-    console.error('[互動] 未知錯誤:', err);
-
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
     if (interaction.isRepliable()) {
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp({
@@ -1826,16 +1432,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 // ===== 聊天掉落 =====
 
 client.on('messageCreate', async (message) => {
-  try {
-    if (message.author.bot) return;
+  if (message.author.bot) return;
 
-    const channelId = message.channel.id;
+  const channelId = message.channel.id;
 
-    if (dropCooldown.has(channelId)) return;
+  if (dropCooldown.has(channelId)) return;
 
-    const random = Math.floor(Math.random() * 100);
+  const random = Math.floor(Math.random() * 100);
 
-<<<<<<< HEAD
   // 訊息少於 5 字不掉落
   if (message.content.length < 5) return;
 
@@ -1868,33 +1472,6 @@ client.on('messageCreate', async (message) => {
   setTimeout(() => {
     dropCooldown.delete(channelId);
   }, 30000);
-=======
-    if (random < 5) {
-      const reward = Math.floor(Math.random() * 50) + 1;
-
-      const button = new ButtonBuilder()
-        .setCustomId(`claim_${reward}`)
-        .setLabel('☔ 領取星雨幣')
-        .setStyle(ButtonStyle.Success);
-
-      const row = new ActionRowBuilder().addComponents(button);
-
-      const embed = new EmbedBuilder()
-        .setColor('#57F287')
-        .setTitle('☔ 星雨幣掉落')
-        .setDescription(`有人掉了 ${reward} 星雨幣！\n\n快點擊下方按鈕領取 ✨`);
-
-      dropCooldown.set(channelId, true);
-      await message.channel.send({ embeds: [embed], components: [row] });
-
-      setTimeout(() => {
-        dropCooldown.delete(channelId);
-      }, 30000);
-    }
-  } catch (err) {
-    console.error('[掉落] 異常:', err.message);
-  }
->>>>>>> 3d68eba4f6f2ab2c61ba51fd4f60dc77dc919288
 });
 
 // ===== Login =====
