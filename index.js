@@ -1257,7 +1257,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
     }
-
+  }
 // ===== STRING SELECT =====
 
 if (interaction.isStringSelectMenu()) {
