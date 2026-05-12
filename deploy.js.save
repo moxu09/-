@@ -17,6 +17,16 @@ new SlashCommandBuilder()
 .setDescription('每日領取星雨幣'),
 
 new SlashCommandBuilder()
+  .setName('刪除扭蛋')
+  .setDescription('刪除扭蛋卡池')
+  .addStringOption(option =>
+    option
+      .setName('名稱')
+      .setDescription('卡池名稱')
+      .setRequired(true)
+  ),
+  
+new SlashCommandBuilder()
 .setName('錢包')
 .setDescription('查看你的星雨幣')
 
