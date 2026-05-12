@@ -1545,7 +1545,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             `🆔 ID：${g.id}\n🎰 ${g.pool_name}\n💰 單抽價格：${g.price} 星雨幣`
           ).join('\n\n');
           return interaction.reply({
-            content: `📦 扭蛋列表\n\n${text}`
+            content: `📦 扭蛋列表\n\n${text}`,
             flags: 64
           });
         }
@@ -1570,7 +1570,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return replyError(interaction, '新增失敗');
           } 
           return interaction.reply({
-            content: `✅ 已新增卡池：${name}`
+            content: `✅ 已新增卡池：${name}`,
             flags: 64
           });
         }
@@ -1609,7 +1609,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           }
           return interaction.reply({
             content:
-              `✅ 已新增獎勵：${rewardName}`
+              `✅ 已新增獎勵：${rewardName}`,
               flags: 64
           });
         } 
@@ -1632,7 +1632,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             return replyError(interaction, '刪除失敗');
           }
           return interaction.reply({
-            content: `🗑️ 已刪除獎勵：${rewardName}`
+            content: `🗑️ 已刪除獎勵：${rewardName}`,
             flags: 64
           });
         }
@@ -1696,7 +1696,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           );
           return interaction.reply({
             content:
-              `✅ 已給予 <@${target.id}> ${amount} 星雨幣`
+              `✅ 已給予 <@${target.id}> ${amount} 星雨幣`,
               flags: 64
           });
         }
@@ -1720,7 +1720,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           );
           return interaction.reply({
             content:
-              `❌ 已扣除 <@${target.id}> ${amount} 星雨幣`
+              `❌ 已扣除 <@${target.id}> ${amount} 星雨幣`,
               flags: 64
           });
         }
@@ -1739,7 +1739,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           );
           await refreshShop(client);
           return interaction.reply({
-            content: `✅ 已新增商品：${itemName}`
+            content: `✅ 已新增商品：${itemName}`,
             flags: 64
           });
         }
@@ -1750,7 +1750,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           await removeShopItem(itemName);
           await refreshShop(client);
           return interaction.reply({
-            content: `🗑️ 已刪除商品：${itemName}`
+            content: `🗑️ 已刪除商品：${itemName}`,
             flags: 64
           });
         }
@@ -1780,7 +1780,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .delete()
             .eq('id', pool.id);
           return interaction.reply({
-            content: `🗑️ 已刪除扭蛋：${name}`
+            content: `🗑️ 已刪除扭蛋：${name}`,
             flags: 64
           });
         }
