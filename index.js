@@ -36,6 +36,18 @@ const claimedDrops = new Set();
 const dropCooldown = new Map();
 
 // ===== 工具函數 =====
+function getRarityEmoji(rarity) {
+  switch (rarity) {
+    case 'SSR':
+      return '🌈';
+    case 'SR':
+      return '⭐';
+    case 'R':
+      return '🔹';
+    default:
+      return '📦';
+  }
+}
 function isAdmin(interaction) {
   return (
     interaction.guild.ownerId === interaction.user.id ||
@@ -111,16 +123,13 @@ async function replyError(interaction, message) {
 // 查詢玩家排名
 async function getUserRank(userId) {
   const { data, error } = await supabase.from('users').select('*').order('coins', { ascending: false });
-
   if (error) {
     console.error('[DB] 查詢排名失敗:', error);
     return null;
   }
-
   if (!data || data.length === 0) {
     return null;
   }
-
   const rank = data.findIndex((user) => user.user_id === userId);
   return rank === -1 ? null : rank + 1;
 }
@@ -133,27 +142,22 @@ async function getTransferRecords(userId) {
     .or(`sender_id.eq.${userId},receiver_id.eq.${userId}`)
     .order('created_at', { ascending: false })
     .limit(10);
-
   if (error) {
     console.error('[DB] 查詢交易紀錄失敗:', error);
     return [];
   }
-
   return data || [];
 }
 
 // 讀取商店商品
 async function getShopItems() {
   const { data, error } = await supabase.from('shop_items').select('*').order('price', { ascending: true });
-
   if (error) {
     console.error('[DB] 商店讀取失敗:', error);
     return [];
   }
-
   return data || [];
 }
-
 // 新增商品
 async function addShopItem(itemName, price, description) {
   const { error } = await supabase.from('shop_items').insert([{ item_name: itemName, price, description }]);
@@ -163,7 +167,6 @@ async function addShopItem(itemName, price, description) {
     throw new Error('新增商品失敗');
   }
 }
-
 // 刪除商品
 async function removeShopItem(itemName) {
   const { error } = await supabase.from('shop_items').delete().eq('item_name', itemName);
@@ -173,16 +176,24 @@ async function removeShopItem(itemName) {
     throw new Error('刪除商品失敗');
   }
 }
-
 // 新增玩家商品
-async function addUserItem(userId, itemName) {
+async function addUserItem(
+  userId,
+  itemName,
+  rarity = null,
+  description = null,
+  itemType = 'shop'
+) {
 
   const { error } = await supabase
     .from('user_items')
     .insert([
       {
         user_id: userId,
-        item_name: itemName
+        item_name: itemName,
+        rarity,
+        description,
+        item_type: itemType
       }
     ]);
 
@@ -191,7 +202,6 @@ async function addUserItem(userId, itemName) {
     throw new Error('新增玩家商品失敗');
   }
 }
-
 // 讀取玩家商品
 async function getUserItems(userId) {
 
@@ -330,6 +340,15 @@ const commands = [
     .addIntegerOption(option =>
       option.setName('價格')
         .setDescription('抽一次價格')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('刪除扭蛋')
+    .setDescription('刪除扭蛋卡池')
+    .addStringOption(option =>
+      option
+        .setName('名稱')
+        .setDescription('卡池名稱')
         .setRequired(true)
     ),
   new SlashCommandBuilder()
@@ -587,8 +606,12 @@ client.once(Events.ClientReady, async () => {
         .setCustomId('gacha_ten')
         .setLabel('🎰 十抽')
         .setStyle(ButtonStyle.Success);
+      const poolButton = new ButtonBuilder()
+        .setCustomId('gacha_view_pool')
+        .setLabel('📦 查看獎池')
+        .setStyle(ButtonStyle.Secondary);
       const row = new ActionRowBuilder()
-        .addComponents(singleButton, tenButton);
+        .addComponents(poolButton, singleButton, tenButton);
       const embed = new EmbedBuilder()
         .setColor('#ff66cc')
         .setTitle('🎰 星雨扭蛋')
@@ -701,7 +724,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // 加進玩家背包
         await addUserItem(
           interaction.user.id,
-          selected.reward_name
+          selected.reward_name,
+          selected.rarity,
+          selected.reward_description,
+          'gacha'
         );
 
         return interaction.reply({
@@ -821,7 +847,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
           // 加進背包
           await addUserItem(
             interaction.user.id,
-            selected.reward_name
+            selected.reward_name,
+            selected.rarity,
+            selected.reward_description,
+            'gacha'
           );
 
           results.push(
@@ -855,6 +884,44 @@ client.on(Events.InteractionCreate, async (interaction) => {
         });
 
       }
+      // ===== 查看獎池 =====
+    if (interaction.customId === 'gacha_view_pool') {
+      const { data: pools } = await supabase
+        .from('gacha_pools')
+       .select('*')
+       .eq('guild_id', interaction.guild.id);
+      if (!pools || pools.length === 0) {
+        return interaction.reply({
+          content: '❌ 沒有卡池',
+          flags: 64
+        });
+      }
+      const pool = pools[0];
+      const { data: rewards } = await supabase
+        .from('gacha_rewards')
+        .select('*')
+        .eq('pool_id', pool.id);
+      if (!rewards || rewards.length === 0) {
+        return interaction.reply({
+          content: '❌ 卡池沒有獎勵',
+          flags: 64
+        });
+      }
+      const text = rewards.map(r =>
+        `🎁 ${r.reward_name}\n✨ ${r.rarity}\n🍀 機率權重：${r.chance}\n📦 ${r.reward_description}`
+      ).join('\n\n');
+      return interaction.reply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#ff99cc')
+            .setTitle(`📦 ${pool.pool_name} 獎池`)
+            .setDescription(
+              `💰 單抽價格：${pool.price} 星雨幣\n\n${text}`
+            )
+        ],
+        flags: 64
+      });
+    }
       // ===== 餘額查詢 =====
 
       if (interaction.customId === 'check_coins') {
@@ -1041,7 +1108,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
         await addUserItem(
           interaction.user.id,
-          item.item_name
+          item.item_name,
+          null,
+          item.description,
+          'shop'
         );
 
         return interaction.reply({
@@ -1119,8 +1189,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const text = data.map(g =>
-          `🎰 ${g.pool_name}｜💰 ${g.price}｜🎁 ${g.reward}｜🍀 權重 ${g.chance}`
-        ).join('\n');
+          `🎰 ${g.pool_name}\n💰 單抽價格：${g.price} 星雨幣`
+        ).join('\n\n');
 
         return interaction.reply({
           content: `📦 扭蛋列表\n\n${text}`
@@ -1368,46 +1438,82 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       }
 
-      // 刪除卡池
       if (interaction.commandName === '刪除扭蛋') {
-
+        if (!isAdmin(interaction)) {
+        return replyError(interaction, '你沒有權限');
+        }
         const name =
           interaction.options.getString('名稱');
-
+        const { data: pool } = await supabase
+          .from('gacha_pools')
+          .select('*')
+          .eq('guild_id', interaction.guild.id)
+          .eq('pool_name', name)
+          .single();
+        if (!pool) {
+          return replyError(interaction, '找不到卡池');
+        }
+        // 先刪獎勵
         await supabase
           .from('gacha_rewards')
           .delete()
-          .eq('guild_id', interaction.guild.id)
-          .eq('pool_name', name);
-
+          .eq('pool_id', pool.id);
+        // 再刪卡池
+        await supabase
+          .from('gacha_pools')
+          .delete()
+          .eq('id', pool.id);
         return interaction.reply({
           content: `🗑️ 已刪除扭蛋：${name}`
         });
-
       }
 
 
       // 我的商品
       if (interaction.commandName === '我的商品') {
         const items = await getUserItems(
-          interaction.user.id
-         );
+        interaction.user.id
+        );
         if (!items.length) {
           return interaction.reply({
             content: '📦 你目前沒有商品',
             flags: 64
           });
         }
-        const text = items.map((item, index) =>
-          `${index + 1}. 🎁 ${item.item_name}`
-        ).join('\n');
+        const rarityOrder = ['SSR', 'SR', 'R'];
+        let text = '';
+        // 稀有商品
+        for (const rarity of rarityOrder) {
+          const filtered = items.filter(
+            item => item.rarity === rarity
+          );
+          if (filtered.length === 0) continue;
+          text += `\n${getRarityEmoji(rarity)} ${rarity}\n`;
+          for (const item of filtered) {
+            text += `• ${item.item_name}`;
+            if (item.description) {
+            text += `\n└ 📦 ${item.description}`;
+          }
+          text += '\n';
+          }
+        }
+        // 一般商品
+        const normalItems = items.filter(
+          item => !item.rarity
+        );
+        if (normalItems.length > 0) {
+          text += `\n🛒 一般商品\n`;
+          for (const item of normalItems) {
+            text += `• ${item.item_name}\n`;
+          }
+        }
         return interaction.reply({
           embeds: [
             new EmbedBuilder()
               .setColor('#ff66cc')
-              .setTitle('📦 我的商品')
+              .setTitle('🎒 分類背包')
               .setDescription(text)
-         ],
+          ],
           flags: 64
         });
       }
