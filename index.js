@@ -792,25 +792,42 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
 
       // ===== 完成訂單 =====
-
       if (
         interaction.customId ===
         'complete_order'
       ) {
-
+        // 是否為群主
+        const isOwner =
+          interaction.guild.ownerId ===
+          interaction.user.id;
+        // 是否為管理員
+        const isAdmin =
+          interaction.member.permissions.has('Administrator');
+        // 是否有指定身分組
+        const hasRole =
+          interaction.member.roles.cache.has(
+            process.env.MANAGER_ROLE_ID
+          );
+        // 沒權限
+        if (
+          !isOwner &&
+          !isAdmin &&
+          !hasRole
+        ) {
+          return interaction.reply({
+            content: '❌ 只有客服人員能關閉',
+            flags: 64
+          });
+        }
         await interaction.reply({
           content:
             '✅ 訂單完成\n此頻道將在 10 秒後刪除'
         });
-
         setTimeout(async () => {
-
           await interaction.channel
             .delete()
             .catch(() => {});
-
         }, 10000);
-
       }
 
       // ===== 完成儲值 =====
@@ -1289,7 +1306,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await interaction.guild.channels.create({
           name: channelName,
           type: ChannelType.GuildText,
-          permissionOverwrites: [
+              // 放進指定類別
+              parent: process.env.ORDER_CATEGORY_ID,
+              permissionOverwrites: [
             // everyone
             {
               id:
