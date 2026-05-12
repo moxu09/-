@@ -453,7 +453,13 @@ const commands = [
         .setName('機率')
         .setDescription('例如：0.5 / 1 / 10')
         .setRequired(true)
-    ), 
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('星雨幣')
+        .setDescription('中獎時給多少星雨幣')
+        .setRequired(false)
+    ),
   new SlashCommandBuilder()
     .setName('刪除獎勵')
     .setDescription('刪除卡池獎勵')
@@ -867,7 +873,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
             content: '❌ 沒有卡池',
             flags: 64
           });
-
         }
 
         const pool = pools[0];
@@ -896,13 +901,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
 
         }
-
-        // 扣錢
-        await updateCoins(
-          interaction.user.id,
-          userData.coins - pool.price
-        );
-
         // 權重總和
         const totalChance = rewards.reduce(
           (sum, r) => sum + r.chance,
@@ -941,7 +939,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
           selected.reward_description,
           'gacha'
         );
-
+        let rewardCoins =
+          selected.reward_coins || 0;
+        // 最終餘額
+        const finalCoins =
+        userData.coins - pool.price + rewardCoins;
+        // 更新金額
+        await updateCoins(
+          interaction.user.id,
+          finalCoins
+        );
         return interaction.reply({
           embeds: [
             new EmbedBuilder()
@@ -951,6 +958,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 `👤 玩家：${interaction.user}\n\n` +
                 `🎉 獲得：${selected.reward_name}\n` +
                 `✨ 稀有度：${selected.rarity}\n\n` +
+                `💰 星雨幣：${rewardCoins}\n\n` +
                 `📦 ${selected.reward_description}`
               )
               .addFields(
@@ -961,7 +969,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 },
                 {
                   name: '💳 剩餘',
-                  value: `${userData.coins - pool.price} 星雨幣`,
+                  value: `${finalCoins} 星雨幣`,
                   inline: true
                 }
               )
@@ -1016,13 +1024,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
 
         }
-
-        // 扣錢
-        await updateCoins(
-          interaction.user.id,
-          userData.coins - totalPrice
-        );
-
         // 權重總和
         const totalChance = rewards.reduce(
           (sum, r) => sum + r.chance,
@@ -1030,7 +1031,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         );
 
         const results = [];
-
+        let totalRewardCoins = 0;
         for (let i = 0; i < 10; i++) {
 
           const random = Math.random() * totalChance;
@@ -1064,13 +1065,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
             selected.reward_description,
             'gacha'
           );
-
+        const rewardCoins =
+          selected.reward_coins || 0;
+        totalRewardCoins += rewardCoins;
           results.push(
-            `🎉 ${selected.reward_name}【${selected.rarity}】`
-          );
-
+            `🎉 ${selected.reward_name}【${selected.rarity}】\n💰 ${rewardCoins} 星雨幣`
+            );
         }
-
+        const finalCoins =
+          userData.coins - totalPrice + totalRewardCoins;
+        await updateCoins(
+          interaction.user.id,
+          finalCoins
+        );
         return interaction.reply({
           embeds: [
             new EmbedBuilder()
@@ -1088,7 +1095,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 },
                 {
                   name: '💳 剩餘',
-                  value: `${userData.coins - totalPrice} 星雨幣`,
+                  value: `${finalCoins} 星雨幣`,
                   inline: true
                 }
               )
@@ -1577,6 +1584,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
             interaction.options.getString('稀有度');
           const chance =
             interaction.options.getNumber('機率');
+          const rewardCoins =
+            interaction.options.getInteger('星雨幣') || 0;
           if (isNaN(chance) || chance <= 0) {
             return replyError(interaction, '機率必須大於 0');
           }
@@ -1587,7 +1596,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
               reward_name: rewardName,
               reward_description: description,
               rarity,
-              chance
+              chance,
+              reward_coins: rewardCoins
             });
           if (error) {
             console.error(error);
