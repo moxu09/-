@@ -806,7 +806,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         // 是否有指定身分組
         const hasRole =
           interaction.member.roles.cache.has(
-            process.env.MANAGER_ROLE_ID
+            process.env.STAFF_ROLE_ID
           );
         // 沒權限
         if (
