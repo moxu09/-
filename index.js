@@ -30,6 +30,13 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
+// ===== 訂單系統設定 =====
+
+const ORDER_CHANNEL_ID =
+  process.env.ORDER_CHANNEL_ID;
+
+const STAFF_ROLE_ID =
+  process.env.STAFF_ROLE_ID;
 // ===== 全域狀態 =====
 
 const claimedDrops = new Set();
@@ -305,6 +312,71 @@ async function refreshShop(client) {
   await shopChannel.send({ embeds: [embed], components });
 }
 
+// ===== 發送訂單系統 =====
+
+async function sendOrderSystem(client) {
+
+  const channel = await client.channels.fetch(
+    ORDER_CHANNEL_ID
+  );
+
+  if (!channel) return;
+
+  // 刪除舊面板
+  const messages = await channel.messages.fetch({
+    limit: 20
+  });
+
+  const oldPanels = messages.filter(
+    msg =>
+      msg.author.id === client.user.id &&
+      msg.embeds.length > 0 &&
+      msg.embeds[0].title === '📦 星雨訂單系統'
+  );
+
+  for (const msg of oldPanels.values()) {
+    await msg.delete().catch(() => {});
+  }
+
+  // 下拉選單
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId('order_system_select')
+      .setPlaceholder('請選擇功能')
+      .addOptions([
+        {
+          label: '🛒 點單',
+          description: '建立點單頻道',
+          value: 'order'
+        },
+        {
+          label: '💰 儲值',
+          description: '建立儲值頻道',
+          value: 'topup'
+        }
+      ]);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#ff66cc')
+      .setTitle('📦 星雨訂單系統')
+      .setDescription(
+        `請選擇功能\n\n` +
+        `🛒 點單\n` +
+        `💰 儲值`
+      );
+
+  await channel.send({
+    embeds: [embed],
+    components: [row]
+  });
+
+}
+
 // ===== 指令定義 =====
 
 const commands = [
@@ -374,11 +446,12 @@ const commands = [
         .setDescription('SSR / SR / R')
         .setRequired(true)
     )
-    .addIntegerOption(option =>
-      option.setName('機率')
-        .setDescription('權重')
+    .addNumberOption(option =>
+      option
+        .setName('機率')
+        .setDescription('例如：0.5 / 1 / 10')
         .setRequired(true)
-    ),  
+    ), 
   new SlashCommandBuilder()
     .setName('刪除獎勵')
     .setDescription('刪除卡池獎勵')
@@ -498,6 +571,9 @@ client.once(Events.ClientReady, async () => {
   });
   console.log('[BOT] 機器人已上線');
   
+  // 發送訂單系統
+  await sendOrderSystem(client);
+
   try {
     // ATM 頻道
     const atmChannel = await client.channels.fetch(process.env.CHANNEL_ID);
@@ -634,11 +710,128 @@ client.once(Events.ClientReady, async () => {
 // ===== Interaction Handler =====
 
 client.on(Events.InteractionCreate, async (interaction) => {
+
   try {
 
     // ===== BUTTON =====
 
     if (interaction.isButton()) {
+
+      // ===== 使用優惠券 =====
+
+      if (
+        interaction.customId ===
+        'use_coupon'
+      ) {
+
+        const { data: coupons } =
+          await supabase
+            .from('user_items')
+            .select('*')
+            .eq(
+              'user_id',
+              interaction.user.id
+            )
+            .eq(
+              'item_type',
+              'coupon'
+            );
+
+        if (
+          !coupons ||
+          coupons.length === 0
+        ) {
+
+          return interaction.reply({
+            content:
+              '❌ 你沒有優惠券',
+            flags: 64
+          });
+
+        }
+
+        const coupon =
+          coupons[0];
+
+        // 刪除優惠券
+        await supabase
+          .from('user_items')
+          .delete()
+          .eq('id', coupon.id);
+
+        return interaction.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#57F287')
+              .setTitle(
+                '✅ 已使用優惠券'
+              )
+              .setDescription(
+                `${coupon.item_name}\n\n` +
+                `優惠券已扣除`
+              )
+          ]
+        });
+
+      }
+
+      // ===== 不使用優惠券 =====
+
+      if (
+        interaction.customId ===
+        'skip_coupon'
+      ) {
+
+        return interaction.reply({
+          content:
+            '✅ 已略過優惠券'
+        });
+
+      }
+
+      // ===== 完成訂單 =====
+
+      if (
+        interaction.customId ===
+        'complete_order'
+      ) {
+
+        await interaction.reply({
+          content:
+            '✅ 訂單完成\n此頻道將在 10 秒後刪除'
+        });
+
+        setTimeout(async () => {
+
+          await interaction.channel
+            .delete()
+            .catch(() => {});
+
+        }, 10000);
+
+      }
+
+      // ===== 完成儲值 =====
+
+      if (
+        interaction.customId ===
+        'complete_topup'
+      ) {
+
+        await interaction.reply({
+          content:
+            '✅ 儲值完成\n此頻道將在 10 秒後刪除'
+        });
+
+        setTimeout(async () => {
+
+          await interaction.channel
+            .delete()
+            .catch(() => {});
+
+        }, 10000);
+
+      }
 
       // ===== 單抽 =====
 
@@ -885,43 +1078,41 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       }
       // ===== 查看獎池 =====
-    if (interaction.customId === 'gacha_view_pool') {
-      const { data: pools } = await supabase
-        .from('gacha_pools')
-       .select('*')
-       .eq('guild_id', interaction.guild.id);
-      if (!pools || pools.length === 0) {
-        return interaction.reply({
-          content: '❌ 沒有卡池',
-          flags: 64
+      if (interaction.customId === 'gacha_view_pool') {
+        await interaction.deferReply({ flags: 64 });
+        const { data: pools } = await supabase
+          .from('gacha_pools')
+          .select('*')
+          .eq('guild_id', interaction.guild.id);
+        if (!pools || pools.length === 0) {
+          return interaction.editReply({
+            content: '❌ 沒有卡池'
+          });
+        }
+        const pool = pools[0];
+        const { data: rewards } = await supabase
+          .from('gacha_rewards')
+          .select('*')
+          .eq('pool_id', pool.id);
+        if (!rewards || rewards.length === 0) {
+          return interaction.editReply({
+            content: '❌ 卡池沒有獎勵'
+          });
+        }
+        const text = rewards.map(r =>
+          `🎁 ${r.reward_name}\n✨ ${r.rarity}\n🍀 機率權重：${r.chance}\n📦 ${r.reward_description}`
+        ).join('\n\n');
+        return interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#ff99cc')
+              .setTitle(`📦 ${pool.pool_name} 獎池`)
+              .setDescription(
+                `💰 單抽價格：${pool.price} 星雨幣\n\n${text}`
+              )
+          ]
         });
       }
-      const pool = pools[0];
-      const { data: rewards } = await supabase
-        .from('gacha_rewards')
-        .select('*')
-        .eq('pool_id', pool.id);
-      if (!rewards || rewards.length === 0) {
-        return interaction.reply({
-          content: '❌ 卡池沒有獎勵',
-          flags: 64
-        });
-      }
-      const text = rewards.map(r =>
-        `🎁 ${r.reward_name}\n✨ ${r.rarity}\n🍀 機率權重：${r.chance}\n📦 ${r.reward_description}`
-      ).join('\n\n');
-      return interaction.reply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#ff99cc')
-            .setTitle(`📦 ${pool.pool_name} 獎池`)
-            .setDescription(
-              `💰 單抽價格：${pool.price} 星雨幣\n\n${text}`
-            )
-        ],
-        flags: 64
-      });
-    }
       // ===== 餘額查詢 =====
 
       if (interaction.customId === 'check_coins') {
@@ -1067,10 +1258,265 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     }
 
-    // ===== STRING SELECT =====
+// ===== STRING SELECT =====
 
-    if (interaction.isStringSelectMenu()) {
+if (interaction.isStringSelectMenu()) {
 
+  // ===== 訂單系統 =====
+
+  if (
+    interaction.customId ===
+    'order_system_select'
+  ) {
+
+    const value =
+      interaction.values[0];
+
+    // ===== 頻道名稱 =====
+
+    const random =
+      Math.floor(
+        Math.random() * 9999
+      );
+
+    let channelName = '';
+
+    if (value === 'order') {
+
+      channelName =
+        `order-${interaction.user.username}-${random}`;
+
+    }
+
+    if (value === 'topup') {
+
+      channelName =
+        `topup-${interaction.user.username}-${random}`;
+
+    }
+
+    // ===== 建立頻道 =====
+
+    const orderChannel =
+      await interaction.guild.channels.create({
+
+        name: channelName,
+
+        type: 0,
+
+        permissionOverwrites: [
+
+          // everyone
+          {
+            id:
+              interaction.guild.roles.everyone,
+            deny: ['ViewChannel']
+          },
+
+          // 使用者
+          {
+            id: interaction.user.id,
+            allow: [
+              'ViewChannel',
+              'SendMessages',
+              'ReadMessageHistory'
+            ]
+          },
+
+          // 店員
+          {
+            id: STAFF_ROLE_ID,
+            allow: [
+              'ViewChannel',
+              'SendMessages',
+              'ReadMessageHistory'
+            ]
+          }
+
+        ]
+
+      });
+
+    // ===== 點單 =====
+
+    if (value === 'order') {
+
+      const couponButton =
+        new ButtonBuilder()
+          .setCustomId(
+            'use_coupon'
+          )
+          .setLabel(
+            '✅ 使用優惠券'
+          )
+          .setStyle(
+            ButtonStyle.Success
+          );
+
+      const noCouponButton =
+        new ButtonBuilder()
+          .setCustomId(
+            'skip_coupon'
+          )
+          .setLabel(
+            '❌ 不使用優惠券'
+          )
+          .setStyle(
+            ButtonStyle.Secondary
+          );
+
+      const completeButton =
+        new ButtonBuilder()
+          .setCustomId(
+            'complete_order'
+          )
+          .setLabel(
+            '✅ 完成訂單'
+          )
+          .setStyle(
+            ButtonStyle.Primary
+          );
+
+      const row1 =
+        new ActionRowBuilder()
+          .addComponents(
+            couponButton,
+            noCouponButton
+          );
+
+      const row2 =
+        new ActionRowBuilder()
+          .addComponents(
+            completeButton
+          );
+
+      const embed =
+        new EmbedBuilder()
+          .setColor('#ff66cc')
+          .setTitle(
+            '🛒 訂單建立成功'
+          )
+          .setDescription(
+            `請問是否使用優惠券？`
+          );
+
+      await orderChannel.send({
+        content:
+          `${interaction.user}`,
+        embeds: [embed],
+        components: [
+          row1,
+          row2
+        ]
+      });
+
+    }
+
+    // ===== 儲值 =====
+
+    if (value === 'topup') {
+
+      const completeTopupButton =
+        new ButtonBuilder()
+          .setCustomId(
+            'complete_topup'
+          )
+          .setLabel(
+            '✅ 已完成儲值'
+          )
+          .setStyle(
+            ButtonStyle.Success
+          );
+
+      const row =
+        new ActionRowBuilder()
+          .addComponents(
+            completeTopupButton
+          );
+
+      const embed =
+        new EmbedBuilder()
+          .setColor('#00ffff')
+          .setTitle(
+            '💰 儲值申請建立成功'
+          )
+          .setDescription(
+            `請提供以下資訊\n\n` +
+            `• 付款方式\n` +
+            `• 付款金額\n` +
+            `• 付款截圖`
+          );
+
+      await orderChannel.send({
+        content:
+          `${interaction.user}`,
+        embeds: [embed],
+        components: [row]
+      });
+
+    }
+
+    return interaction.reply({
+      content:
+        `✅ 已建立頻道：${orderChannel}`,
+      flags: 64
+    });
+
+  }
+
+  // ===== 原本商店系統 =====
+
+  if (interaction.customId === 'shop_select') {
+
+    const itemId = interaction.values[0];
+
+    const { data: item } = await supabase
+      .from('shop_items')
+      .select('*')
+      .eq('id', itemId)
+      .single();
+
+    if (!item) {
+
+      return interaction.reply({
+        content: '❌ 商品不存在',
+        flags: 64
+      });
+
+    }
+
+    const userData = await getUser(interaction.user.id);
+
+    if (userData.coins < item.price) {
+
+      return interaction.reply({
+        content: '❌ 星雨幣不足',
+        flags: 64
+      });
+
+    }
+
+    await updateCoins(
+      interaction.user.id,
+      userData.coins - item.price
+    );
+
+    await addUserItem(
+      interaction.user.id,
+      item.item_name,
+      null,
+      item.description,
+      'shop'
+    );
+
+    return interaction.reply({
+      content: `🛒 購買成功：${item.item_name}`,
+      flags: 64
+    });
+
+  }
+
+}  
       if (interaction.customId === 'shop_select') {
 
         const itemId = interaction.values[0];
@@ -1189,7 +1635,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         const text = data.map(g =>
-          `🎰 ${g.pool_name}\n💰 單抽價格：${g.price} 星雨幣`
+          `🆔 ID：${g.id}\n🎰 ${g.pool_name}\n💰 單抽價格：${g.price} 星雨幣`
         ).join('\n\n');
 
         return interaction.reply({
@@ -1236,7 +1682,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const rarity =
           interaction.options.getString('稀有度');
         const chance =
-          interaction.options.getInteger('機率');
+          interaction.options.getNumber('機率');
+        if (isNaN(chance) || chance <= 0) {
+          return replyError(interaction, '機率必須大於 0');
+        }
         const { error } = await supabase
           .from('gacha_rewards')
           .insert({
