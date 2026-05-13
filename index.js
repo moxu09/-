@@ -1067,14 +1067,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
             'gacha'
           );
         const rewardCoins =
-          selected.reward_coins || 0;
+          Number(selected.reward_coins) || 0;
         totalRewardCoins += rewardCoins;
           results.push(
             `🎉 ${selected.reward_name}【${selected.rarity}】\n💰 ${rewardCoins} 星雨幣`
             );
         }
         const finalCoins =
-          userData.coins - totalPrice + totalRewardCoins;
+          Math.max(
+            0,
+            userData.coins - totalPrice + totalRewardCoins
+        );
         await updateCoins(
           interaction.user.id,
           finalCoins
@@ -1098,6 +1101,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
                 {
                   name: '💳 剩餘',
                   value: `${finalCoins} 星雨幣`,
+                  inline: true
+                },
+                {
+                  name: '🎁 總獲得',
+                  value: `${totalRewardCoins} 星雨幣`,
                   inline: true
                 }
               )
