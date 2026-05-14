@@ -1,5 +1,5 @@
 require('dotenv').config();
-
+const fs = require('fs');
 process.on('unhandledRejection', console.error);
 process.on('uncaughtException', console.error);
 
@@ -802,50 +802,417 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId ===
         'complete_order'
       ) {
+
         // 是否為群主
         const isOwner =
           interaction.guild.ownerId ===
           interaction.user.id;
+
         // 是否為管理員
         const isAdmin =
-          interaction.member.permissions.has('Administrator');
+          interaction.member.permissions.has(
+            'Administrator'
+          );
+
         // 是否有指定身分組
         const hasRole =
           interaction.member.roles.cache.has(
             process.env.STAFF_ROLE_ID
           );
+
         // 沒權限
         if (
           !isOwner &&
           !isAdmin &&
           !hasRole
         ) {
+
           return interaction.reply({
-            content: '❌ 只有客服人員能關閉',
+            content:
+              '❌ 只有客服人員能關閉',
             flags: 64
           });
+
         }
-        await interaction.reply({
+
+        // 按鈕
+        const row =
+          new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(
+                  'save_order_log'
+                )
+                .setLabel(
+                  '📁 儲存紀錄'
+                )
+                .setStyle(
+                  ButtonStyle.Success
+                ),
+
+              new ButtonBuilder()
+                .setCustomId(
+                  'delete_order_now'
+                )
+                .setLabel(
+                  '🗑️ 不儲存'
+                )
+                .setStyle(
+                  ButtonStyle.Danger
+                )
+            );
+
+        return interaction.reply({
           content:
-            '✅ 訂單完成\n此頻道將在 10 秒後刪除'
+            '      📦 是否儲存此訂單紀錄？',
+          components: [row]
         });
+
+      }
+
+      // ===== 儲存訂單紀錄 =====
+      if (
+        interaction.customId ===
+        'save_order_log'
+      ) {
+
+        await interaction.deferReply({
+          flags: 64
+        });
+
+        // 取得訊息
+        const messages =
+          await interaction.channel.messages.fetch({
+            limit: 100
+          });
+
+        // 排序
+        const sorted =
+          [...messages.values()]
+            .sort(
+              (a, b) =>
+                a.createdTimestamp -
+                b.createdTimestamp
+            );
+
+        // HTML
+        let html = `
+        <html>
+        <head>
+          <meta charset="UTF-8">
+          <style>
+          body{
+            background:#2b2d31;
+            color:white;
+            font-family:sans-serif;
+            padding:20px;
+          }
+
+          .message{
+            background:#1e1f22;
+            padding:10px;
+            border-radius:10px;
+            margin-bottom:10px;
+          }
+
+          .user{
+            color:#ff66cc;
+            font-weight:bold;
+          }
+
+          .time{
+            color:gray;
+            font-size:12px;
+            margin-bottom:5px;
+          }
+          </style>
+        </head>
+
+        <body>
+
+        <h1>
+          📦 ${interaction.channel.name}
+        </h1>
+        `;
+
+        // 訊息內容
+        for (const msg of sorted) {
+
+          html += `
+          <div class="message">
+
+            <div class="user">
+              ${msg.author.tag}
+            </div>
+
+            <div class="time">
+              ${new Date(
+                msg.createdTimestamp
+              ).toLocaleString()}
+            </div>
+
+            <div>
+              ${msg.content || '(無內容)'}
+            </div>
+
+          </div>
+          `;
+
+        }
+
+        html += `
+        </body>
+        </html>
+        `;
+
+        // 檔名
+        const fileName =
+          `order-${interaction.channel.id}.html`;
+
+        // 建立檔案
+        fs.writeFileSync(
+          `./${fileName}`,
+          html
+        );
+
+        // 紀錄頻道
+        const logChannel =
+          interaction.guild.channels.cache.get(
+            '1501272256683442407'
+          );
+
+        // 傳送
+        await logChannel.send({
+          content:
+            `📁 ${interaction.channel.name} 訂單紀錄`,
+          files: [`./${fileName}`]
+        });
+
+        // 刪除本地檔案
+        fs.unlinkSync(
+          `./${fileName}`
+        );
+
+        await interaction.editReply({
+          content:
+            '      ✅ 已儲存紀錄\n      10 秒後刪除頻道'
+        });
+
+        // 刪除頻道
         setTimeout(async () => {
+
           await interaction.channel
             .delete()
             .catch(() => {});
+
         }, 10000);
+
+      }
+
+      // ===== 不儲存 =====
+      if (
+        interaction.customId ===
+        'delete_order_now'
+      ) {
+
+        await interaction.reply({
+          content:
+            '      🗑️ 此頻道將在 10 秒後刪除'
+        });
+
+        setTimeout(async () => {
+
+          await interaction.channel
+            .delete()
+            .catch(() => {});
+
+        }, 10000);
+
       }
 
       // ===== 完成儲值 =====
-
       if (
         interaction.customId ===
         'complete_topup'
       ) {
 
-        await interaction.reply({
+        // 是否為群主
+        const isOwner =
+          interaction.guild.ownerId ===
+          interaction.user.id;
+
+        // 是否為管理員
+        const isAdmin =
+          interaction.member.permissions.has(
+            'Administrator'
+          );
+
+        // 是否有指定身分組
+        const hasRole =
+          interaction.member.roles.cache.has(
+            process.env.STAFF_ROLE_ID
+          );
+
+        // 沒權限
+        if (
+          !isOwner &&
+          !isAdmin &&
+          !hasRole
+        ) {
+
+          return interaction.reply({
+            content:
+              '❌ 只有客服人員能關閉',
+            flags: 64
+          });
+
+        }
+
+        // 按鈕
+        const row =
+          new ActionRowBuilder()
+            .addComponents(
+
+              new ButtonBuilder()
+                .setCustomId(
+                  'save_topup_log'
+                )
+                .setLabel(
+                  '📁 儲存紀錄'
+                )
+                .setStyle(
+                  ButtonStyle.Success
+                ),
+
+              new ButtonBuilder()
+                .setCustomId(
+                  'delete_topup_now'
+                )
+                .setLabel(
+                  '🗑️ 不儲存'
+                )
+                .setStyle(
+                  ButtonStyle.Danger
+                )
+
+            );
+
+        return interaction.reply({
           content:
-            '✅ 儲值完成\n此頻道將在 10 秒後刪除'
+            '      📦 是否儲存此儲值紀錄？',
+          components: [row]
+        });
+
+      }
+
+      // ===== 儲存儲值紀錄 =====
+      if (
+        interaction.customId ===
+        'save_topup_log'
+      ) {
+
+        await interaction.deferReply({
+          flags: 64
+        });
+
+        const messages =
+          await interaction.channel.messages.fetch({
+            limit: 100
+          });
+
+        const sorted =
+          [...messages.values()]
+            .sort(
+              (a, b) =>
+                a.createdTimestamp -
+                b.createdTimestamp
+            );
+
+        let html = `
+        <html>
+        <head>
+          <meta charset="UTF-8">
+        </head>
+
+        <body style="
+          background:#2b2d31;
+          color:white;
+          font-family:sans-serif;
+          padding:20px;
+        ">
+
+        <h1>
+          💳 ${interaction.channel.name}
+        </h1>
+        `;
+
+        for (const msg of sorted) {
+
+          html += `
+          <div style="
+            background:#1e1f22;
+            padding:10px;
+            border-radius:10px;
+            margin-bottom:10px;
+          ">
+
+            <div style="
+              color:#00ccff;
+              font-weight:bold;
+            ">
+              ${msg.author.tag}
+            </div>
+
+            <div style="
+              color:gray;
+              font-size:12px;
+              margin-bottom:5px;
+            ">
+              ${new Date(
+                msg.createdTimestamp
+              ).toLocaleString()}
+            </div>
+
+            <div>
+              ${msg.content || '(無內容)'}
+            </div>
+
+          </div>
+          `;
+
+        }
+
+        html += `
+        </body>
+        </html>
+        `;
+
+        const fileName =
+          `topup-${interaction.channel.id}.html`;
+
+        fs.writeFileSync(
+          `./${fileName}`,
+          html
+        );
+
+        const logChannel =
+          interaction.guild.channels.cache.get(
+            '1504174739802034259'
+          );
+
+        await logChannel.send({
+          content:
+            `💳 ${interaction.channel.name} 儲值紀錄`,
+          files: [`./${fileName}`]
+        });
+
+        fs.unlinkSync(
+          `./${fileName}`
+        );
+
+        await interaction.editReply({
+          content:
+            '      ✅ 已儲存儲值紀錄\n      10 秒後刪除頻道'
         });
 
         setTimeout(async () => {
@@ -858,6 +1225,26 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       }
 
+      // ===== 不儲存儲值 =====
+      if (
+        interaction.customId ===
+        'delete_topup_now'
+      ) {
+
+        await interaction.reply({
+          content:
+            '      🗑️ 此頻道將在 10 秒後刪除'
+        });
+
+        setTimeout(async () => {
+
+          await interaction.channel
+            .delete()
+            .catch(() => {});
+
+        }, 10000);
+
+      }
       // ===== 單抽 =====
 
       if (interaction.customId === 'gacha_single') {
@@ -982,6 +1369,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // ===== 十抽 =====
 
       if (interaction.customId === 'gacha_ten') {
+        await interaction.deferReply({
+          flags: 64
+        });
 
         const { data: pools } = await supabase
           .from('gacha_pools')
@@ -1077,12 +1467,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
           Math.max(
             0,
             userData.coins - totalPrice + totalRewardCoins
-        );
+          );
         await updateCoins(
           interaction.user.id,
           finalCoins
         );
-        return interaction.reply({
+        return interaction.editReply({
           flags: 64,
           embeds: [
             new EmbedBuilder()
@@ -1302,21 +1692,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
       interaction.customId ===
       'order_system_select'
     ) {
+      await interaction.deferReply({
+        flags: 64
+      });
       const value =
         interaction.values[0];
+      // ===== 訂單編號 =====
+      const ticketNumber = Date.now();
       // ===== 頻道名稱 =====
-      const random =
-        Math.floor(
-          Math.random() * 9999
-        );
       let channelName = '';
       if (value === 'order') {
         channelName =
-          `order-${interaction.user.username}-${random}`;
+          `訂單-${interaction.user.username}-${ticketNumber}`;
       }
       if (value === 'topup') {
         channelName =
-          `topup-${interaction.user.username}-${random}`;
+          `儲值-${interaction.user.username}-${ticketNumber}`;
       }
       // ===== 建立頻道 =====
       const orderChannel =
@@ -1343,7 +1734,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
             },
             // 店員
             {
-              id: STAFF_ROLE_ID,
+              id: process.env.STAFF_ROLE_ID,
               allow: [
                 PermissionFlagsBits.ViewChannel,
                 PermissionFlagsBits.SendMessages,
@@ -1371,7 +1762,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               'skip_coupon'
             )
             .setLabel(
-              '❌ 不使用優惠券'
+              '❌ 不使用繼續'
             )
             .setStyle(
               ButtonStyle.Secondary
@@ -1382,7 +1773,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               'complete_order'
             )
             .setLabel(
-              '✅ 完成訂單'
+              '✅ 完成訂單（由客服關）'
             )
             .setStyle(
               ButtonStyle.Primary
@@ -1404,12 +1795,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
             .setTitle(
               '🛒 訂單建立成功'
             )
-            .setDescription(
-              `請問是否使用優惠券？`
-            );
+            .setDescription(`
+              • 請問需要什麼樣的服務？
+
+              • 請問是否使用優惠券呢？
+            `);
+        const supportRoleId = '1501271090918326362'
         await orderChannel.send({
           content:
-            `${interaction.user}`,
+            `<@&${supportRoleId}> ${interaction.user}\n🚀 客服人員正手刀衝刺過來啦！`,
           embeds: [embed],
           components: [
             row1,
@@ -1425,7 +1819,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               'complete_topup'
             )
             .setLabel(
-              '✅ 已完成儲值'
+              '✅ 已完成儲值（由客服關）'
             )
             .setStyle(
               ButtonStyle.Success
@@ -1447,9 +1841,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
               `• 付款金額\n` +
               `• 付款截圖`
             );
+        const supportRoleId = '1501271090918326362'
         await orderChannel.send({
           content:
-            `${interaction.user}`,
+            `<@&${supportRoleId}> ${interaction.user}\n🚀 客服人員正手刀衝刺過來啦！`,
           embeds: [embed],
           components: [row]
         });
