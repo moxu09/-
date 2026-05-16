@@ -612,8 +612,8 @@ async function refreshShop(client) {
       .setFooter({
         text: '星雨商店｜商品售出後恕不退換'
       })
-      .setTimestamp();
-
+      .setTimestamp()
+      .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1505278267391742253/7223dd02-5c3a-43d3-9acc-f3b618732607.png?ex=6a0a0b21&is=6a08b9a1&hm=66bcc7c8b5d5eec5e35640258ba7320834fef96a198228fbb0c0ccc233a9c88d&');
   let components = [];
   if (items.length > 0) {
     const menu = new StringSelectMenuBuilder()
@@ -629,7 +629,6 @@ async function refreshShop(client) {
           inline: false
         }))
       )
-      .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1505278267391742253/7223dd02-5c3a-43d3-9acc-f3b618732607.png?ex=6a0a0b21&is=6a08b9a1&hm=66bcc7c8b5d5eec5e35640258ba7320834fef96a198228fbb0c0ccc233a9c88d&');
     const row = new ActionRowBuilder().addComponents(menu);
     components.push(row);
   }
