@@ -1770,47 +1770,79 @@ async function handleButtonInteraction(interaction) {
 
     // ===== 使用優惠券 =====
     if (customId === 'use_coupon') {
+      const channelOwnerId =
+        interaction.channel.permissionOverwrites.cache
+          .find(
+            p =>
+              p.type === 1 &&
+              p.allow.has(
+                PermissionFlagsBits.ViewChannel
+              )
+          )?.id;
+      if (interaction.user.id !== channelOwnerId) {
+        return await interaction.editReply({
+          content: '❌ 只有下單者可以使用優惠券'
+        });
+      }
       const coupons =
         (await getUserItems(interaction.user.id))
           .filter(item => item.item_type === 'coupon');
-
       if (coupons.length === 0) {
         return await interaction.editReply({
           content: '❌ 你沒有優惠券'
         });
       }
-
       const menu =
         new StringSelectMenuBuilder()
           .setCustomId('coupon_select')
-          .setPlaceholder('選擇優惠券')
+          .setPlaceholder('請選擇要使用的優惠券')
           .addOptions(
             coupons
               .slice(0, 25)
               .map(c => ({
-                label: c.item_name,
-                description: c.description?.slice(0, 50) || '優惠券',
+                label: c.item_name.slice(0, 100),
+                description:
+                  c.description?.slice(0, 100) ||
+                  '使用這張優惠券',
                 value: String(c.id)
               }))
           );
-
       const row =
         new ActionRowBuilder()
           .addComponents(menu);
-
       return await interaction.editReply({
-        content: '🎟️ 請選擇優惠券',
+        content: '🎟️ 請選擇你要使用的優惠券',
         components: [row]
       });
     }
-
     // ===== 略過優惠券 =====
     if (customId === 'skip_coupon') {
+      const channelOwnerId =
+        interaction.channel.permissionOverwrites.cache
+          .find(
+            p =>
+              p.type === 1 &&
+              p.allow.has(
+                PermissionFlagsBits.ViewChannel
+              )
+          )?.id;
+      if (interaction.user.id !== channelOwnerId) {
+        return await interaction.editReply({
+          content: '❌ 只有下單者可以操作'
+        });
+      }
+      await interaction.channel.send({
+        content:
+          `❌ ${interaction.user} 選擇不使用優惠券`
+      });
+      await interaction.message.edit({
+        components: []
+      }).catch(() => {});
       return await interaction.editReply({
-        content: '✅ 已略過優惠券'
+        content:
+          '✅ 已公開通知：不使用優惠券'
       });
     }
-
     // ===== 完成訂單 =====
     if (
       customId === 'complete_order' ||
@@ -1961,7 +1993,7 @@ async function handleStringSelectInteraction(interaction) {
     if (!value) {
       return await safeEditReply(interaction, {
         content: '❌ 選擇無效',
-        flags: 64
+        ephemeral: true
       });
     }
     // ===== 訂單系統 =====
@@ -2006,6 +2038,15 @@ async function handleStringSelectInteraction(interaction) {
                   PermissionFlagsBits.ViewChannel,
                   PermissionFlagsBits.SendMessages,
                   PermissionFlagsBits.ReadMessageHistory
+                ]
+              },
+              {
+                id: client.user.id,
+                allow: [
+                  PermissionFlagsBits.ViewChannel,
+                  PermissionFlagsBits.SendMessages,
+                  PermissionFlagsBits.ReadMessageHistory,
+                  PermissionFlagsBits.ManageChannels
                 ]
               }
             ]
@@ -2207,6 +2248,27 @@ async function handleStringSelectInteraction(interaction) {
             user_id: interaction.user.id,
             item_name: coupon.item_name
           });
+        // ===== 公開通知 =====
+        await interaction.channel.send({
+          content:
+            `🎟️ ${interaction.user} 使用了優惠券：${coupon.item_name}`
+        });
+        // ===== 鎖定按鈕 =====
+        const messages =
+          await interaction.channel.messages.fetch({
+            limit: 10
+          });
+        const targetMessage =
+          messages.find(
+            m =>
+              m.author.id === client.user.id &&
+              m.components.length > 0
+          );
+        if (targetMessage) {
+          await targetMessage.edit({
+            components: []
+          }).catch(() => {});
+        }
         return await interaction.editReply({
           content:
             `✅ 已使用優惠券：${coupon.item_name}`
@@ -2218,7 +2280,7 @@ async function handleStringSelectInteraction(interaction) {
         );
         return await safeEditReply(interaction, {
           content: '❌ 使用優惠券失敗',
-          flags: 64
+          ephemeral: true
         });
       }
     }
