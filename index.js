@@ -620,9 +620,8 @@ async function refreshShop(client) {
       .setCustomId('shop_select')
       .setPlaceholder('選擇要購買的商品')
       .addFields(
-        shopItems.map(item => ({
-          name:
-            `🛍️ ${item.item_name}`,
+        items.slice(0, 25).map(item => ({
+          name:`🛍️ ${item.item_name}`,
           value:
             `💰 價格：${item.price} 星雨幣\n` +
             `📦 類型：${item.item_type}\n` +
