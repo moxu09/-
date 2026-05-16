@@ -476,14 +476,31 @@ function getTodayDateString() {
   return utc8.toISOString().split('T')[0];
 }
 
-async function performGacha(userId, guildId, amount) {
-  const { data: pools } = await supabase
-    .from('gacha_pools')
-    .select('*')
-    .eq('guild_id', guildId);
-
-  if (!pools || pools.length === 0) throw new Error('目前沒有卡池');
-  const pool = pools[0];
+async function performGacha(userId, guildId, amount, poolId = null) {
+    let pool;
+    if (poolId) {
+      const { data, error } =
+        await supabase
+          .from('gacha_pools')
+          .select('*')
+          .eq('guild_id', guildId)
+          .eq('id', poolId)
+          .single();
+      if (error || !data) {
+        throw new Error('找不到指定卡池');
+      }
+      pool = data;
+    } else {
+      const { data: pools } =
+        await supabase
+          .from('gacha_pools')
+          .select('*')
+          .eq('guild_id', guildId);
+      if (!pools || pools.length === 0) {
+        throw new Error('目前沒有卡池');
+      }
+      pool = pools[0];
+    }
   const totalPrice = pool.price * amount;
 
   const userData = await getUser(userId);
@@ -558,7 +575,8 @@ if (error) {
 return {
   results,
   totalRewardCoins,
-  finalCoins
+  finalCoins,
+  cost: totalPrice
 };
 
 }
@@ -578,18 +596,41 @@ async function refreshShop(client) {
   }
 
   // Embed
-  const embed = new EmbedBuilder().setColor('#FEE75C').setTitle('🛒 星雨商店').setDescription(text.slice(0, 3800));
+  const embed =
+    new EmbedBuilder()
+      .setColor('#00ffcc')
+      .setTitle('🛒 星雨商店')
+      .setDescription(
+        `✨ 歡迎來到星雨商店\n\n` +
+        `你可以使用星雨幣購買各種商品與折券。\n\n` +
+        `━━━━━━━━━━━━━━\n` +
+        `🎟️ 折券｜訂單優惠使用\n` +
+        `🎁 特殊道具｜活動使用\n` +
+        `🌈 限定商品｜不定期上架`
+      )
+      .setThumbnail(client.user.displayAvatarURL())
+      .setFooter({
+        text: '星雨商店｜商品售出後恕不退換'
+      })
+      .setTimestamp();
 
   let components = [];
   if (items.length > 0) {
     const menu = new StringSelectMenuBuilder()
       .setCustomId('shop_select')
       .setPlaceholder('選擇要購買的商品')
-      .addOptions(
-        items
-          .slice(0, 25)
-          .map((item) => ({ label: item.item_name, description: `${item.price} 星雨幣`, value: String(item.id) })));
-
+      .addFields(
+        shopItems.map(item => ({
+          name:
+            `🛍️ ${item.item_name}`,
+          value:
+            `💰 價格：${item.price} 星雨幣\n` +
+            `📦 類型：${item.item_type}\n` +
+            `📝 ${item.description || '無介紹'}`,
+          inline: false
+        }))
+      )
+      .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1505278267391742253/7223dd02-5c3a-43d3-9acc-f3b618732607.png?ex=6a0a0b21&is=6a08b9a1&hm=66bcc7c8b5d5eec5e35640258ba7320834fef96a198228fbb0c0ccc233a9c88d&');
     const row = new ActionRowBuilder().addComponents(menu);
     components.push(row);
   }
@@ -653,12 +694,23 @@ async function sendCheckinPanel(client) {
 
   const embed =
     new EmbedBuilder()
-      .setColor('#57F287')
-      .setTitle('☔ 星雨每日簽到')
+      .setColor('#ffd700')
+      .setTitle('📅 星雨每日簽到')
       .setDescription(
-        '點擊按鈕即可領取每日獎勵'
-      );
-
+        `✨ 每日簽到系統\n\n` +
+        `每天都可以領取星雨幣獎勵！\n` +
+        `連續簽到可能會有額外驚喜 🎁\n\n` +
+        `━━━━━━━━━━━━━━\n` +
+        `🪙 每日領取星雨幣\n` +
+        `🔥 維持你的連續簽到紀錄\n` +
+        `🎉 不定期簽到活動`
+      )
+      .setThumbnail(client.user.displayAvatarURL())
+      .setFooter({
+      text: '星雨簽到系統｜每天記得來簽到 ✨'
+      })
+      .setTimestamp()
+      .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1505277098409988317/3c6bb34b-65a5-4a90-b743-f3cc8acaed09.png?ex=6a0a0a0a&is=6a08b88a&hm=ddc66df8cbe55ceb98c0b5d1eb335bfd97707221d789fc6270cf7782088ed7f0&');
   const panel =
     await getPanelMessage('checkin');
 
@@ -729,9 +781,18 @@ async function sendAtmPanel(client) {
       .setColor('#00ffff')
       .setTitle('🏦 星雨 ATM')
       .setDescription(
-        '請選擇功能'
-      );
-
+        `💳 歡迎使用星雨銀行\n\n` +
+        `你可以在這裡查看餘額或轉帳給其他玩家。\n\n` +
+        `━━━━━━━━━━━━━━\n` +
+        `💰 查看餘額｜確認目前星雨幣\n` +
+        `💸 玩家轉帳｜轉帳給指定玩家`
+      )
+      .setThumbnail(client.user.displayAvatarURL())
+      .setFooter({
+        text: '星雨銀行｜交易請確認對象與金額'
+      })
+      .setTimestamp()
+      .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1505276094058729632/777d1c67-0ad2-4a58-be29-5d3b028211fa.png?ex=6a0a091b&is=6a08b79b&hm=ca2e66188d8c3be9cc6987423bbf34549f13fc4bf6c441e1a6b559b1342d3b3a&');
   const panel =
     await getPanelMessage('atm');
 
@@ -777,25 +838,11 @@ async function sendGachaPanel(client) {
     );
 
   if (!channel) return;
-
-  const singleButton =
-    new ButtonBuilder()
-      .setCustomId('gacha_single')
-      .setLabel('🎰 單抽')
-      .setStyle(ButtonStyle.Primary);
-
-  const tenButton =
-    new ButtonBuilder()
-      .setCustomId('gacha_ten')
-      .setLabel('🎰 十抽')
-      .setStyle(ButtonStyle.Success);
-
   const viewButton =
     new ButtonBuilder()
       .setCustomId('gacha_view_pool')
       .setLabel('📦 查看獎池')
       .setStyle(ButtonStyle.Secondary);
-
   const row =
     new ActionRowBuilder()
       .addComponents(
@@ -803,15 +850,27 @@ async function sendGachaPanel(client) {
         tenButton,
         viewButton
       );
-
   const embed =
     new EmbedBuilder()
       .setColor('#ff66cc')
       .setTitle('🎰 星雨扭蛋機')
       .setDescription(
-        '請選擇功能'
-      );
-
+        `✨ 歡迎來到星雨扭蛋機\n\n` +
+        `📦 請先查看目前獎池\n` +
+        `🎯 選擇想抽的卡池後再進行抽取\n\n` +
+        `━━━━━━━━━━━━━━\n` +
+        `🌈 SSR｜超稀有獎勵\n` +
+        `⭐ SR｜高級獎勵\n` +
+        `🔹 R｜一般獎勵`
+      )
+      .setThumbnail(client.user.displayAvatarURL())
+      .setFooter({
+        text: '星雨系統｜祝你抽到大獎 ✨'
+      })
+      .setTimestamp()
+      .setImage(
+        'https://cdn.discordapp.com/attachments/1501098193276895360/1505275402250354778/f930a8f2-ca2a-441d-8e92-31d9b074601d.png?ex=6a0a0876&is=6a08b6f6&hm=ceebc19dc6ce78f79f96906b11a0a2366841896808a35532bf2b9966e9d2bb8a&'
+        );
   const panel =
     await getPanelMessage('gacha');
 
@@ -881,13 +940,21 @@ async function sendOrderSystem(client) {
   const embed =
     new EmbedBuilder()
       .setColor('#ff66cc')
-      .setTitle('📦 星雨訂單系統')
+      .setTitle('📦 星雨訂單中心')
       .setDescription(
-        `請選擇功能\n\n` +
-        `🛒 點單\n` +
-        `💰 儲值`
-      );
-
+        `歡迎使用星雨訂單系統 ✨\n\n` +
+        `請從下方選單選擇你需要的服務。\n\n` +
+        `━━━━━━━━━━━━━━\n` +
+        `🛒 點單｜建立專屬訂單頻道\n` +
+        `💰 儲值｜建立專屬儲值頻道\n\n` +
+        `建立後只有你與客服可以看見。`
+      )
+      .setThumbnail(client.user.displayAvatarURL())
+      .setFooter({
+        text: '星雨客服｜欲立新單請重複建立頻道'
+    })
+    .setTimestamp()
+    .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1505274858567762153/ChatGPT_Image_2026517_02_24_37.png?ex=6a0a07f4&is=6a08b674&hm=e3cf59696e54af40365cec86b215036e4ee34bc83ac941016808de3719010617&');
   // ===== 新版面板系統 =====
   const orderPanel =
     await getPanelMessage('order');
@@ -1653,17 +1720,24 @@ async function handleButtonInteraction(interaction) {
     }
 
     // ===== 單抽 =====
-    if (customId === 'gacha_single') {
+    if (customId.startsWith('gacha_single_')) {
+      const poolId = Number(customId.replace('gacha_single_', ''));
       try {
         const result =
           await performGacha(
             interaction.user.id,
             interaction.guild.id,
-            1
+            1,
+            poolId
           );
-
         const item = result.results[0];
-
+        await sendWalletLog(
+          interaction.user.id,
+          '單抽',
+          -result.cost + result.totalRewardCoins,
+          result.finalCoins,
+          `🎰 單抽完成`
+        );
         return await interaction.editReply({
           embeds: [
             new EmbedBuilder()
@@ -1672,7 +1746,9 @@ async function handleButtonInteraction(interaction) {
               .setDescription(
                 `${getRarityEmoji(item.rarity)} ${item.rarity}\n` +
                 `📦 ${item.name}\n\n` +
-                `${item.description || '無介紹'}`
+                `${item.description || '無介紹'}` +
+                `💰 代幣變動：${-result.cost + result.totalRewardCoins}\n` +
+                `💳 目前餘額：${result.finalCoins}`
               )
           ]
         });
@@ -1684,27 +1760,40 @@ async function handleButtonInteraction(interaction) {
     }
 
     // ===== 十抽 =====
-    if (customId === 'gacha_ten') {
+    if (customId.startsWith('gacha_ten_')) {
+      const poolId = Number(customId.replace('gacha_ten_', ''));
       try {
         const result =
           await performGacha(
             interaction.user.id,
             interaction.guild.id,
-            10
+            10,
+            poolId
           );
-
         const text =
           result.results
             .slice(0, 10)
             .map(item => `${getRarityEmoji(item.rarity)} ${item.name}`)
             .join('\n');
-
+        await sendWalletLog(
+          interaction.user.id,
+          '十抽',
+          -result.cost + result.totalRewardCoins,
+          result.finalCoins,
+          `🎰 十抽完成`
+        );
         return await interaction.editReply({
           embeds: [
             new EmbedBuilder()
               .setColor('#ff66cc')
               .setTitle('🎰 十抽結果')
-              .setDescription(text.slice(0, 3800))
+              .setDescription(
+                (
+                  text +
+                  `\n\n💰 代幣變動：${-result.cost + result.totalRewardCoins}` +
+                  `\n💳 目前餘額：${result.finalCoins}`
+                ).slice(0, 3800)
+              )
           ]
         });
       } catch (err) {
@@ -1721,53 +1810,30 @@ async function handleButtonInteraction(interaction) {
           .from('gacha_pools')
           .select('*')
           .eq('guild_id', interaction.guild.id);
-
-      if (error) {
-        console.error(error);
+      if (error || !pools || pools.length === 0) {
         return await interaction.editReply({
-          content: '❌ 讀取獎池失敗'
+          content: '❌ 目前沒有卡池'
         });
       }
-
-      if (!pools || pools.length === 0) {
-        return await interaction.editReply({
-          content: '❌ 沒有卡池'
-        });
-      }
-
-      let text = '';
-
-      for (const pool of pools) {
-        const { data: rewards } =
-          await supabase
-            .from('gacha_rewards')
-            .select('*')
-            .eq('pool_id', pool.id);
-
-        text += `\n🎰 ${pool.pool_name}\n`;
-
-        if (!rewards || rewards.length === 0) {
-          text += '❌ 沒有獎勵\n\n';
-          continue;
-        }
-
-        for (const r of rewards) {
-          text += `${getRarityEmoji(r.rarity)} ${r.rarity}｜${r.reward_name}\n`;
-        }
-
-        text += '\n';
-      }
-
+      const menu =
+        new StringSelectMenuBuilder()
+          .setCustomId('select_gacha_pool')
+          .setPlaceholder('請選擇要查看 / 抽取的獎池')
+          .addOptions(
+            pools.slice(0, 25).map(pool => ({
+              label: pool.pool_name.slice(0, 100),
+              description: `單抽價格：${pool.price} 星雨幣`,
+              value: String(pool.id)
+            }))
+          );
+      const row =
+        new ActionRowBuilder()
+          .addComponents(menu);
       return await interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#ff66cc')
-            .setTitle('📦 扭蛋獎池')
-            .setDescription(text.slice(0, 3800))
-        ]
+        content: '🎰 請選擇獎池',
+        components: [row]
       });
     }
-
     // ===== 使用優惠券 =====
     if (customId === 'use_coupon') {
       const channelOwnerId =
@@ -2233,6 +2299,60 @@ async function handleStringSelectInteraction(interaction) {
           content: '❌ 購買失敗',
         });
       }
+    }
+    if (customId === 'select_gacha_pool') {
+      const poolId = Number(interaction.values[0]);
+      const { data: pool, error } =
+        await supabase
+          .from('gacha_pools')
+          .select('*')
+          .eq('id', poolId)
+          .single();
+      if (error || !pool) {
+        return await interaction.editReply({
+          content: '❌ 找不到這個獎池'
+        });
+      }
+      const { data: rewards } =
+        await supabase
+          .from('gacha_rewards')
+          .select('*')
+          .eq('pool_id', poolId);
+      let text = '';
+      if (!rewards || rewards.length === 0) {
+        text = '❌ 這個獎池目前沒有獎勵';
+      } else {
+        text =
+          rewards
+            .map(r =>
+              `${getRarityEmoji(r.rarity)} ${r.rarity}｜${r.reward_name}｜機率 ${r.chance}`
+            )
+            .join('\n');
+      }
+      const singleButton =
+        new ButtonBuilder()
+          .setCustomId(`gacha_single_${poolId}`)
+          .setLabel('🎰 單抽')
+          .setStyle(ButtonStyle.Primary);
+      const tenButton =
+        new ButtonBuilder()
+          .setCustomId(`gacha_ten_${poolId}`)
+          .setLabel('🎰 十抽')
+          .setStyle(ButtonStyle.Success);
+      const row =
+        new ActionRowBuilder()
+          .addComponents(singleButton, tenButton);
+      return await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#ff66cc')
+            .setTitle(`🎰 ${pool.pool_name}`)
+            .setDescription(
+              `💰 單抽價格：${pool.price} 星雨幣\n\n${text}`.slice(0, 3800)
+            )
+        ],
+        components: [row]
+      });
     }
     // ===== 使用優惠券 =====
     if (customId === 'coupon_select') {
