@@ -1104,11 +1104,11 @@ const commands = [
     )
     .addStringOption(option =>
       option.setName('類型')
-        .setDescription('選擇商品類型：一般商品 / 優惠券')
+        .setDescription('選擇商品類型：一般商品 / 折券')
         .setRequired(true)
         .addChoices(
           { name: '一般商品', value: 'shop' },
-          { name: '優惠券', value: 'coupon' }
+          { name: '折券', value: 'coupon' }
         )
     )
 ].map(command => command.toJSON());
@@ -1786,7 +1786,10 @@ async function handleButtonInteraction(interaction) {
       }
       const coupons =
         (await getUserItems(interaction.user.id))
-          .filter(item => item.item_type === 'coupon');
+          .filter(item =>
+            item.item_type === 'coupon' ||
+            item.item_name.includes('折券')
+          );
       if (coupons.length === 0) {
         return await interaction.editReply({
           content: '❌ 你沒有優惠券'
@@ -1835,8 +1838,12 @@ async function handleButtonInteraction(interaction) {
         content:
           `❌ ${interaction.user} 選擇不使用優惠券`
       });
+      const oldRows =
+        interaction.message.components;
+      const keepRows =
+        oldRows.slice(1);
       await interaction.message.edit({
-        components: []
+        components: keepRows
       }).catch(() => {});
       return await interaction.editReply({
         content:
@@ -2222,7 +2229,10 @@ async function handleStringSelectInteraction(interaction) {
           items.find(
             item =>
               item.id === itemId &&
-              item.item_type === 'coupon'
+              (
+                item.item_type === 'coupon' ||
+                item.item_name.includes('折券')
+              )
           );
         if (!coupon) {
           return await interaction.editReply({
@@ -2265,8 +2275,13 @@ async function handleStringSelectInteraction(interaction) {
               m.components.length > 0
           );
         if (targetMessage) {
+          const oldRows =
+            targetMessage.components;
+          // 保留第二排（完成訂單）
+          const keepRows =
+            oldRows.slice(1);
           await targetMessage.edit({
-            components: []
+            components: keepRows
           }).catch(() => {});
         }
         return await interaction.editReply({
