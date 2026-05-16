@@ -1882,7 +1882,25 @@ async function handleButtonInteraction(interaction) {
         components: [row]
       });
     }
-
+    // ===== 直接刪除訂單頻道 =====
+    if (customId === 'delete_order_now') {
+      if (!isAdminOrStaff(interaction)) {
+        return await interaction.editReply({
+          content: '❌ 只有客服可以操作'
+        });
+      }
+      await interaction.editReply({
+        content: '🗑️ 頻道將在 3 秒後刪除'
+      });
+      setTimeout(async () => {
+        try {
+          await interaction.channel.delete();
+        } catch (err) {
+          console.error('[直接刪除頻道失敗]', err);
+        }
+      }, 3000);
+      return;
+    }
     // ===== 儲存訂單紀錄 =====
     if (customId === 'save_order_log') {
       try {
