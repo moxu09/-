@@ -619,16 +619,15 @@ async function refreshShop(client) {
     const menu = new StringSelectMenuBuilder()
       .setCustomId('shop_select')
       .setPlaceholder('選擇要購買的商品')
-      .addFields(
+      .addOptions(
         items.slice(0, 25).map(item => ({
-          name:`🛍️ ${item.item_name}`,
-          value:
-            `💰 價格：${item.price} 星雨幣\n` +
-            `📦 類型：${item.item_type}\n` +
-            `📝 ${item.description || '無介紹'}`,
-          inline: false
+          label: item.item_name.slice(0, 100),
+          description:
+            `💰 ${item.price} 星雨幣｜${item.description || '無介紹'}`
+              .slice(0, 100),
+          value: String(item.id)
         }))
-      )
+      );
     const row = new ActionRowBuilder().addComponents(menu);
     components.push(row);
   }
@@ -843,11 +842,7 @@ async function sendGachaPanel(client) {
       .setStyle(ButtonStyle.Secondary);
   const row =
     new ActionRowBuilder()
-      .addComponents(
-        singleButton,
-        tenButton,
-        viewButton
-      );
+      .addComponents(viewButton);
   const embed =
     new EmbedBuilder()
       .setColor('#ff66cc')
