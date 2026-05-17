@@ -38,13 +38,80 @@ async function playerOnline(interaction) {
 
 // 陪玩下班
 async function playerOffline(interaction) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const { data: player } =
+    await supabase
+      .from('players')
+      .select('*')
+      .eq('discord_id', interaction.user.id)
+      .single();
+
+  const { data: orders } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('assigned_player', interaction.user.id)
+      .eq('status', 'completed')
+      .gte('completed_at', today.toISOString());
+
   await supabase
     .from('players')
     .update({ status: 'offline' })
     .eq('discord_id', interaction.user.id);
 
+  const totalOrders = orders?.length || 0;
+
+  const totalPrice =
+    orders?.reduce(
+      (sum, order) => sum + (order.price || 0),
+      0
+    ) || 0;
+
+  const orderList = orders?.length
+    ? orders
+        .map((order, index) => {
+          return (
+            `${index + 1}. ${order.service}\n` +
+            `訂單編號：${order.order_no}\n` +
+            `金額：NT$${order.price}`+
+            `內容：${order.note || '無'}`
+          );
+        })
+        .join('\n\n')
+    : '今日尚無完成訂單';
+
+  const reportEmbed =
+    new EmbedBuilder()
+      .setColor('#ff4444')
+      .setTitle('📊 陪玩下班統計')
+      .setDescription(
+        `陪玩：<@${interaction.user.id}>\n\n` +
+        `完成訂單：${totalOrders}\n` +
+        `總金額：NT$${totalPrice}\n\n` +
+        `━━━━━━━━━━\n\n` +
+        `${orderList}`
+      )
+      .setTimestamp();
+
+  if (player?.report_channel_id) {
+    const reportChannel =
+      await client.channels
+        .fetch(player.report_channel_id)
+        .catch(() => null);
+
+    if (reportChannel) {
+      await reportChannel.send({
+        embeds: [reportEmbed]
+      });
+    }
+  }
+
   await interaction.editReply({
-    content: '🔴 你已停止接單',
+    content:
+      `🔴 你已停止接單\n\n` +
+      `📊 今日統計已送出`
   });
 }
 
@@ -71,7 +138,7 @@ async function playerStatus(interaction) {
 }
 
 // 建立陪玩訂單
-async function createPlayOrder(interaction, service, price) {
+async function createPlayOrder(interaction, service, price, note = '無') {
   const orderNo = `DF-${Date.now()}`;
 
   const { data: order, error } = await supabase
@@ -81,6 +148,7 @@ async function createPlayOrder(interaction, service, price) {
       customer_id: interaction.user.id,
       service,
       price,
+      note,
       status: 'pending'
     })
     .select()
