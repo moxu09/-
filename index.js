@@ -31,6 +31,9 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SER
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
+// ===== 陪玩排單系統 =====
+const dispatchSystem = require('./events/dispatchSystem');
+dispatchSystem.setup(supabase, client);
 // ===== 轉帳冷卻 =====
 const transferCooldown =
   new Map();
@@ -205,9 +208,13 @@ async function sendWalletLog(
       if (note) {
         embed.setDescription(note);
       }
-      await user.send({
-        embeds: [embed]
-      });
+      try {
+        await user.send({ embeds: [embed] });
+      } catch (err) {
+        console.log('[錢包通知失敗]', err.code, err.message);
+        // DM 失敗不要中斷主流程
+        return false;
+      }
     } catch (err) {
       console.error(
         '[錢包通知失敗]',
@@ -1191,6 +1198,15 @@ client.once(Events.ClientReady, async () => {
         process.env.STAFF_ROLE
     });
     console.log('[BOT] 機器人已上線');
+    // ===== 陪玩控制面板 =====
+    const playerChannel =
+      await client.channels.fetch(
+        process.env.PLAYER_CONTROL_CHANNEL
+      );
+    await dispatchSystem.sendPlayerPanel(
+      playerChannel
+    );
+
     // ===== 註冊 Slash Commands =====
     const rest = new REST({
       version: '10'
@@ -2016,7 +2032,7 @@ ${content || '(無內容)'}
         fs.writeFileSync(`./${fileName}`, html);
 
         const isTopup =
-          interaction.channel.name.includes('儲值');
+          interaction.channel.name.includes('儲值-');
 
         const logChannelId =
           isTopup
@@ -2135,6 +2151,7 @@ async function handleStringSelectInteraction(interaction) {
               }
             ]
           });
+          await dispatchSystem.sendPlayOrderFormButton(orderChannel);
         // ===== 點單 =====
         if (value === 'order') {
           const couponButton =
@@ -2600,14 +2617,21 @@ client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
       await interaction.deferReply({ flags: 64 });
 
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+
+      if (handled) return;
+
       await handleSlashCommand(interaction);
       return;
     }
 
     // ===== Buttons =====
     if (interaction.isButton()) {
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+      if (handled) return;
       await interaction.deferReply({ flags: 64 });
-
       await handleButtonInteraction(interaction);
       return;
     }
@@ -2628,6 +2652,11 @@ client.on('interactionCreate', async (interaction) => {
 
     // ===== Modal =====
     if (interaction.isModalSubmit()) {
+      // ===== 陪玩系統優先處理 =====
+      const handled =
+        await dispatchSystem
+          .handleDispatchInteraction(interaction);
+      if (handled) return;
       await interaction.deferReply({ flags: 64 });
 
       await handleModalSubmit(interaction);
