@@ -312,7 +312,7 @@ async function openPlayOrderModal(interaction) {
   const serviceInput = new TextInputBuilder()
     .setCustomId('service')
     .setLabel('服務項目')
-    .setPlaceholder('陪伴： 出氣包 / 遊戲包 \n 三角洲：機密護航 / 3×3安全箱')
+    .setPlaceholder('陪伴： 出氣包 / 遊戲包 、三角洲：機密護航 / 3×3安全箱')
     .setStyle(TextInputStyle.Short)
     .setRequired(true);
 
@@ -457,7 +457,7 @@ async function acceptPlayOrder(interaction) {
 
     const orderChannel =
       await guild.channels.create({
-        name: `三角洲-${order.order_no}`,
+        name: `${order.order_no}`,
         type: ChannelType.GuildText,
         parent: process.env.PLAYER_CATEGORY,
         permissionOverwrites: [

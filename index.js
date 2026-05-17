@@ -1844,7 +1844,10 @@ async function handleButtonInteraction(interaction) {
       });
     }
     // ===== 使用優惠券 =====
-    if (customId === 'use_coupon') {
+    if (
+      customId === 'use_coupon' ||
+      customId.startsWith('use_coupon_')
+    ) {
       const channelOwnerId =
         interaction.channel.permissionOverwrites.cache
           .find(
@@ -2151,12 +2154,12 @@ async function handleStringSelectInteraction(interaction) {
               }
             ]
           });
-          await dispatchSystem.sendPlayOrderFormButton(orderChannel);
+          // await dispatchSystem.sendPlayOrderFormButton(orderChannel);
         // ===== 點單 =====
         if (value === 'order') {
           const couponButton =
             new ButtonBuilder()
-              .setCustomId(`use_coupon_${interaction.channel.id}`)
+              .setCustomId(`use_coupon_${orderChannel.id}`)
               .setLabel('✅ 使用優惠券')
               .setStyle(ButtonStyle.Success);
           const noCouponButton =
