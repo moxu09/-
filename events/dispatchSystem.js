@@ -111,7 +111,7 @@ async function playerOffline(interaction) {
           return (
             `${index + 1}. ${order.service}\n` +
             `訂單編號：${order.order_no}\n` +
-            `金額：NT$${order.price}`+
+            `商品金額（折前）：NT$${order.price}`+
             `內容：${order.note || '無'}`
           );
         })
@@ -206,17 +206,20 @@ async function createPlayOrder(interaction, service, price, note = '無') {
       `訂單編號：${orderNo}\n` +
       `客人：<@${interaction.user.id}>\n` +
       `服務：${service}\n` +
-      `價格：NT$${price}\n\n` +
+      `商品金額（折前）：NT$${price}\n\n` +
       `請可接單的陪玩點擊下方按鈕。`
     );
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`accept_play_order_${order.id}`)
-      .setLabel('接單')
-      .setStyle(ButtonStyle.Success)
+      .setCustomId(`use_coupon_${orderId}`)
+      .setLabel('使用優惠券')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`complete_play_order_${orderId}`)
+      .setLabel('完成訂單')
+      .setStyle(ButtonStyle.Primary)
   );
-
   await channel.send({ embeds: [embed], components: [row] });
   // ===== 派單紀錄 =====
   await sendPlayLog({
@@ -225,7 +228,7 @@ async function createPlayOrder(interaction, service, price, note = '無') {
       `訂單編號：${orderNo}\n` +
       `客人：<@${interaction.user.id}>\n` +
       `服務：${service}\n` +
-      `金額：NT$${price}`
+      `商品金額（折前）：NT$${price}`
   });
   await interaction.editReply({
     content: '✅ 已送出陪玩訂單，請等待陪玩接單',
@@ -315,7 +318,7 @@ async function openPlayOrderModal(interaction) {
 
   const priceInput = new TextInputBuilder()
     .setCustomId('price')
-    .setLabel('價格')
+    .setLabel('商品金額（原價）')
     .setPlaceholder('例如：499 / 6999 / 10999')
     .setStyle(TextInputStyle.Short)
     .setRequired(true);
@@ -502,7 +505,7 @@ async function acceptPlayOrder(interaction) {
         `客人：<@${order.customer_id}>\n` +
         `陪玩：<@${interaction.user.id}>\n` +
         `服務：${order.service}\n` +
-        `價格：NT$${order.price}`
+        `商品金額（折前）：NT$${order.price}`
       );
 
     const row = new ActionRowBuilder().addComponents(
@@ -524,7 +527,7 @@ async function acceptPlayOrder(interaction) {
         `訂單編號：${order.order_no}\n` +
         `陪玩：<@${interaction.user.id}>\n` +
         `服務：${order.service}\n` +
-        `金額：NT$${order.price}`,
+        `商品金額（折前）：NT$${order.price}`,
     });
 
     await interaction.editReply({
@@ -579,7 +582,7 @@ async function completePlayOrder(interaction) {
       `訂單編號：${order.order_no}\n` +
       `陪玩：<@${order.assigned_player}>\n` +
       `服務：${order.service}\n` +
-      `金額：NT$${order.price}`,
+      `商品金額（折前）：NT$${order.price}`,
     color: '#ffcc00'
   });
 }

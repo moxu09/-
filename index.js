@@ -1872,7 +1872,7 @@ async function handleButtonInteraction(interaction) {
       }
       const menu =
         new StringSelectMenuBuilder()
-          .setCustomId('coupon_select')
+          .setCustomId(`coupon_select_${interaction.channel.id}`)
           .setPlaceholder('請選擇要使用的優惠券')
           .addOptions(
             coupons
@@ -2156,7 +2156,7 @@ async function handleStringSelectInteraction(interaction) {
         if (value === 'order') {
           const couponButton =
             new ButtonBuilder()
-              .setCustomId('use_coupon')
+              .setCustomId(`use_coupon_${interaction.channel.id}`)
               .setLabel('✅ 使用優惠券')
               .setStyle(ButtonStyle.Success);
           const noCouponButton =
@@ -2365,10 +2365,15 @@ async function handleStringSelectInteraction(interaction) {
       });
     }
     // ===== 使用優惠券 =====
-    if (customId === 'coupon_select') {
+    if (customId.startsWith('coupon_select_')) {
       try {
         const itemId =
           Number(interaction.values[0]);
+        const orderChannelId =
+          interaction.customId.replace(
+            'coupon_select_',
+            ''
+          );
         const items =
           await getUserItems(
             interaction.user.id
@@ -2411,6 +2416,31 @@ async function handleStringSelectInteraction(interaction) {
           content:
             `🎟️ ${interaction.user} 使用了優惠券：${coupon.item_name}`
         });
+        const { data: order } =
+          await supabase
+            .from('play_orders')
+            .select('*')
+            .eq('channel_id', orderChannelId)
+            .single();
+        if (order) {
+          let discountAmount = 0;
+          // ===== 解析折扣 =====
+          const match =
+            coupon.item_name.match(/\d+/);
+          if (match) {
+            discountAmount =
+              parseInt(match[0]);
+          }
+          await supabase
+            .from('play_orders')
+            .update({
+              coupon_name:
+                coupon.item_name,
+              discount_amount:
+                discountAmount
+            })
+            .eq('id', order.id);
+        }
         // ===== 鎖定按鈕 =====
         const messages =
           await interaction.channel.messages.fetch({
