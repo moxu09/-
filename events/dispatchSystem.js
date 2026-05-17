@@ -368,133 +368,177 @@ async function submitPlayOrderForm(interaction) {
 }
 // 接單
 async function acceptPlayOrder(interaction) {
-  const orderId = interaction.customId.replace('accept_play_order_', '');
+  try {
+    const orderId =
+      interaction.customId.replace('accept_play_order_', '');
 
-  const { data: player } = await supabase
-    .from('players')
-    .select('*')
-    .eq('discord_id', interaction.user.id)
-    .single();
+    const { data: player, error: playerError } =
+      await supabase
+        .from('players')
+        .select('*')
+        .eq('discord_id', interaction.user.id)
+        .single();
 
-  if (!player || player.status !== 'available') {
-    return interaction.editReply({
-      content: '❌ 你目前不是可接單狀態，請先使用 /上班',
-    });
-  }
+    if (playerError) {
+      console.log('[接單錯誤 players]', playerError);
+    }
 
-  const { data: order } = await supabase
-    .from('play_orders')
-    .select('*')
-    .eq('id', orderId)
-    .single();
+    if (!player || player.status !== 'available') {
+      return interaction.editReply({
+        content: '❌ 你目前不是可接單狀態，請先按「開始接單」',
+      });
+    }
 
-  if (!order || order.status !== 'pending') {
-    return interaction.editReply({
-      content: '❌ 這張訂單已經被接走了',
-    });
-  }
+    const { data: order, error: orderError } =
+      await supabase
+        .from('play_orders')
+        .select('*')
+        .eq('id', orderId)
+        .single();
 
-  const { data: updated } = await supabase
-    .from('play_orders')
-    .update({
-      status: 'accepted',
-      assigned_player: interaction.user.id,
-      accepted_at: new Date()
-    })
-    .eq('id', orderId)
-    .eq('status', 'pending')
-    .select()
-    .single();
+    if (orderError) {
+      console.log('[接單錯誤 play_orders]', orderError);
+    }
 
-  if (!updated) {
-    return interaction.editReply({
-      content: '❌ 這張訂單已被其他人接走',
-    });
-  }
+    if (!order || order.status !== 'pending') {
+      return interaction.editReply({
+        content: '❌ 這張訂單已經被接走了',
+      });
+    }
 
-  await supabase
-    .from('players')
-    .update({ status: 'busy' })
-    .eq('discord_id', interaction.user.id);
+    const { data: updated, error: updateError } =
+      await supabase
+        .from('play_orders')
+        .update({
+          status: 'accepted',
+          assigned_player: interaction.user.id,
+          accepted_at: new Date()
+        })
+        .eq('id', orderId)
+        .eq('status', 'pending')
+        .select()
+        .single();
 
-  const guild = interaction.guild;
+    if (updateError) {
+      console.log('[接單更新錯誤]', updateError);
 
-  const orderChannel = await guild.channels.create({
-    name: `三角洲-${order.order_no}`,
-    type: ChannelType.GuildText,
-    parent: process.env.PLAYER_CATEGORY,
-    permissionOverwrites: [
-      {
-        id: guild.roles.everyone,
-        deny: [PermissionFlagsBits.ViewChannel]
-      },
-      {
-        id: order.customer_id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ReadMessageHistory
+      return interaction.editReply({
+        content: '❌ 接單更新失敗，請查看 Railway Logs',
+      });
+    }
+
+    if (!updated) {
+      return interaction.editReply({
+        content: '❌ 這張訂單已被其他人接走',
+      });
+    }
+
+    await supabase
+      .from('players')
+      .update({ status: 'busy' })
+      .eq('discord_id', interaction.user.id);
+
+    if (!process.env.PLAYER_CATEGORY) {
+      return interaction.editReply({
+        content: '❌ PLAYER_CATEGORY 未設定',
+      });
+    }
+
+    if (!process.env.STAFF_ROLE_ID) {
+      return interaction.editReply({
+        content: '❌ STAFF_ROLE_ID 未設定',
+      });
+    }
+
+    const guild = interaction.guild;
+
+    const orderChannel =
+      await guild.channels.create({
+        name: `三角洲-${order.order_no}`,
+        type: ChannelType.GuildText,
+        parent: process.env.PLAYER_CATEGORY,
+        permissionOverwrites: [
+          {
+            id: guild.roles.everyone,
+            deny: [PermissionFlagsBits.ViewChannel]
+          },
+          {
+            id: order.customer_id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory
+            ]
+          },
+          {
+            id: interaction.user.id,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory
+            ]
+          },
+          {
+            id: process.env.STAFF_ROLE_ID,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory
+            ]
+          }
         ]
-      },
-      {
-        id: interaction.user.id,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ReadMessageHistory
-        ]
-      },
-      {
-        id: process.env.STAFF_ROLE_ID,
-        allow: [
-          PermissionFlagsBits.ViewChannel,
-          PermissionFlagsBits.SendMessages,
-          PermissionFlagsBits.ReadMessageHistory
-        ]
-      }
-    ]
-  });
+      });
 
-  await supabase
-    .from('play_orders')
-    .update({ channel_id: orderChannel.id })
-    .eq('id', orderId);
+    await supabase
+      .from('play_orders')
+      .update({ channel_id: orderChannel.id })
+      .eq('id', orderId);
 
-  const embed = new EmbedBuilder()
-    .setColor('#00ff99')
-    .setTitle('✅ 陪玩訂單已接單')
-    .setDescription(
-      `訂單編號：${order.order_no}\n` +
-      `客人：<@${order.customer_id}>\n` +
-      `陪玩：<@${interaction.user.id}>\n` +
-      `服務：${order.service}\n` +
-      `價格：NT$${order.price}`
+    const embed = new EmbedBuilder()
+      .setColor('#00ff99')
+      .setTitle('✅ 陪玩訂單已接單')
+      .setDescription(
+        `訂單編號：${order.order_no}\n` +
+        `客人：<@${order.customer_id}>\n` +
+        `陪玩：<@${interaction.user.id}>\n` +
+        `服務：${order.service}\n` +
+        `價格：NT$${order.price}`
+      );
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`complete_play_order_${orderId}`)
+        .setLabel('完成訂單')
+        .setStyle(ButtonStyle.Primary)
     );
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`complete_play_order_${orderId}`)
-      .setLabel('完成訂單')
-      .setStyle(ButtonStyle.Primary)
-  );
+    await orderChannel.send({
+      content: `<@${order.customer_id}> <@${interaction.user.id}>`,
+      embeds: [embed],
+      components: [row]
+    });
 
-  await orderChannel.send({
-    content: `<@${order.customer_id}> <@${interaction.user.id}>`,
-    embeds: [embed],
-    components: [row]
-  });
+    await sendPlayLog({
+      title: '✅ 訂單已接取',
+      description:
+        `訂單編號：${order.order_no}\n` +
+        `陪玩：<@${interaction.user.id}>\n` +
+        `服務：${order.service}\n` +
+        `金額：NT$${order.price}`,
+    });
 
-  await interaction.editReply({
-    content: `✅ 接單成功！訂單頻道：${orderChannel}`,
-  });
-  await sendPlayLog({
-    title: '✅ 訂單已接取',
-    description:
-      `訂單編號：${order.order_no}\n` +
-      `陪玩：<@${interaction.user.id}>\n` +
-      `服務：${order.service}\n` +
-      `金額：NT$${order.price}`,
-  });
+    await interaction.editReply({
+      content: `✅ 接單成功！訂單頻道：${orderChannel}`,
+    });
+
+  } catch (err) {
+    console.log('[接單系統錯誤]', err);
+
+    await interaction.editReply({
+      content:
+        `❌ 接單失敗：${err.message || '未知錯誤'}`
+    }).catch(() => {});
+  }
 }
 
 // 完成訂單
