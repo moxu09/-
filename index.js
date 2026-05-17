@@ -2628,10 +2628,19 @@ client.on('interactionCreate', async (interaction) => {
 
     // ===== Buttons =====
     if (interaction.isButton()) {
+      // 這顆是開 Modal，不能 defer
+      if (interaction.customId === 'open_play_order_form') {
+        const handled =
+          await dispatchSystem.handleDispatchInteraction(interaction);
+        if (handled) return;
+      }
+      // 其他按鈕都先 defer，因為裡面會用 editReply
+      await interaction.deferReply({
+        flags: 64
+      });
       const handled =
         await dispatchSystem.handleDispatchInteraction(interaction);
       if (handled) return;
-      await interaction.deferReply({ flags: 64 });
       await handleButtonInteraction(interaction);
       return;
     }
