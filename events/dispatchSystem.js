@@ -17,7 +17,43 @@ function setup(supabaseInstance, clientInstance) {
   supabase = supabaseInstance;
   client = clientInstance;
 }
+// ===== 派單紀錄 =====
+async function sendPlayLog({
+  title,
+  description,
+  color = '#00ff99'
+}) {
 
+  try {
+
+    const channel =
+      await client.channels.fetch(
+        process.env.PLAYER_LOG_CHANNEL
+      );
+
+    if (!channel) return;
+
+    const embed =
+      new EmbedBuilder()
+        .setColor(color)
+        .setTitle(title)
+        .setDescription(description)
+        .setTimestamp();
+
+    await channel.send({
+      embeds: [embed]
+    });
+
+  } catch (err) {
+
+    console.log(
+      '[派單紀錄失敗]',
+      err
+    );
+
+  }
+
+}
 // 陪玩上班
 async function playerOnline(interaction) {
   await supabase
@@ -182,7 +218,15 @@ async function createPlayOrder(interaction, service, price, note = '無') {
   );
 
   await channel.send({ embeds: [embed], components: [row] });
-
+  // ===== 派單紀錄 =====
+  await sendPlayLog({
+    title: '📦 新陪玩訂單',
+    description:
+      `訂單編號：${orderNo}\n` +
+      `客人：<@${interaction.user.id}>\n` +
+      `服務：${service}\n` +
+      `金額：NT$${price}`
+  });
   await interaction.editReply({
     content: '✅ 已送出陪玩訂單，請等待陪玩接單',
   });
@@ -443,6 +487,14 @@ async function acceptPlayOrder(interaction) {
   await interaction.editReply({
     content: `✅ 接單成功！訂單頻道：${orderChannel}`,
   });
+  await sendPlayLog({
+    title: '✅ 訂單已接取',
+    description:
+      `訂單編號：${order.order_no}\n` +
+      `陪玩：<@${interaction.user.id}>\n` +
+      `服務：${order.service}\n` +
+      `金額：NT$${order.price}`,
+  });
 }
 
 // 完成訂單
@@ -476,6 +528,15 @@ async function completePlayOrder(interaction) {
 
   await interaction.editReply({
     content: '✅ 訂單已完成，陪玩狀態已恢復可接單'
+  });
+  await sendPlayLog({
+    title: '🏁 訂單已完成',
+    description:
+      `訂單編號：${order.order_no}\n` +
+      `陪玩：<@${order.assigned_player}>\n` +
+      `服務：${order.service}\n` +
+      `金額：NT$${order.price}`,
+    color: '#ffcc00'
   });
 }
 
