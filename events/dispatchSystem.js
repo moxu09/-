@@ -181,6 +181,7 @@ async function createPlayOrder(interaction, service, price, note = '無') {
     .insert({
       order_no: orderNo,
       customer_id: interaction.user.id,
+      channel_id: interaction.channel.id,
       service,
       price,
       note,
@@ -321,7 +322,7 @@ async function openPlayOrderModal(interaction) {
   const noteInput = new TextInputBuilder()
     .setCustomId('note')
     .setLabel('需求備註')
-    .setPlaceholder('例如：換頭像/遊戲名稱/急單/可語音/目前進度')
+    .setPlaceholder('例如：\n 指定陪陪/換頭像/遊戲名稱/急單/可語音/目前進度')
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(false);
 
@@ -432,12 +433,15 @@ async function acceptPlayOrder(interaction) {
       .update({ status: 'busy' })
       .eq('discord_id', interaction.user.id);
 
-    const orderChannel = interaction.channel;
-    await orderChannel.permissionOverwrites.edit(interaction.user.id, {
-      ViewChannel: true,
-      SendMessages: true,
-      ReadMessageHistory: true
-    });
+    const orderChannel =
+      await client.channels.fetch(
+        order.channel_id
+      );
+    if (!orderChannel) {
+      return interaction.editReply({
+        content: '❌ 找不到客人訂單頻道'
+      });
+    }
     await supabase
       .from('play_orders')
       .update({ channel_id: orderChannel.id })
