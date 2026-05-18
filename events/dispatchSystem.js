@@ -442,6 +442,11 @@ async function acceptPlayOrder(interaction) {
         content: '❌ 找不到客人訂單頻道'
       });
     }
+    await orderChannel.permissionOverwrites.edit(interaction.user.id, {
+      ViewChannel: true,
+      SendMessages: true,
+      ReadMessageHistory: true
+    });
     await supabase
       .from('play_orders')
       .update({ channel_id: orderChannel.id })
