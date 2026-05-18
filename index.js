@@ -101,17 +101,24 @@ async function safeReply(interaction, options) {
   try {
     const opts = { ...options };
     if (opts.ephemeral) {
-      opts.flags = 64; // ephemeral
+      opts.flags = 64;
       delete opts.ephemeral;
     }
-
-    if (interaction.replied || interaction.deferred) {
-      await interaction.followUp(opts).catch(() => {});
-    } else {
-      await interaction.reply(opts).catch(() => {});
+    if (
+      interaction.deferred &&
+      !interaction.replied
+    ) {
+      return await interaction.editReply(opts);
     }
+    if (interaction.replied) {
+      return await interaction.followUp(opts);
+    }
+    return await interaction.reply(opts);
   } catch (err) {
-    console.error('[safeReply 錯誤]', err);
+    console.error(
+      '[safeReply 錯誤]',
+      err
+    );
   }
 }
 
@@ -1256,6 +1263,86 @@ console.error(
 });
 
 // ===== Interaction Handler =====
+client.on(Events.InteractionCreate, async interaction => {
+  try {
+
+    // ===== Modal 按鈕：不能 defer，直接交給 dispatchSystem =====
+    if (
+      interaction.isButton() &&
+      (
+        interaction.customId === 'open_topup_modal' ||
+        interaction.customId === 'open_play_order_form'
+      )
+    ) {
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+
+      if (handled) return;
+    }
+
+    // ===== Modal Submit：交給 dispatchSystem =====
+    if (interaction.isModalSubmit()) {
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+
+      if (handled) return;
+    }
+
+    // ===== Slash =====
+    if (interaction.isChatInputCommand()) {
+      await interaction.deferReply({ flags: 64 });
+
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+
+      if (handled) return;
+
+      await handleSlashCommand(interaction);
+      return;
+    }
+
+    // ===== 一般 Button =====
+    if (interaction.isButton()) {
+      await interaction.deferReply({ flags: 64 });
+
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+
+      if (handled) return;
+
+      await handleButtonInteraction(interaction);
+      return;
+    }
+
+    // ===== User Select：不能先 defer，因為會開轉帳 Modal =====
+    if (interaction.isUserSelectMenu()) {
+      await handleUserSelectSubmit(interaction);
+      return;
+    }
+
+    // ===== String Select =====
+    if (interaction.isStringSelectMenu()) {
+      await interaction.deferReply({ flags: 64 });
+
+      await handleStringSelectInteraction(interaction);
+      return;
+    }
+
+  } catch (err) {
+    console.error('[InteractionCreate 錯誤]', err);
+
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({
+        content: '❌ 系統錯誤'
+      }).catch(() => {});
+    } else {
+      await interaction.reply({
+        content: '❌ 系統錯誤',
+        flags: 64
+      }).catch(() => {});
+    }
+  }
+});
 async function replySuccess(interaction, message) {
   if (interaction.replied || interaction.deferred) {
     return interaction.followUp({
