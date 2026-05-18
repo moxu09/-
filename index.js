@@ -1214,6 +1214,39 @@ console.log('✅ 簽到系統已載入');
 await sendGachaPanel(client);
 console.log('✅ 扭蛋系統已載入');
 console.log('🌧️ 星雨機器人已成功上線');
+setInterval(async () => {
+  const eightHoursAgo =
+    new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+
+  const { data: players, error } =
+    await supabase
+      .from('players')
+      .select('*')
+      .eq('status', 'available')
+      .lt('online_started_at', eightHoursAgo);
+
+  if (error || !players?.length) return;
+
+  for (const player of players) {
+    const { data: activeOrder } =
+      await supabase
+        .from('play_orders')
+        .select('*')
+        .eq('assigned_player', player.discord_id)
+        .in('status', ['accepted'])
+        .maybeSingle();
+
+    if (activeOrder) continue;
+
+    await supabase
+      .from('players')
+      .update({
+        status: 'offline',
+        online_started_at: null
+      })
+      .eq('discord_id', player.discord_id);
+  }
+}, 60 * 1000);
 } catch (error) {
 console.error(
   '[BOT] Ready 事件出錯:',
@@ -1938,6 +1971,48 @@ async function handleButtonInteraction(interaction) {
               status: 'available'
             })
             .eq('discord_id', playOrder.assigned_player);
+          await interaction.channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor('#ffcc00')
+                .setTitle('🏁 訂單已完成')
+                .setDescription(
+                  `訂單編號：${playOrder.order_no}\n` +
+                  `陪玩：<@${playOrder.assigned_player}>\n` +
+                  `服務：${playOrder.service}\n` +
+                 `商品金額：NT$${playOrder.price}`
+                )
+            ]
+          });
+          // ===== 發送到陪陪自己的頻道 =====
+          const { data: player } =
+            await supabase
+              .from('players')
+              .select('*')
+              .eq('discord_id', playOrder.assigned_player)
+              .single();
+          if (player?.report_channel_id) {
+            const playerChannel =
+              await client.channels
+                .fetch(player.report_channel_id)
+                .catch(() => null);
+            if (playerChannel) {
+              await playerChannel.send({
+                embeds: [
+                  new EmbedBuilder()
+                    .setColor('#ffcc00')
+                    .setTitle('🏁 完成訂單紀錄')
+                    .setDescription(
+                      `訂單編號：${playOrder.order_no}\n` +
+                      `客人：<@${playOrder.customer_id}>\n` +
+                      `陪玩：<@${playOrder.assigned_player}>\n` +
+                      `服務：${playOrder.service}\n` +
+                      `商品金額：NT$${playOrder.price}`
+                    )
+                ]
+              });
+            }
+          }
         }
       }
       if (!isAdminOrStaff(interaction)) {
@@ -2161,7 +2236,6 @@ async function handleStringSelectInteraction(interaction) {
               }
             ]
           });
-
         // ===== 點單 =====
         if (value === 'order') {
           const completeButton =
@@ -2195,29 +2269,25 @@ async function handleStringSelectInteraction(interaction) {
         }
         // ===== 儲值 =====
         if (value === 'topup') {
-          const completeTopupButton =
-            new ButtonBuilder()
-              .setCustomId('complete_topup')
-              .setLabel('✅ 已完成儲值（由客服關）')
-              .setStyle(ButtonStyle.Success);
+          const embed =
+            new EmbedBuilder()
+              .setColor('#ffd166')
+              .setTitle('💰 儲值系統')
+              .setDescription(
+                '請點擊下方按鈕填寫儲值資料'
+              );
           const row =
             new ActionRowBuilder()
               .addComponents(
-                completeTopupButton
-              );
-          const embed =
-            new EmbedBuilder()
-              .setColor('#00ffff')
-              .setTitle('💰 儲值申請建立成功')
-              .setDescription(
-                '請提供以下資訊\n\n' +
-                '• 付款方式\n' +
-                '• 付款金額\n' +
-                '• 付款截圖'
+                new ButtonBuilder()
+                  .setCustomId('open_topup_modal')
+                  .setLabel('填寫儲值資料')
+                  .setEmoji('💳')
+                  .setStyle(ButtonStyle.Primary)
               );
           await orderChannel.send({
             content:
-              `<@&${process.env.STAFF_ROLE}> ${interaction.user}\n🚀 客服人員正手刀衝刺過來啦！`,
+              `<@&${process.env.STAFF_ROLE}> ${interaction.user}`,
             embeds: [embed],
             components: [row]
           });
