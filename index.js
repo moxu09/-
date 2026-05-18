@@ -2758,7 +2758,8 @@ client.on('interactionCreate', async (interaction) => {
       // 開 Modal 的按鈕，不能 defer
       if (
         interaction.customId === 'open_play_order_form' ||
-        interaction.customId === 'open_topup_modal'
+        interaction.customId === 'open_topup_modal' ||
+        interaction.customId.startsWith('confirm_topup_')
       ) {   
         const handled =
           await dispatchSystem
