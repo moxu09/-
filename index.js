@@ -1938,19 +1938,6 @@ async function handleButtonInteraction(interaction) {
               status: 'available'
             })
             .eq('discord_id', playOrder.assigned_player);
-          await sendPlayLog({
-            title: '🏁 訂單已完成',
-            description:
-              `訂單編號：${order.order_no}\n` +
-              `陪玩：<@${order.assigned_player}>\n` +
-              `服務：${order.service}\n` +
-              `商品金額（折前）：NT$${order.price}`,
-            color: '#ffcc00'
-          });
-          return await interaction.editReply({
-            content:
-              '✅ 陪玩訂單已完成，陪玩狀態已恢復可接單'
-          });
         }
       }
       if (!isAdminOrStaff(interaction)) {
@@ -2179,7 +2166,7 @@ async function handleStringSelectInteraction(interaction) {
         if (value === 'order') {
           const completeButton =
             new ButtonBuilder()
-              .setCustomId(`complete_play_order_${order.id}`)
+              .setCustomId('complete_order')
               .setLabel('✅ 完成訂單（由客服關）')
               .setStyle(ButtonStyle.Primary);
           const row2 =
@@ -2194,7 +2181,11 @@ async function handleStringSelectInteraction(interaction) {
               .setDescription(
                 '• 請幫我按下上方按鈕填寫？'
               );
-          await dispatchSystem.sendPlayOrderFormButton(orderChannel);
+          try {
+            await dispatchSystem.sendPlayOrderFormButton(orderChannel);
+          } catch (err) {
+            console.error('[派單面板錯誤]', err);
+          }
           await orderChannel.send({
             content:
               `<@&${process.env.STAFF_ROLE}> ${interaction.user}\n🚀 客服人員正手刀衝刺過來啦！`,
