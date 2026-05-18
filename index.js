@@ -1274,10 +1274,7 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId === 'open_play_order_form'
       )
     ) {
-      const handled =
-        await dispatchSystem.handleDispatchInteraction(interaction);
-
-      if (handled) return;
+      return await dispatchSystem.handleDispatchInteraction(interaction);
     }
 
     // ===== Modal Submit：交給 dispatchSystem =====
@@ -1290,8 +1287,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== Slash =====
     if (interaction.isChatInputCommand()) {
-      await interaction.deferReply({ flags: 64 });
-
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ flags: 64 });
+      }
       const handled =
         await dispatchSystem.handleDispatchInteraction(interaction);
 
@@ -1303,7 +1301,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
-      await interaction.deferReply({ flags: 64 });
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ flags: 64 });
+      }
 
       const handled =
         await dispatchSystem.handleDispatchInteraction(interaction);
