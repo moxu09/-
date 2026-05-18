@@ -1231,7 +1231,7 @@ async function replySuccess(interaction, message) {
     }).catch(() => {});
   }
   return interaction.reply({
-    content: `✅ ${message}`,
+    content: `✅ ${message}`, 
     flags: 64
   }).catch(() => {});
 }
