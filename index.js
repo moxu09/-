@@ -1916,6 +1916,43 @@ async function handleButtonInteraction(interaction) {
       customId === 'complete_order' ||
       customId === 'complete_topup'
     ) {
+      if (customId === 'complete_order') {
+        const { data: playOrder } =
+          await supabase
+            .from('play_orders')
+            .select('*')
+            .eq('channel_id', interaction.channel.id)
+            .eq('status', 'accepted')
+            .maybeSingle();
+        if (playOrder) {
+          await supabase
+            .from('play_orders')
+            .update({
+              status: 'completed',
+              completed_at: new Date()
+            })
+            .eq('id', playOrder.id);
+          await supabase
+            .from('players')
+            .update({
+              status: 'available'
+            })
+            .eq('discord_id', playOrder.assigned_player);
+          await sendPlayLog({
+            title: '🏁 訂單已完成',
+            description:
+              `訂單編號：${order.order_no}\n` +
+              `陪玩：<@${order.assigned_player}>\n` +
+              `服務：${order.service}\n` +
+              `商品金額（折前）：NT$${order.price}`,
+            color: '#ffcc00'
+          });
+          return await interaction.editReply({
+            content:
+              '✅ 陪玩訂單已完成，陪玩狀態已恢復可接單'
+          });
+        }
+      }
       if (!isAdminOrStaff(interaction)) {
         return await interaction.editReply({
           content: '❌ 只有客服可以操作'
@@ -2142,7 +2179,7 @@ async function handleStringSelectInteraction(interaction) {
         if (value === 'order') {
           const completeButton =
             new ButtonBuilder()
-              .setCustomId('complete_order')
+              .setCustomId(`complete_play_order_${order.id}`)
               .setLabel('✅ 完成訂單（由客服關）')
               .setStyle(ButtonStyle.Primary);
           const row2 =
