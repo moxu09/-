@@ -62,7 +62,8 @@ async function playerOnline(interaction) {
       discord_id: interaction.user.id,
       name: interaction.user.username,
       game: 'delta_force',
-      status: 'available'
+      status: 'available',
+      online_started_at: new Date()
     }, {
       onConflict: 'discord_id'
     });
@@ -308,7 +309,7 @@ async function openPlayOrderModal(interaction) {
   const serviceInput = new TextInputBuilder()
     .setCustomId('service')
     .setLabel('服務項目')
-    .setPlaceholder('陪伴： 出氣包 / 遊戲包 、三角洲：機密護航 / 3×3安全箱')
+    .setPlaceholder('陪伴： 出氣包 or 三角洲：機密護航 ')
     .setStyle(TextInputStyle.Short)
     .setRequired(true);
 
@@ -322,7 +323,7 @@ async function openPlayOrderModal(interaction) {
   const noteInput = new TextInputBuilder()
     .setCustomId('note')
     .setLabel('需求備註')
-    .setPlaceholder('例如：\n 指定陪陪/換頭像/遊戲名稱/急單/可語音/目前進度')
+    .setPlaceholder(' PS：上方服務項目的部分，遊戲名項目名一定要寫出來； \n\n 例如：\n 指定陪陪/換頭像/遊戲名稱/急單/可語音/目前進度')
     .setStyle(TextInputStyle.Paragraph)
     .setRequired(false);
 
@@ -333,6 +334,59 @@ async function openPlayOrderModal(interaction) {
   );
 
   await interaction.showModal(modal);
+}
+async function openTopupModal(interaction) {
+
+  const modal =
+    new ModalBuilder()
+      .setCustomId('submit_topup_form')
+      .setTitle('💰 儲值申請');
+
+  // ===== 金額 =====
+
+  const amountInput =
+    new TextInputBuilder()
+      .setCustomId('amount')
+      .setLabel('儲值金額')
+      .setPlaceholder('例如：1000')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+  // ===== 付款方式 =====
+
+  const methodInput =
+    new TextInputBuilder()
+      .setCustomId('method')
+      .setLabel('付款方式')
+      .setPlaceholder('匯款/無卡/加密貨幣/美金轉帳')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+  // ===== 備註 =====
+
+  const noteInput =
+    new TextInputBuilder()
+      .setCustomId('note')
+      .setLabel('備註')
+      .setPlaceholder('沒有可填無')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false);
+
+  modal.addComponents(
+
+    new ActionRowBuilder()
+      .addComponents(amountInput),
+
+    new ActionRowBuilder()
+      .addComponents(methodInput),
+
+    new ActionRowBuilder()
+      .addComponents(noteInput)
+
+  );
+
+  await interaction.showModal(modal);
+
 }
 async function submitPlayOrderForm(interaction) {
   if (!interaction.deferred && !interaction.replied) {
@@ -361,6 +415,105 @@ async function submitPlayOrderForm(interaction) {
     note
   );
 }
+async function submitTopupForm(interaction) {
+
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const amountText =
+    interaction.fields.getTextInputValue(
+      'amount'
+    );
+
+  const method =
+    interaction.fields.getTextInputValue(
+      'method'
+    );
+
+  let note = '無';
+
+  try {
+
+    note =
+      interaction.fields.getTextInputValue(
+        'note'
+      ) || '無';
+
+  } catch {}
+
+  // ===== 金額處理 =====
+
+  const amount =
+    parseInt(
+      amountText.replace(/[^\d]/g, ''),
+      10
+    );
+
+  if (!amount || amount <= 0) {
+
+    return interaction.editReply({
+      content: '❌ 金額格式錯誤'
+    });
+
+  }
+
+  // ===== Embed =====
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#ffd166')
+      .setTitle('💰 儲值申請')
+      .setDescription(
+
+        `👤 會員：${interaction.user}\n\n` +
+
+        `💵 儲值金額：NT$${amount}\n` +
+
+        `💳 付款方式：${method}\n` +
+
+        `📝 備註：${note}`
+
+      );
+
+  // ===== 按鈕 =====
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+
+        new ButtonBuilder()
+          .setCustomId(
+            `confirm_topup_${interaction.user.id}_${amount}`
+          )
+          .setLabel('確認儲值')
+          .setEmoji('✅')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId('close_ticket')
+          .setLabel('關閉單子')
+          .setEmoji('🗑️')
+          .setStyle(ButtonStyle.Danger)
+
+      );
+
+  await interaction.channel.send({
+
+    embeds: [embed],
+
+    components: [row]
+
+  });
+
+  await interaction.editReply({
+
+    content:
+      '✅ 已送出儲值申請'
+
+  });
+
+}
 // 接單
 async function acceptPlayOrder(interaction) {
   try {
@@ -383,13 +536,26 @@ async function acceptPlayOrder(interaction) {
         content: '❌ 你目前不是可接單狀態，請先按「開始接單」',
       });
     }
-
     const { data: order, error: orderError } =
       await supabase
         .from('play_orders')
         .select('*')
         .eq('id', orderId)
         .single();
+    // ===== 可接項目限制 =====
+    const allowedServices =
+      player.allowed_services || [];
+    const canAccept =
+      allowedServices.some(service =>
+        order.service.includes(service)
+      );
+    if (!canAccept) {
+      return interaction.editReply({
+        content:
+          `❌ 你沒有權限接這個項目\n` +
+          `此訂單服務：${order.service}`
+      });
+    }
 
     if (orderError) {
       console.log('[接單錯誤 play_orders]', orderError);
@@ -466,11 +632,7 @@ async function acceptPlayOrder(interaction) {
       new ButtonBuilder()
         .setCustomId(`use_coupon_${orderChannel.id}`)
         .setLabel('使用優惠券')
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId(`complete_play_order_${orderId}`)
-        .setLabel('完成訂單')
-        .setStyle(ButtonStyle.Primary)
+        .setStyle(ButtonStyle.Success)
     );
 
     await orderChannel.send({
@@ -507,50 +669,184 @@ async function acceptPlayOrder(interaction) {
     }).catch(() => {});
   }
 }
+function getGrowthVipLevel(totalTopup, totalSpent) {
+  if (totalTopup >= 75000 || totalSpent >= 75000) {
+    return 'vvip';
+  }
 
-// 完成訂單
-async function completePlayOrder(interaction) {
-  const orderId = interaction.customId.replace('complete_play_order_', '');
+  if (totalTopup >= 50000 || totalSpent >= 50000) {
+    return 'vip_plus';
+  }
 
-  const { data: order } = await supabase
-    .from('play_orders')
-    .select('*')
-    .eq('id', orderId)
-    .single();
+  if (totalTopup >= 18000 || totalSpent >= 18000) {
+    return 'vip';
+  }
 
-  if (!order) {
-    return interaction.editReply({
-      content: '❌ 找不到訂單',
-    });
+  return 'none';
+}
+
+function getGrowthVipRoleId(level) {
+  const roles = {
+    vip: process.env.GROWTH_VIP_ROLE_ID,
+    vip_plus: process.env.GROWTH_VIP_PLUS_ROLE_ID
+    // vvip 不發身分組
+  };
+
+  return roles[level] || null;
+}
+
+async function checkGrowthVip(client, guildId, userId) {
+  const { data: user, error } =
+    await supabase
+      .from('users')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+  if (error || !user) {
+    console.log('[VIP] 找不到使用者', error);
+    return;
+  }
+
+  const totalTopup = user.total_topup || 0;
+  const totalSpent = user.total_spent || 0;
+
+  const newLevel =
+    getGrowthVipLevel(totalTopup, totalSpent);
+
+  if (newLevel === user.growth_vip) {
+    return;
   }
 
   await supabase
-    .from('play_orders')
+    .from('users')
     .update({
-      status: 'completed',
-      completed_at: new Date()
+      growth_vip: newLevel
     })
-    .eq('id', orderId);
+    .eq('user_id', userId);
 
-  await supabase
-    .from('players')
-    .update({ status: 'available' })
-    .eq('discord_id', order.assigned_player);
+  const guild =
+    await client.guilds.fetch(guildId);
+
+  const member =
+    await guild.members
+      .fetch(userId)
+      .catch(() => null);
+
+  if (!member) return;
+
+  const growthRoles = [
+    process.env.GROWTH_VIP_ROLE_ID,
+    process.env.GROWTH_VIP_PLUS_ROLE_ID
+  ].filter(Boolean);
+
+  await member.roles
+    .remove(growthRoles)
+    .catch(() => {});
+
+  const roleId =
+    getGrowthVipRoleId(newLevel);
+
+  if (roleId) {
+    await member.roles
+      .add(roleId)
+      .catch(() => {});
+  }
+
+  const levelName = {
+    vip: '💎 VIP',
+    vip_plus: '🌟 VIP+',
+    vvip: '👑 VVIP',
+    none: '無'
+  };
+
+  await member.send({
+    content:
+      `🎉 恭喜你已升級為 ${levelName[newLevel]}！`
+  }).catch(() => {});
+}
+async function confirmTopup(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: 64 });
+  }
+  const [, , userId, amountText] =
+    interaction.customId.split('_');
+  const amount =
+    Number(amountText);
+  // ===== 讀玩家 =====
+
+  const { data: user } =
+    await supabase
+      .from('users')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+  // ===== 新玩家 =====
+
+  if (!user) {
+
+    await supabase
+      .from('users')
+      .insert({
+
+        user_id:
+          userId,
+
+        coins:
+          amount,
+
+        total_topup:
+          amount,
+
+        total_spent:
+          0,
+
+        vip_level:
+          'none',
+
+        growth_vip:
+          'none'
+
+      });
+
+  }
+
+  // ===== 舊玩家 =====
+
+  else {
+
+    await supabase
+      .from('users')
+      .update({
+
+        coins:
+          (user.coins || 0) + amount,
+
+        total_topup:
+          (user.total_topup || 0) + amount
+
+      })
+      .eq('user_id', userId);
+
+  }
+
+  // ===== VIP 檢查 =====
+
+  await checkGrowthVip(
+    client,
+    interaction.guild.id,
+    userId
+  );
 
   await interaction.editReply({
-    content: '✅ 訂單已完成，陪玩狀態已恢復可接單'
-  });
-  await sendPlayLog({
-    title: '🏁 訂單已完成',
-    description:
-      `訂單編號：${order.order_no}\n` +
-      `陪玩：<@${order.assigned_player}>\n` +
-      `服務：${order.service}\n` +
-      `商品金額（折前）：NT$${order.price}`,
-    color: '#ffcc00'
-  });
-}
 
+    content:
+      `✅ 已完成儲值 NT$${amount}`
+
+  });
+
+}
 async function handleDispatchInteraction(interaction) {
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === '上班') {
@@ -570,6 +866,14 @@ async function handleDispatchInteraction(interaction) {
 
   if (interaction.isButton()) {
     // ===== 陪玩控制 =====
+    if (interaction.customId ==='open_topup_modal') {
+      await openTopupModal(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('confirm_topup_')) {
+      await confirmTopup(interaction);
+      return true;
+    }
     if (interaction.customId === 'open_play_order_form') {
       await openPlayOrderModal(interaction);
       return true;
@@ -591,14 +895,14 @@ async function handleDispatchInteraction(interaction) {
       await acceptPlayOrder(interaction);
       return true;
     }
-    if (interaction.customId.startsWith('complete_play_order_')) {
-      await completePlayOrder(interaction);
-      return true;
-    }
    }
   if (interaction.isModalSubmit()) {
     if (interaction.customId === 'submit_play_order_form') {
       await submitPlayOrderForm(interaction);
+      return true;
+    }
+    if (interaction.customId === 'submit_topup_form') {
+      await submitTopupForm(interaction);
       return true;
     }
   }
@@ -611,5 +915,9 @@ module.exports = {
   handleDispatchInteraction,
   createPlayOrder,
   sendPlayerPanel,
-  sendPlayOrderFormButton
+  sendPlayOrderFormButton,
+  submitTopupForm,
+  submitPlayOrderForm,
+  openTopupModal,
+  openPlayOrderModal
 };
