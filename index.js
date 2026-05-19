@@ -97,13 +97,13 @@ function getRarityEmoji(rarity) {
 }
 function getShopRoleId(itemName) {
   if (itemName.includes('小夜燈')) {
-    return process.env.MONTH_VIP_SMALL_ROLE_ID;
+    return process.env.SMALL_LIGHT_VIP_ROLE_ID;
   }
   if (itemName.includes('星光燈')) {
-    return process.env.MONTH_VIP_STAR_ROLE_ID;
+    return process.env.STAR_LIGHT_VIP_ROLE_ID;
   }
   if (itemName.includes('永夜燈')) {
-    return process.env.MONTH_VIP_NIGHT_ROLE_ID;
+    return process.env.ETERNAL_LIGHT_VIP_ROLE_ID;
   }
   return null;
 }
