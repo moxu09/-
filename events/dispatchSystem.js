@@ -669,19 +669,16 @@ async function acceptPlayOrder(interaction) {
     }).catch(() => {});
   }
 }
-function getGrowthVipLevel(totalTopup, totalSpent) {
-  if (totalTopup >= 75000 || totalSpent >= 75000) {
+function getGrowthVipLevel(totalTopup, singleTopup = 0) {
+  if (singleTopup >= 50000 || totalTopup >= 75000) {
     return 'vvip';
   }
-
-  if (totalTopup >= 50000 || totalSpent >= 50000) {
+  if (singleTopup >= 30000 || totalTopup >= 50000) {
     return 'vip_plus';
   }
-
-  if (totalTopup >= 18000 || totalSpent >= 18000) {
+  if (singleTopup >= 10000 || totalTopup >= 18000) {
     return 'vip';
   }
-
   return 'none';
 }
 function getTopupBonus(amount) {
@@ -716,7 +713,7 @@ function getGrowthVipRoleId(level) {
   return roles[level] || null;
 }
 
-async function checkGrowthVip(client, guildId, userId) {
+async function checkGrowthVip(client, guildId, userId, singleTopup = 0) {
   const { data: user, error } =
     await supabase
       .from('users')
@@ -730,10 +727,9 @@ async function checkGrowthVip(client, guildId, userId) {
   }
 
   const totalTopup = user.total_topup || 0;
-  const totalSpent = user.total_spent || 0;
 
   const newLevel =
-    getGrowthVipLevel(totalTopup, totalSpent);
+    getGrowthVipLevel(totalTopup, singleTopup);
 
   if (newLevel === user.growth_vip) {
     return;
@@ -861,7 +857,8 @@ async function confirmTopup(interaction) {
   await checkGrowthVip(
     client,
     interaction.guild.id,
-    userId
+    userId,
+    amount
   );
   // ===== 儲值通知 =====
   const newBalance =
@@ -892,8 +889,37 @@ async function confirmTopup(interaction) {
       embeds: [embed]
     }).catch(() => {});
   }
+  // ===== 發送儲值結果到臨時頻道 =====
+  const resultEmbed =
+    new EmbedBuilder()
+      .setColor('#57F287')
+      .setTitle('✅ 儲值完成')
+      .setDescription(
+        `👤 會員：<@${userId}>\n\n` +
+        `💰 儲值金額：NT$${amount}\n` +
+        (
+          bonus > 0
+            ? `🎁 儲值贈送：${bonus} 星雨幣\n`
+            : ''
+        ) +
+        `💳 實際入帳：${finalAmount} 星雨幣\n` +
+        `🏦 目前餘額：${newBalance} 星雨幣`
+      )
+      .setTimestamp();
+  await interaction.channel.send({
+    embeds: [resultEmbed]
+  });
+  const closeRow =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('close_ticket')
+          .setLabel('關閉單子')
+          .setEmoji('🗑️')
+          .setStyle(ButtonStyle.Danger)
+      );
   await interaction.message.edit({
-    components: []
+    components: [closeRow]
   }).catch(() => {});
   await interaction.editReply({
     content:
@@ -930,9 +956,8 @@ async function handleDispatchInteraction(interaction) {
           process.env.STAFF_ROLE
         )
       ) {
-        return interaction.reply({
+        return interaction.editReply({
           content: '❌ 只有客服可以確認儲值',
-          flags: 64
         });
       }
       await confirmTopup(interaction);

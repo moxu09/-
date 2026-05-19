@@ -95,7 +95,61 @@ function getRarityEmoji(rarity) {
       return '📦';
   }
 }
-
+function getShopRoleId(itemName) {
+  if (itemName.includes('小夜燈')) {
+    return process.env.MONTH_VIP_SMALL_ROLE_ID;
+  }
+  if (itemName.includes('星光燈')) {
+    return process.env.MONTH_VIP_STAR_ROLE_ID;
+  }
+  if (itemName.includes('永夜燈')) {
+    return process.env.MONTH_VIP_NIGHT_ROLE_ID;
+  }
+  return null;
+}
+async function giveShopRole(interaction, userId, itemName) {
+  const roleId =
+    getShopRoleId(itemName);
+  if (!roleId) return;
+  const member =
+    await interaction.guild.members
+      .fetch(userId)
+      .catch(() => null);
+  if (!member) return;
+  await member.roles
+    .add(roleId)
+    .catch(err => {
+      console.log('[商店身分組發放失敗]', err);
+    });
+}
+async function giveMonthlyVip(
+  interaction,
+  userId,
+  itemName
+) {
+  const roleId =
+    getShopRoleId(itemName);
+  if (!roleId) return;
+  const member =
+    await interaction.guild.members
+      .fetch(userId)
+      .catch(() => null);
+  if (!member) return;
+  await member.roles.add(roleId);
+  const expiresAt =
+    new Date(
+      Date.now() +
+      30 * 24 * 60 * 60 * 1000
+    );
+  await supabase
+    .from('monthly_vips')
+    .upsert({
+      user_id: userId,
+      role_id: roleId,
+      vip_type: itemName,
+      expires_at: expiresAt.toISOString()
+    });
+}
 // ===== 安全回覆封裝 =====
 async function safeReply(interaction, options) {
   try {
@@ -1221,6 +1275,40 @@ console.log('✅ 簽到系統已載入');
 await sendGachaPanel(client);
 console.log('✅ 扭蛋系統已載入');
 console.log('🌧️ 星雨機器人已成功上線');
+setInterval(async () => {
+  try {
+    const now =
+      new Date().toISOString();
+    const { data: expired } =
+      await supabase
+        .from('monthly_vips')
+        .select('*')
+        .lte('expires_at', now);
+    if (!expired?.length) return;
+    for (const vip of expired) {
+      const guild =
+        client.guilds.cache.first();
+      const member =
+        await guild.members
+          .fetch(vip.user_id)
+          .catch(() => null);
+      if (member) {
+        await member.roles
+          .remove(vip.role_id)
+          .catch(() => {});
+      }
+      await supabase
+        .from('monthly_vips')
+        .delete()
+        .eq('id', vip.id);
+    }
+  } catch (err) {
+    console.log(
+      '[月卡VIP檢查錯誤]',
+      err
+    );
+  }
+}, 60 * 60 * 1000);
 setInterval(async () => {
   const eightHoursAgo =
     new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
@@ -2466,6 +2554,11 @@ async function handleStringSelectInteraction(interaction) {
         await updateCoins(
           interaction.user.id,
           userData.coins - item.price
+        );
+        await giveMonthlyVip(
+          interaction,
+          interaction.user.id,
+          item.item_name
         );
         await sendWalletLog(
           interaction.user.id,
