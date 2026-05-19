@@ -2031,6 +2031,31 @@ async function handleButtonInteraction(interaction) {
           '✅ 已公開通知：不使用優惠券'
       });
     }
+    // ===== 關閉儲值單 =====
+    if (customId === 'close_ticket') {
+      if (!isAdminOrStaff(interaction)) {
+        return await interaction.editReply({
+          content: '❌ 只有客服可以關閉單子'
+        });
+      }
+      const saveButton =
+        new ButtonBuilder()
+          .setCustomId('save_order_log')
+          .setLabel('📁 儲存紀錄')
+          .setStyle(ButtonStyle.Success);
+      const deleteButton =
+        new ButtonBuilder()
+          .setCustomId('delete_order_now')
+          .setLabel('🗑️ 直接刪除')
+          .setStyle(ButtonStyle.Danger);
+      const row =
+        new ActionRowBuilder()
+          .addComponents(saveButton, deleteButton);
+      return await interaction.editReply({
+        content: '💰 是否儲存儲值紀錄？',
+        components: [row]
+      });
+    }
     // ===== 完成訂單 =====
     if (
       customId === 'complete_order' ||

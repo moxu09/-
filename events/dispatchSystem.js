@@ -684,6 +684,27 @@ function getGrowthVipLevel(totalTopup, totalSpent) {
 
   return 'none';
 }
+function getTopupBonus(amount) {
+  if (amount >= 75000) {
+    return 8000;
+  }
+  if (amount >= 50000) {
+    return 5000;
+  }
+  if (amount >= 30000) {
+  return 3000;
+  }
+  if (amount >= 18000) {
+    return 1800;
+  }
+  if (amount >= 8000) {
+    return 700;
+  }
+  if (amount >= 5000) {
+    return 300;
+  }
+  return 0;
+}
 
 function getGrowthVipRoleId(level) {
   const roles = {
@@ -773,6 +794,10 @@ async function confirmTopup(interaction) {
     interaction.customId.split('_');
   const amount =
     Number(amountText);
+  const bonus =
+    getTopupBonus(amount);
+  const finalAmount =
+    amount + bonus;
   // ===== 讀玩家 =====
 
   const { data: user } =
@@ -794,7 +819,7 @@ async function confirmTopup(interaction) {
           userId,
 
         coins:
-          amount,
+          finalAmount,
 
         total_topup:
           amount,
@@ -821,7 +846,7 @@ async function confirmTopup(interaction) {
       .update({
 
         coins:
-          (user.coins || 0) + amount,
+          (user.coins || 0) + finalAmount,
 
         total_topup:
           (user.total_topup || 0) + amount
@@ -838,12 +863,38 @@ async function confirmTopup(interaction) {
     interaction.guild.id,
     userId
   );
-
+  // ===== 儲值通知 =====
+  const newBalance =
+    !user
+      ? finalAmount
+      : (user.coins || 0) + finalAmount;
+  const targetUser =
+    await client.users
+      .fetch(userId)
+      .catch(() => null);
+  if (targetUser) {
+    const embed =
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('💰 儲值成功')
+        .setDescription(
+          `已成功儲值 NT$${amount}\n` +
+          (
+            bonus > 0
+              ? `🎁 儲值贈送：${bonus} 星雨幣\n\n`
+              : '\n'
+          )
+          `💳 目前餘額：${newBalance} 星雨幣\n\n` +
+          `星雨幣已發放至你的帳戶 ✨`
+        )
+        .setTimestamp();
+    await targetUser.send({
+      embeds: [embed]
+    }).catch(() => {});
+  }
   await interaction.editReply({
-
     content:
       `✅ 已完成儲值 NT$${amount}`
-
   });
 
 }
