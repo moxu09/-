@@ -1301,15 +1301,12 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+      if (handled) return;
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferReply({ flags: 64 });
       }
-
-      const handled =
-        await dispatchSystem.handleDispatchInteraction(interaction);
-
-      if (handled) return;
-
       await handleButtonInteraction(interaction);
       return;
     }
