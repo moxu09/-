@@ -805,7 +805,7 @@ async function confirmTopup(interaction) {
       .from('users')
       .select('*')
       .eq('user_id', userId)
-      .single();
+      .maybeSingle();
 
   // ===== 新玩家 =====
 
@@ -881,9 +881,9 @@ async function confirmTopup(interaction) {
           `已成功儲值 NT$${amount}\n` +
           (
             bonus > 0
-              ? `🎁 儲值贈送：${bonus} 星雨幣\n\n`
+              ? `🎁 儲值贈送：${bonus} 星雨幣\n\n` 
               : '\n'
-          )
+          ) +
           `💳 目前餘額：${newBalance} 星雨幣\n\n` +
           `星雨幣已發放至你的帳戶 ✨`
         )
@@ -892,6 +892,9 @@ async function confirmTopup(interaction) {
       embeds: [embed]
     }).catch(() => {});
   }
+  await interaction.message.edit({
+    components: []
+  }).catch(() => {});
   await interaction.editReply({
     content:
       `✅ 已完成儲值 NT$${amount}`
@@ -922,6 +925,16 @@ async function handleDispatchInteraction(interaction) {
       return true;
     }
     if (interaction.customId.startsWith('confirm_topup_')) {
+      if (
+        !interaction.member.roles.cache.has(
+          process.env.STAFF_ROLE
+        )
+      ) {
+        return interaction.reply({
+          content: '❌ 只有客服可以確認儲值',
+          flags: 64
+        });
+      }
       await confirmTopup(interaction);
       return true;
     }
