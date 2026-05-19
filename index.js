@@ -107,6 +107,40 @@ function getShopRoleId(itemName) {
   }
   return null;
 }
+// ===== VIP 折扣 =====
+async function getVipDiscount(interaction) {
+
+  const member =
+    await interaction.guild.members
+      .fetch(interaction.user.id)
+      .catch(() => null);
+
+  if (!member) return 1;
+
+  const roles =
+    member.roles.cache;
+
+  // ===== 9折 =====
+  const has90 =
+    roles.has(process.env.ETERNAL_LIGHT_VIP_ROLE_ID) ||
+    roles.has(process.env.GROWTH_VVIP_ROLE_ID);
+
+  if (has90) {
+    return 0.9;
+  }
+
+  // ===== 95折 =====
+  const has95 =
+    roles.has(process.env.STAR_LIGHT_VIP_ROLE_ID) ||
+    roles.has(process.env.GROWTH_VIP_ROLE_ID) ||
+    roles.has(process.env.GROWTH_VIP_PLUS_ROLE_ID);
+
+  if (has95) {
+    return 0.95;
+  }
+
+  return 1;
+}
 async function giveShopRole(interaction, userId, itemName) {
   const roleId =
     getShopRoleId(itemName);

@@ -174,9 +174,18 @@ async function playerStatus(interaction) {
 }
 
 // 建立陪玩訂單
-async function createPlayOrder(interaction, service, price, note = '無') {
+async function createPlayOrder(interaction, service, price, note = '無', paymentMethod = '未填寫') {
   const orderNo = `DF-${Date.now()}`;
-
+  const discountRate =
+    await getVipDiscount(interaction);
+  const finalPrice =
+    Math.floor(price * discountRate);
+  const discountText =
+    discountRate === 0.9
+      ? '9折'
+      : discountRate === 0.95
+        ? '95折'
+        : '無折扣';
   const { data: order, error } = await supabase
     .from('play_orders')
     .insert({
@@ -185,6 +194,8 @@ async function createPlayOrder(interaction, service, price, note = '無') {
       channel_id: interaction.channel.id,
       service,
       price,
+      final_price: finalPrice,
+      discount_rate: discountRate,
       note,
       status: 'pending'
     })
@@ -202,12 +213,15 @@ async function createPlayOrder(interaction, service, price, note = '無') {
 
   const embed = new EmbedBuilder()
     .setColor('#00ff99')
-    .setTitle('📦 三角洲新陪玩訂單')
+    .setTitle('📦 已建立新陪玩訂單！')
     .setDescription(
       `訂單編號：${orderNo}\n` +
       `客人：<@${interaction.user.id}>\n` +
       `服務：${service}\n` +
-      `商品金額（折前）：NT$${price}\n\n` +
+      `商品金額（折前）：NT$${price}\n` +
+      `付款方式：${paymentMethod}\n` +
+      `VIP折扣：${discountText}\n` +
+      `實收金額：NT$${finalPrice}\n\n`
       `請可接單的陪玩點擊下方按鈕。`
     );
 
@@ -320,6 +334,14 @@ async function openPlayOrderModal(interaction) {
     .setStyle(TextInputStyle.Short)
     .setRequired(true);
 
+  const finalPriceInput =
+  new TextInputBuilder()
+    .setCustomId('final_price')
+    .setLabel('付款方式')
+    .setPlaceholder('儲值卡/轉帳/無卡/美金匯款/加密貨幣')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false);
+
   const noteInput = new TextInputBuilder()
     .setCustomId('note')
     .setLabel('需求備註')
@@ -330,6 +352,7 @@ async function openPlayOrderModal(interaction) {
   modal.addComponents(
     new ActionRowBuilder().addComponents(serviceInput),
     new ActionRowBuilder().addComponents(priceInput),
+    new ActionRowBuilder().addComponents(paymentInput),
     new ActionRowBuilder().addComponents(noteInput)
   );
 
@@ -396,6 +419,14 @@ async function submitPlayOrderForm(interaction) {
     interaction.fields.getTextInputValue('service');
   const priceText =
     interaction.fields.getTextInputValue('price');
+  // ===== 付款方式 =====
+  let paymentMethod = '未填寫';
+  try {
+    paymentMethod =
+      interaction.fields.getTextInputValue(
+        'payment_method'
+      ) || '未填寫';
+  } catch {}
   let note = '無';
   try {
     note =
@@ -412,7 +443,8 @@ async function submitPlayOrderForm(interaction) {
     interaction,
     service,
     price,
-    note
+    note,
+    paymentMethod
   );
 }
 async function submitTopupForm(interaction) {
