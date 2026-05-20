@@ -2865,24 +2865,44 @@ async function handleStringSelectInteraction(interaction) {
                 finalPrice = Math.floor(order.price * 0.8);
                 discountAmount = order.price - finalPrice;
             }
-
-            await supabase
+            const { error: updateError } =
+              await supabase
                 .from('play_orders')
                 .update({
-                    coupon_name: coupon.item_name,
-                    discount_amount: discountAmount,
-                    final_price: finalPrice
+                  coupon_name: coupon.item_name,
+                  discount_amount: discountAmount,
+                  final_price: finalPrice
                 })
                 .eq('id', order.id);
-            // ===== 刪除優惠券 =====
-            await removeUserItem(coupon.id);
-
-            await supabase
+            if (updateError) {
+              console.error('[優惠券更新訂單失敗]', updateError);
+              return await interaction.editReply({
+                content: '❌ 優惠券更新訂單失敗'
+              });
+            }
+            // ===== 使用成功後，直接刪除優惠券 =====
+            try {
+              await removeUserItem(coupon.id);
+            } catch (deleteError) {
+              console.error('[優惠券刪除失敗]', deleteError);
+              return await interaction.editReply({
+                content: '❌ 優惠券使用成功，但刪除失敗，請通知客服'
+              });
+            }
+            // ===== 紀錄已使用優惠券 =====
+            const { error: usedError } =
+              await supabase
                 .from('used_coupons')
                 .insert({
-                    user_id: interaction.user.id,
-                    item_name: coupon.item_name
+                  user_id: interaction.user.id,
+                  item_name: coupon.item_name
                 });
+            if (usedError) {
+              console.error('[優惠券紀錄失敗]', usedError);
+              return await interaction.editReply({
+                content: '❌ 優惠券已刪除，但使用紀錄寫入失敗'
+              });
+            }
             // ===== 公開通知 =====
             await interaction.channel.send({
                 content:
