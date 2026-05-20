@@ -868,11 +868,18 @@ async function sendAtmPanel(client) {
       .setLabel('💸 玩家轉帳')
       .setStyle(ButtonStyle.Success);
 
+  const consumeButton =
+    new ButtonBuilder()
+      .setCustomId('consume_info')
+      .setLabel('💠 消費資訊')
+      .setStyle(ButtonStyle.Secondary);
+
   const row =
     new ActionRowBuilder()
       .addComponents(
         balanceButton,
-        transferButton
+        transferButton,
+        consumeButton
       );
 
   const embed =
@@ -884,7 +891,8 @@ async function sendAtmPanel(client) {
         `你可以在這裡查看餘額或轉帳給其他玩家。\n\n` +
         `━━━━━━━━━━━━━━\n` +
         `💰 查看餘額｜確認目前星雨幣\n` +
-        `💸 玩家轉帳｜轉帳給指定玩家`
+        `💸 玩家轉帳｜轉帳給指定玩家\n` +
+        `💠 消費資訊｜查看累積消費`
       )
       .setThumbnail(client.user.displayAvatarURL())
       .setFooter({
@@ -1891,7 +1899,26 @@ async function handleButtonInteraction(interaction) {
         ]
       });
     }
-
+      // ===== ATM 消費資訊 =====
+    if (customId === 'consume_info') {
+      const userData = await getUser(interaction.user.id);
+      const embed =
+        new EmbedBuilder()
+          .setColor('#00ffff')
+          .setTitle(`${interaction.user.username}｜用戶消費資訊`)
+          .setThumbnail(interaction.user.displayAvatarURL())
+          .setDescription(
+            `**錢包餘額**\n` +
+            `${userData.coins || 0} 元\n\n` +
+            `**累積消費金額**\n` +
+            `${userData.total_spent || 0} 元\n\n` +
+            `**月累積消費金額**\n` +
+            `${userData.month_spent || 0} 元`
+          );
+      return await interaction.editReply({
+        embeds: [embed]
+      });
+    }
     // ===== ATM 轉帳 =====
     if (customId === 'transfer_menu') {
       const menu =
@@ -2585,10 +2612,14 @@ async function handleStringSelectInteraction(interaction) {
           item.description,
           itemType
         );
-        await updateCoins(
-          interaction.user.id,
-          userData.coins - item.price
-        );
+        await supabase
+          .from('users')
+          .update({
+            coins: userData.coins - item.price,
+            total_spent: (userData.total_spent || 0) + item.price,
+            month_spent: (userData.month_spent || 0) + item.price
+          })
+          .eq('user_id', interaction.user.id);
         await giveMonthlyVip(
           interaction,
           interaction.user.id,
