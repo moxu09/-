@@ -374,7 +374,7 @@ async function openPlayOrderModal(interaction) {
   const paymentInput = new TextInputBuilder()
     .setCustomId('payment_method')
     .setLabel('付款方式')
-    .setPlaceholder('轉帳 / 無卡 / 加密貨幣')
+    .setPlaceholder('轉帳 / 無卡 / 儲值卡 / 加密貨幣')
     .setStyle(TextInputStyle.Short)
     .setRequired(false);
 

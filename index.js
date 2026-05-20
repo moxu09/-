@@ -1430,16 +1430,15 @@ client.on(Events.InteractionCreate, async interaction => {
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
-      const handled =
-        await dispatchSystem.handleDispatchInteraction(interaction);
-      if (handled) return;
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferReply({ flags: 64 });
       }
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+      if (handled) return; 
       await handleButtonInteraction(interaction);
       return;
     }
-
     // ===== String Select =====
     if (interaction.isStringSelectMenu()) {
       // 這些會開 Modal，不能 defer
