@@ -191,6 +191,8 @@ async function createPlayOrder(interaction, service, time, price, note = '無', 
       price,
       final_price: finalPrice,
       discount_rate: discountRate,
+      payment_method: paymentMethod,
+      paid: false,
       note,
       status: 'pending'
     })
@@ -450,14 +452,22 @@ async function openTopupModal(interaction) {
 }
 async function submitPlayOrderForm(interaction) {
   if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ flags: 64 });
+    await interaction.deferReply({
+      flags: 64
+    });
   }
   const service =
-    interaction.fields.getTextInputValue('service');
+    interaction.fields.getTextInputValue(
+      'service'
+    );
   const time =
-    interaction.fields.getTextInputValue('time');
+    interaction.fields.getTextInputValue(
+      'time'
+    );
   const priceText =
-    interaction.fields.getTextInputValue('price');
+    interaction.fields.getTextInputValue(
+      'price'
+    );
   // ===== 付款方式 =====
   let paymentMethod = '未填寫';
   try {
@@ -466,16 +476,24 @@ async function submitPlayOrderForm(interaction) {
         'payment_method'
       ) || '未填寫';
   } catch {}
+  // ===== 備註 =====
   let note = '無';
   try {
     note =
-      interaction.fields.getTextInputValue('note') || '無';
+      interaction.fields.getTextInputValue(
+        'note'
+      ) || '無';
   } catch {}
+  // ===== 價格 =====
   const price =
-    parseInt(priceText.replace(/[^\d]/g, ''), 10);
+    parseInt(
+      priceText.replace(/[^\d]/g, ''),
+      10
+    );
   if (!price || price <= 0) {
     return interaction.editReply({
-      content: '❌ 價格格式錯誤，請輸入數字。'
+      content:
+        '❌ 價格格式錯誤，請輸入數字。'
     });
   }
   await createPlayOrder(

@@ -45,6 +45,7 @@ const STAFF_ROLE =
 // ===== 全域狀態 =====
 const claimedDrops = new Set();
 const dropCooldown = new Map();
+const orderPayments = new Map();
 // ===== Panel Message =====
 async function getPanelMessage(panelName) {
   const { data, error } = await supabase
@@ -2201,102 +2202,165 @@ async function handleButtonInteraction(interaction) {
         components: [row]
       });
     }
+
     // ===== 完成訂單 =====
     if (
       customId === 'complete_order' ||
       customId === 'complete_topup'
     ) {
+      if (!isAdminOrStaff(interaction)) {
+        return await safeReply(interaction, {
+          content: '❌ 只有客服可以操作',
+          ephemeral: true
+        });
+      }
+      // ===== 如果是陪玩訂單 =====
       if (customId === 'complete_order') {
-        const { data: playOrder } =
+        const { data: order } =
           await supabase
             .from('play_orders')
             .select('*')
-            .eq('channel_id', interaction.channel.id)
-            .eq('status', 'accepted')
+            .eq(
+              'channel_id',
+              interaction.channel.id
+            )
             .maybeSingle();
-        if (playOrder) {
-          await supabase
-            .from('play_orders')
-            .update({
-              status: 'completed',
-              completed_at: new Date()
-            })
-            .eq('id', playOrder.id);
-          await supabase
-            .from('players')
-            .update({
-              status: 'available'
-            })
-            .eq('discord_id', playOrder.assigned_player);
-          await interaction.channel.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor('#ffcc00')
-                .setTitle('🏁 訂單已完成')
-                .setDescription(
-                  `訂單編號：${playOrder.order_no}\n` +
-                  `陪玩：<@${playOrder.assigned_player}>\n` +
-                  `服務：${playOrder.service}\n` +
-                 `商品金額：NT$${playOrder.price}`
+        if (order) {
+          // ===== 儲值卡扣款 =====
+          if (
+            order.payment_method &&
+            order.payment_method.includes('儲值卡') &&
+            !order.paid
+          ) {
+            const { data: userData } =
+              await supabase
+                .from('users')
+                .select('*')
+                .eq(
+                  'user_id',
+                  order.customer_id
                 )
-            ]
-          });
-          // ===== 發送到陪陪自己的頻道 =====
-          const { data: player } =
-            await supabase
-              .from('players')
-              .select('*')
-              .eq('discord_id', playOrder.assigned_player)
-              .single();
-          if (player?.report_channel_id) {
-            const playerChannel =
-              await client.channels
-                .fetch(player.report_channel_id)
-                .catch(() => null);
-            if (playerChannel) {
-              await playerChannel.send({
-                embeds: [
-                  new EmbedBuilder()
-                    .setColor('#ffcc00')
-                    .setTitle('🏁 完成訂單紀錄')
-                    .setDescription(
-                      `訂單編號：${playOrder.order_no}\n` +
-                      `客人：<@${playOrder.customer_id}>\n` +
-                      `陪玩：<@${playOrder.assigned_player}>\n` +
-                      `服務：${playOrder.service}\n` +
-                      `商品金額：NT$${playOrder.price}`
-                    )
-                ]
+                .single();
+            if (!userData) {
+              return await safeReply(interaction, {
+                content: '❌ 找不到客戶資料',
+                ephemeral: true
               });
             }
+            const payAmount =
+              Number(
+                order.final_price ||
+                order.price
+              );
+            if (
+              userData.coins < payAmount
+            ) {
+              return await safeReply(interaction, {
+                content:
+                  `❌ 客戶餘額不足\n\n` +
+                  `需要：${payAmount}\n` +
+                  `目前：${userData.coins}`,
+                ephemeral: true
+              });
+            }
+            const finalCoins =
+              userData.coins - payAmount;
+            // ===== 扣款 =====
+            await supabase
+              .from('users')
+              .update({
+                coins: finalCoins,
+                total_spent:
+                  (userData.total_spent || 0) + payAmount,
+                month_spent:
+                  (userData.month_spent || 0) + payAmount
+              })
+              .eq(
+                'user_id',
+                order.customer_id
+              );
+            await sendWalletLog(
+              order.customer_id,
+              '訂單消費',
+              -payAmount,
+              finalCoins,
+              `🎮 ${order.service}`
+            );
+            // ===== 標記付款 =====
+            await supabase
+              .from('play_orders')
+              .update({
+                paid: true,
+                paid_at: new Date(),
+                status: 'completed',
+                completed_at: new Date()
+              })
+              .eq('id', order.id);
+            // ===== 陪玩恢復可接單 =====
+            if (order.assigned_player) {
+              await supabase
+                .from('players')
+                .update({
+                  status: 'available'
+                })
+                .eq(
+                  'discord_id',
+                  order.assigned_player
+                );
+            }
+            // ===== DM 通知 =====
+            const targetUser =
+              await client.users
+                .fetch(order.customer_id)
+                .catch(() => null);
+            if (targetUser) {
+              const embed =
+                new EmbedBuilder()
+                  .setColor('#ff4444')
+                  .setTitle('💳 訂單扣款成功')
+                  .setDescription(
+                    `🎮 ${order.service}\n` +
+                    `💰 扣除 ${payAmount} 星雨幣\n` +
+                    `🏦 剩餘 ${finalCoins} 星雨幣`
+                  );
+              await targetUser.send({
+                embeds: [embed]
+              }).catch(() => {});
+            }
+            await interaction.channel.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor('#57F287')
+                  .setTitle('💰 已自動扣款')
+                  .setDescription(
+                    `已扣除 ${payAmount} 星雨幣`
+                  )
+              ]
+            });
           }
         }
       }
-      if (!isAdminOrStaff(interaction)) {
-        return await interaction.editReply({
-          content: '❌ 只有客服可以操作'
-        });
-      }
-
+      // ===== 原本的完成訂單流程 =====
       const saveButton =
         new ButtonBuilder()
           .setCustomId('save_order_log')
           .setLabel('📁 儲存紀錄')
           .setStyle(ButtonStyle.Success);
-
       const deleteButton =
         new ButtonBuilder()
           .setCustomId('delete_order_now')
           .setLabel('🗑️ 直接刪除')
           .setStyle(ButtonStyle.Danger);
-
       const row =
         new ActionRowBuilder()
-          .addComponents(saveButton, deleteButton);
-
-      return await interaction.editReply({
+          .addComponents(
+            saveButton,
+            deleteButton
+          );
+      return await safeReply(interaction, {
         content: '📦 是否儲存訂單紀錄？',
-        components: [row]
+        components: [row],
+        ephemeral: true
       });
     }
     // ===== 直接刪除訂單頻道 =====
