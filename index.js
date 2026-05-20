@@ -2767,6 +2767,11 @@ async function handleStringSelectInteraction(interaction) {
     // ===== 使用優惠券 =====
     if (customId.startsWith('coupon_select_')) {
         try {
+            if (!interaction.deferred && !interaction.replied) {
+                await interaction.deferReply({
+                    flags: 64
+                });
+            }
             const itemId =
                 Number(interaction.values[0]);
             const orderChannelId =
