@@ -1413,6 +1413,9 @@ client.on(Events.InteractionCreate, async interaction => {
         await dispatchSystem.handleDispatchInteraction(interaction);
 
       if (handled) return;
+      await handleModalSubmit(interaction);
+      return;
+
     }
 
     // ===== Slash =====
@@ -3035,7 +3038,7 @@ client.on('messageCreate', async (message) => {
 
   setTimeout(() => {
     dropCooldown.delete(channelId);
-  }, 30000);
+  }, 3 * 60 * 1000);
 });
 // ===== Login =====
 client.login(process.env.TOKEN);
