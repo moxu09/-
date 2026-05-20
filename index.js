@@ -1396,17 +1396,6 @@ console.error(
 client.on(Events.InteractionCreate, async interaction => {
   try {
 
-    // ===== Modal 按鈕：不能 defer，直接交給 dispatchSystem =====
-    if (
-      interaction.isButton() &&
-      (
-        interaction.customId === 'open_topup_modal' ||
-        interaction.customId === 'open_play_order_form'
-      )
-    ) {
-      return await dispatchSystem.handleDispatchInteraction(interaction);
-    }
-
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
       const handled =
@@ -1434,16 +1423,22 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
-      const handled =
-        await dispatchSystem.handleDispatchInteraction(interaction);
-      if (handled) return;
+      // 這兩個會開 Modal，不能 defer，也不要再進一般按鈕流程
+      if (
+        interaction.customId === 'open_topup_modal' ||
+        interaction.customId === 'open_play_order_form'
+      ) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferReply({ flags: 64 });
       }
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+      if (handled) return;
       await handleButtonInteraction(interaction);
       return;
     }
-
     // ===== User Select：不能先 defer，因為會開轉帳 Modal =====
     if (interaction.isUserSelectMenu()) {
       await handleUserSelectSubmit(interaction);
@@ -1452,8 +1447,15 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== String Select =====
     if (interaction.isStringSelectMenu()) {
+      // 這些會開 Modal，不能 defer
+      if (
+        interaction.customId === 'transfer_user_select' ||
+        interaction.customId.startsWith('coupon_select_')
+      ) {
+        await handleStringSelectInteraction(interaction);
+        return;
+      }
       await interaction.deferReply({ flags: 64 });
-
       await handleStringSelectInteraction(interaction);
       return;
     }
