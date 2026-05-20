@@ -2890,7 +2890,16 @@ async function handleStringSelectInteraction(interaction) {
             if (usedError) {
               console.error('[優惠券紀錄失敗]', usedError);
               return await interaction.editReply({
-                content: '❌ 優惠券已刪除，但使用紀錄寫入失敗'
+                content: '❌ 優惠券紀錄失敗，尚未刪除優惠券'
+              });
+            }
+            // ===== 紀錄成功後才刪除優惠券 =====
+            try {
+              await removeUserItem(coupon.id);
+            } catch (deleteError) {
+              console.error('[優惠券刪除失敗]', deleteError);
+              return await interaction.editReply({
+                content: '❌ 優惠券紀錄成功，但刪除失敗，請通知客服'
               });
             }
             // ===== 公開通知 =====
