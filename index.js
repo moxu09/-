@@ -2797,18 +2797,6 @@ async function handleStringSelectInteraction(interaction) {
                     content: '❌ 找不到優惠券'
                 });
             }
-            const { data: used } =
-                await supabase
-                    .from('used_coupons')
-                    .select('*')
-                    .eq('user_id', interaction.user.id)
-                    .eq('item_name', coupon.item_name)
-                    .maybeSingle();
-            if (used) {
-                return await interaction.editReply({
-                    content: '❌ 這張優惠券已使用過'
-                });
-            }
             const { data: order } =
                 await supabase
                     .from('play_orders')
@@ -2895,7 +2883,9 @@ async function handleStringSelectInteraction(interaction) {
                 .from('used_coupons')
                 .insert({
                   user_id: interaction.user.id,
-                  item_name: coupon.item_name
+                  item_name: coupon.item_name,
+                  item_id: coupon.id,
+                  order_id: order.id
                 });
             if (usedError) {
               console.error('[優惠券紀錄失敗]', usedError);
