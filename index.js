@@ -1423,25 +1423,20 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
-      // 這兩個會開 Modal，不能 defer，也不要再進一般按鈕流程
+      // Modal 類按鈕不能 defer
       if (
         interaction.customId === 'open_topup_modal' ||
         interaction.customId === 'open_play_order_form'
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
-      if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferReply({ flags: 64 });
-      }
       const handled =
         await dispatchSystem.handleDispatchInteraction(interaction);
       if (handled) return;
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ flags: 64 });
+      }
       await handleButtonInteraction(interaction);
-      return;
-    }
-    // ===== User Select：不能先 defer，因為會開轉帳 Modal =====
-    if (interaction.isUserSelectMenu()) {
-      await handleUserSelectSubmit(interaction);
       return;
     }
 
