@@ -1041,7 +1041,7 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId === 'player_online') {
       await playerOnline(interaction);
-      return true;
+      return true; 
     }
     if (interaction.customId === 'player_offline') {
       await playerOffline(interaction);
