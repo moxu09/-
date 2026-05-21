@@ -378,7 +378,7 @@ async function openPlayOrderModal(interaction) {
     .setLabel('付款方式')
     .setPlaceholder('轉帳 / 無卡 / 儲值卡 / 加密貨幣')
     .setStyle(TextInputStyle.Short)
-    .setRequired(false);
+    .setRequired(true);
 
   const noteInput = new TextInputBuilder()
     .setCustomId('note')
