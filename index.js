@@ -1442,19 +1442,19 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     // ===== String Select =====
     if (interaction.isStringSelectMenu()) {
-      // 這些會開 Modal，不能 defer
-      if (
-        interaction.customId === 'transfer_user_select' ||
-        interaction.customId.startsWith('coupon_select_')
-      ) {
-        await handleStringSelectInteraction(interaction);
+      try {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({
+            flags: 64
+          });
+        }
+      } catch (err) {
+        console.error('[StringSelect defer 失敗]', err);
         return;
       }
-      await interaction.deferReply({ flags: 64 });
       await handleStringSelectInteraction(interaction);
       return;
     }
-
   } catch (err) {
     console.error('[InteractionCreate 錯誤]', err);
 
@@ -2767,11 +2767,7 @@ async function handleStringSelectInteraction(interaction) {
     // ===== 使用優惠券 =====
     if (customId.startsWith('coupon_select_')) {
         try {
-            if (!interaction.deferred && !interaction.replied) {
-                await interaction.deferReply({
-                    flags: 64
-                });
-            }
+            
             const itemId =
                 Number(interaction.values[0]);
             const orderChannelId =
@@ -2865,19 +2861,12 @@ async function handleStringSelectInteraction(interaction) {
             if (updateError) {
               console.error('[優惠券更新訂單失敗]', updateError);
               return await interaction.editReply({
-                content: '❌ 優惠券更新訂單失敗'
+                content:
+                  `❌ 優惠券更新訂單失敗\n` +
+                  `錯誤：${updateError.message}`
               });
             }
-            // ===== 使用成功後，直接刪除優惠券 =====
-            try {
-              await removeUserItem(coupon.id);
-            } catch (deleteError) {
-              console.error('[優惠券刪除失敗]', deleteError);
-              return await interaction.editReply({
-                content: '❌ 優惠券使用成功，但刪除失敗，請通知客服'
-              });
-            }
-            // ===== 紀錄已使用優惠券 =====
+            // ===== 嘗試寫入優惠券使用紀錄，但失敗不阻擋流程 =====
             const { error: usedError } =
               await supabase
                 .from('used_coupons')
@@ -2888,35 +2877,33 @@ async function handleStringSelectInteraction(interaction) {
                   order_id: order.id
                 });
             if (usedError) {
-              console.error('[優惠券紀錄失敗]', usedError);
-              return await interaction.editReply({
-                content: '❌ 優惠券紀錄失敗，尚未刪除優惠券'
-              });
+              console.error('[優惠券紀錄寫入失敗，但不阻擋使用]', usedError);
             }
-            // ===== 紀錄成功後才刪除優惠券 =====
+            // ===== 只刪除一次優惠券 =====
             try {
               await removeUserItem(coupon.id);
             } catch (deleteError) {
               console.error('[優惠券刪除失敗]', deleteError);
               return await interaction.editReply({
-                content: '❌ 優惠券紀錄成功，但刪除失敗，請通知客服'
+                content:
+                  `❌ 優惠券折扣已套用，但刪除失敗\n` +
+                  `請通知客服手動處理`
               });
             }
-            // ===== 公開通知 =====
-            await interaction.channel.send({
-                content:
-                    `🎟️ ${interaction.user} 使用了優惠券：${coupon.item_name}\n` +
-                    `折扣金額：NT$${discountAmount}` +
-                    (
-                        finalPrice !== null
-                            ? `\n實收金額：NT$${finalPrice}`
-                            : ''
-                    )
-            });
-            return await interaction.editReply({
-                content:
-                    `✅ 已使用優惠券：${coupon.item_name}`
-            });
+// ===== 公開通知 =====
+await interaction.channel.send({
+  content:
+    `🎟️ ${interaction.user} 使用了優惠券：${coupon.item_name}\n` +
+    `折扣金額：NT$${discountAmount}\n` +
+    `實收金額：NT$${finalPrice}`
+});
+
+return await interaction.editReply({
+  content:
+    `✅ 已成功使用優惠券：${coupon.item_name}\n` +
+    `折扣金額：NT$${discountAmount}\n` +
+    `實收金額：NT$${finalPrice}`
+});
         } catch (err) {
             console.error(
                 '[優惠券使用錯誤]',
