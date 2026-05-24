@@ -2320,7 +2320,11 @@ async function handleButtonInteraction(interaction) {
           // ===== 儲值卡扣款 =====
           if (
             order.payment_method &&
-            order.payment_method.includes('儲值卡') &&
+            (
+              order.payment_method.includes('儲值卡') ||
+              order.payment_method.includes('錢包') ||
+              order.payment_method.includes('餘額') 
+            )&&
             !order.paid
           ) {
             const { data: userData } =
