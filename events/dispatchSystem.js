@@ -17,6 +17,18 @@ function setup(supabaseInstance, clientInstance) {
   supabase = supabaseInstance;
   client = clientInstance;
 }
+// ===== 更改訂單金額權限 =====
+function canEditOrderPrice(interaction) {
+  const roleId =
+    process.env.PRICE_EDIT_ROLE ||
+    process.env.STAFF_ROLE;
+
+  return (
+    interaction.guild.ownerId === interaction.user.id ||
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(roleId)
+  );
+}
 // ===== 派單紀錄 =====
 async function sendPlayLog({
   title,
@@ -56,12 +68,21 @@ async function sendPlayLog({
 }
 // 陪玩上班
 async function playerOnline(interaction) {
+  const { data: oldPlayer } =
+    await supabase
+      .from('players')
+      .select('*')
+      .eq('discord_id', interaction.user.id)
+      .maybeSingle();
+
   await supabase
     .from('players')
     .upsert({
       discord_id: interaction.user.id,
       name: interaction.user.username,
-      game: 'delta_force',
+      game: oldPlayer?.game || 'delta_force',
+      allowed_services: oldPlayer?.allowed_services || [],
+      report_channel_id: oldPlayer?.report_channel_id || null,
       status: 'available',
       online_started_at: new Date()
     }, {
@@ -263,6 +284,20 @@ async function createPlayOrder(interaction, service, time, price, note = '無', 
       .setStyle(ButtonStyle.Success)
   );
   await channel.send({ embeds: [embed], components: [row] });
+  const priceEditRow =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`change_order_price_${order.id}`)
+          .setLabel('💰 更改金額')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+  await interaction.channel.send({
+    content: '📋 你的陪玩需求已送出，以下是目前訂單內容：',
+    embeds: [embed],
+    components: [priceEditRow]
+  });
   // ===== 派單紀錄 =====
   await sendPlayLog({
     title: '📦 新陪玩訂單',
@@ -450,6 +485,40 @@ async function openTopupModal(interaction) {
   await interaction.showModal(modal);
 
 }
+// ===== 開啟更改訂單金額視窗 =====
+async function openChangeOrderPriceModal(interaction) {
+  if (!canEditOrderPrice(interaction)) {
+    return interaction.reply({
+      content: '❌ 你沒有權限更改訂單金額',
+      flags: 64
+    });
+  }
+
+  const orderId =
+    interaction.customId.replace(
+      'change_order_price_',
+      ''
+    );
+
+  const modal =
+    new ModalBuilder()
+      .setCustomId(`submit_change_order_price_${orderId}`)
+      .setTitle('更改訂單金額');
+
+  const priceInput =
+    new TextInputBuilder()
+      .setCustomId('new_price')
+      .setLabel('請輸入新的訂單金額')
+      .setPlaceholder('例如：499')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(priceInput)
+  );
+
+  await interaction.showModal(modal);
+}
 async function submitPlayOrderForm(interaction) {
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({
@@ -604,6 +673,148 @@ async function submitTopupForm(interaction) {
   });
 
 }
+// ===== 送出更改訂單金額 =====
+async function submitChangeOrderPrice(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  if (!canEditOrderPrice(interaction)) {
+    return interaction.editReply({
+      content: '❌ 你沒有權限更改訂單金額'
+    });
+  }
+
+  const orderId =
+    interaction.customId.replace(
+      'submit_change_order_price_',
+      ''
+    );
+
+  const priceText =
+    interaction.fields.getTextInputValue('new_price');
+
+  const newPrice =
+    parseInt(
+      priceText.replace(/[^\d]/g, ''),
+      10
+    );
+
+  if (!newPrice || newPrice <= 0) {
+    return interaction.editReply({
+      content: '❌ 金額格式錯誤，請輸入數字'
+    });
+  }
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+  if (error || !order) {
+    console.log('[更改金額讀取訂單失敗]', error);
+    return interaction.editReply({
+      content: '❌ 找不到這張訂單'
+    });
+  }
+
+  const { data: updated, error: updateError } =
+    await supabase
+      .from('play_orders')
+      .update({
+        price: newPrice,
+        final_price: newPrice
+      })
+      .eq('id', orderId)
+      .select()
+      .single();
+
+  if (updateError || !updated) {
+    console.log('[更改金額失敗]', updateError);
+    return interaction.editReply({
+      content: '❌ 更改金額失敗'
+    });
+  }
+
+  const orderChannel =
+    await client.channels
+      .fetch(order.channel_id)
+      .catch(() => null);
+
+  if (!orderChannel) {
+    return interaction.editReply({
+      content: '❌ 找不到訂單臨時頻道'
+    });
+  }
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#ffaa00')
+      .setTitle('💰 訂單金額已更新')
+      .addFields(
+        {
+          name: '📌 訂單編號',
+          value: order.order_no || '未知',
+          inline: true
+        },
+        {
+          name: '👤 客人',
+          value: `<@${order.customer_id}>`,
+          inline: true
+        },
+        {
+          name: '🎮 服務項目',
+          value: order.service || '未填寫',
+          inline: false
+        },
+        {
+          name: '💰 原金額',
+          value: `NT$${order.price || 0}`,
+          inline: true
+        },
+        {
+          name: '💵 新金額',
+          value: `NT$${newPrice}`,
+          inline: true
+        },
+        {
+          name: '💳 付款方式',
+          value: order.payment_method || '未填寫',
+          inline: true
+        },
+        {
+          name: '📝 備註需求',
+          value: order.note || '無',
+          inline: false
+        }
+      )
+      .setFooter({
+        text: `由 ${interaction.user.username} 更改`
+      })
+      .setTimestamp();
+
+  await orderChannel.send({
+    content:
+      `<@${order.customer_id}> 訂單金額已更新，請確認新的金額。`,
+    embeds: [embed]
+  });
+
+  await sendPlayLog({
+    title: '💰 訂單金額已更新',
+    description:
+      `訂單編號：${order.order_no}\n` +
+      `修改人：<@${interaction.user.id}>\n` +
+      `原金額：NT$${order.price || 0}\n` +
+      `新金額：NT$${newPrice}`,
+    color: '#ffaa00'
+  });
+
+  return interaction.editReply({
+    content: `✅ 已將訂單金額改為 NT$${newPrice}`
+  });
+}
 // 接單
 async function acceptPlayOrder(interaction) {
   try {
@@ -632,8 +843,6 @@ async function acceptPlayOrder(interaction) {
         .select('*')
         .eq('id', orderId)
         .single();
-    // ===== 暫時關閉服務限制 =====
-    const canAccept = true;
 
     if (orderError) {
       console.log('[接單錯誤 play_orders]', orderError);
@@ -644,7 +853,28 @@ async function acceptPlayOrder(interaction) {
         content: '❌ 這張訂單已經被接走了',
       });
     }
+    // ===== 服務限制 =====
+    const allowedServices =
+      Array.isArray(player.allowed_services)
+        ? player.allowed_services
+        : String(player.allowed_services || '')
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean);
 
+    const canAccept =
+      allowedServices.some(service =>
+        order.service.includes(service)
+      );
+
+    if (!canAccept) {
+      return interaction.editReply({
+        content:
+          `❌ 你沒有權限接這個項目\n` +
+          `此訂單服務：${order.service}\n` +
+          `你的可接項目：${allowedServices.join('、') || '未設定'}`
+      });
+    }
     const { data: updated, error: updateError } =
       await supabase
         .from('play_orders')
@@ -1045,6 +1275,10 @@ async function handleDispatchInteraction(interaction) {
       await openPlayOrderModal(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('change_order_price_')) {
+      await openChangeOrderPriceModal(interaction);
+      return true;
+    }
     if (interaction.customId === 'player_online') {
       await playerOnline(interaction);
       return true; 
@@ -1072,6 +1306,10 @@ async function handleDispatchInteraction(interaction) {
       await submitTopupForm(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('submit_change_order_price_')) {
+      await submitChangeOrderPrice(interaction);
+      return true;
+    }
   }
   return false;
 
@@ -1086,5 +1324,7 @@ module.exports = {
   submitTopupForm,
   submitPlayOrderForm,
   openTopupModal,
-  openPlayOrderModal
+  openPlayOrderModal,
+  openChangeOrderPriceModal,
+  submitChangeOrderPrice
 };

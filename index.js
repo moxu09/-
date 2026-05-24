@@ -1427,7 +1427,8 @@ client.on(Events.InteractionCreate, async interaction => {
       // Modal 類按鈕不能 defer
       if (
         interaction.customId === 'open_topup_modal' ||
-        interaction.customId === 'open_play_order_form'
+        interaction.customId === 'open_play_order_form' ||
+        interaction.customId.startsWith('change_order_price_')
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
