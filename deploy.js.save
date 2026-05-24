@@ -1,0 +1,59 @@
+require('dotenv').config();
+
+const {
+REST,
+Routes,
+SlashCommandBuilder
+} = require('discord.js');
+
+const commands = [
+
+new SlashCommandBuilder()
+.setName('ping')
+.setDescription('測試機器人'),
+
+new SlashCommandBuilder()
+.setName('簽到')
+.setDescription('每日領取星雨幣'),
+
+new SlashCommandBuilder()
+  .setName('刪除扭蛋')
+  .setDescription('刪除扭蛋卡池')
+  .addStringOption(option =>
+    option
+      .setName('名稱')
+      .setDescription('卡池名稱')
+      .setRequired(true)
+  ),
+  
+new SlashCommandBuilder()
+.setName('錢包')
+.setDescription('查看你的星雨幣')
+
+].map(command => command.toJSON());
+
+const rest = new REST({ version: '10' })
+.setToken(process.env.TOKEN);
+
+(async () => {
+
+try {
+
+console.log('開始部署指令');
+
+await rest.put(
+  Routes.applicationCommands(
+    process.env.CLIENT_ID
+  ),
+  { body: commands }
+);
+
+console.log('指令部署成功');
+
+
+} catch (error) {
+console.error(error);
+}
+
+})();
+

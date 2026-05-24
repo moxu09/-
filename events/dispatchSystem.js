@@ -632,20 +632,8 @@ async function acceptPlayOrder(interaction) {
         .select('*')
         .eq('id', orderId)
         .single();
-    // ===== 可接項目限制 =====
-    const allowedServices =
-      player.allowed_services || [];
-    const canAccept =
-      allowedServices.some(service =>
-        order.service.includes(service)
-      );
-    if (!canAccept) {
-      return interaction.editReply({
-        content:
-          `❌ 你沒有權限接這個項目\n` +
-          `此訂單服務：${order.service}`
-      });
-    }
+    // ===== 暫時關閉服務限制 =====
+    const canAccept = true;
 
     if (orderError) {
       console.log('[接單錯誤 play_orders]', orderError);
