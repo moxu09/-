@@ -29,7 +29,12 @@ const {
 // ===== 初始化 =====
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ],
 });
 // ===== 陪玩排單系統 =====
 const dispatchSystem = require('./events/dispatchSystem');
@@ -1392,7 +1397,33 @@ console.error(
 );
 }
 });
+async function getStaffOptionsFromRole(guild) {
+  const staffRoleId = process.env.STAFF_ROLE_ID;
 
+  if (!staffRoleId) {
+    throw new Error("沒有設定 STAFF_ROLE_ID");
+  }
+
+  await guild.members.fetch();
+
+  const role = guild.roles.cache.get(staffRoleId);
+
+  if (!role) {
+    throw new Error("找不到 STAFF_ROLE_ID 對應的身分組");
+  }
+
+  const members = role.members.filter((member) => !member.user.bot);
+
+  if (members.size === 0) {
+    return [];
+  }
+
+  return members.map((member) => ({
+    label: member.displayName.slice(0, 100),
+    description: member.user.username.slice(0, 100),
+    value: member.id,
+  }));
+}
 // ===== Interaction Handler =====
 client.on(Events.InteractionCreate, async interaction => {
   try {
@@ -1424,6 +1455,34 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
+      // ===== 填寫打賞需求 =====
+      if (interaction.customId === "fill_tip_need") {
+        try {
+          const staffOptions = await getStaffOptionsFromRole(interaction.guild);
+          if (staffOptions.length === 0) {
+            return interaction.reply({
+              content: "目前這個員工身分組裡沒有可以選擇的員工。",
+              flags: 64,
+            });
+          }
+          const staffSelect = new StringSelectMenuBuilder()
+            .setCustomId("select_tip_staff")
+            .setPlaceholder("請選擇受賞的員工")
+            .addOptions(staffOptions.slice(0, 25));
+          const row = new ActionRowBuilder().addComponents(staffSelect);
+          return interaction.reply({
+            content: "請先選擇受賞的員工：",
+            components: [row],
+            flags: 64,
+          });
+        } catch (error) {
+          console.error("取得員工身分組失敗：", error);
+          return interaction.reply({
+            content: "取得員工名單失敗，請確認 STAFF_ROLE_ID 是否正確，或機器人權限是否足夠。",
+            flags: 64,
+          });
+        }
+      }
       // Modal 類按鈕不能 defer
       if (
         interaction.customId === 'open_topup_modal' ||
@@ -1443,6 +1502,37 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     // ===== String Select =====
     if (interaction.isStringSelectMenu()) {
+      // ===== 選擇受賞員工後，跳出打賞表單 =====
+      if (interaction.customId === "select_tip_staff") {
+        const selectedStaffId = interaction.values[0];
+        const modal = new ModalBuilder()
+          .setCustomId(`tip_modal_${selectedStaffId}`)
+          .setTitle("填寫打賞需求");
+        const tipperInput = new TextInputBuilder()
+          .setCustomId("tipper")
+          .setLabel("打賞人")
+          .setPlaceholder("請輸入打賞人的名字")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+        const itemInput = new TextInputBuilder()
+          .setCustomId("item")
+          .setLabel("品項")
+          .setPlaceholder("例如：明燈三千、特殊打賞、專寵獨賞")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+        const amountInput = new TextInputBuilder()
+          .setCustomId("amount")
+          .setLabel("金額")
+          .setPlaceholder("請輸入金額，例如：9999")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(tipperInput),
+          new ActionRowBuilder().addComponents(itemInput),
+          new ActionRowBuilder().addComponents(amountInput)
+        );
+        return interaction.showModal(modal);
+      }
       try {
         if (!interaction.deferred && !interaction.replied) {
           await interaction.deferReply({
@@ -3010,6 +3100,45 @@ async function handleUserSelectSubmit(interaction) {
 
 async function handleModalSubmit(interaction) {
   try {
+    if (interaction.customId.startsWith("tip_modal_")) {
+      const selectedStaffId = interaction.customId.replace("tip_modal_", "");
+      const tipper = interaction.fields.getTextInputValue("tipper");
+      const item = interaction.fields.getTextInputValue("item");
+      const amount = interaction.fields.getTextInputValue("amount");
+      const embed = new EmbedBuilder()
+        .setColor("#ff99cc")
+        .setTitle("💝 打賞需求")
+        .addFields(
+          {
+            name: "打賞人",
+            value: tipper,
+            inline: true,
+          },
+          {
+            name: "受賞員工",
+            value: `<@${selectedStaffId}>`,
+            inline: true,
+          },
+          {
+            name: "品項",
+            value: item,
+            inline: true,
+          },
+          {
+            name: "金額",
+            value: `$${amount}`,
+            inline: true,
+          }
+        )
+        .setTimestamp();
+      await interaction.channel.send({
+        embeds: [embed],
+      });
+      return interaction.reply({
+        content: "✅ 打賞需求已送出！",
+        flags: 64,
+      });
+    }
     if (interaction.customId.startsWith('transfer_modal_')) {
       const targetId =
         interaction.customId.replace(

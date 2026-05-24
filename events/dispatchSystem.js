@@ -323,9 +323,12 @@ async function sendPlayOrderFormButton(channel) {
     new ButtonBuilder()
       .setCustomId('open_play_order_form')
       .setLabel('填寫陪玩需求')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId("fill_tip_need")
+      .setLabel("填寫打賞需求")
       .setStyle(ButtonStyle.Success)
   );
-
   await channel.send({
     embeds: [embed],
     components: [row]
