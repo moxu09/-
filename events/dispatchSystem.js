@@ -17,6 +17,35 @@ function setup(supabaseInstance, clientInstance) {
   supabase = supabaseInstance;
   client = clientInstance;
 }
+function isBankTransfer(text = '') {
+  return (
+    text.includes('匯款') ||
+    text.includes('轉帳')
+  );
+}
+
+async function sendBankTransferInfo(channel) {
+  const embed = new EmbedBuilder()
+    .setColor('#ffd166')
+    .setTitle('🏦 匯款資訊')
+    .setDescription(
+      `請依照以下資訊完成匯款：\n\n` +
+      `銀行：將來銀行\n` +
+      `銀行代碼：823\n` +
+      `帳號：88620979281818\n` +
+      `戶名：許O星\n\n` +
+      `匯款完成後，請在此頻道上傳匯款截圖，等待客服確認。\n\n` +
+      `若有其他銀行之需求，請在下方告訴客服。`
+    )
+    .setFooter({
+      text: '請確認金額正確後再匯款'
+    })
+    .setTimestamp();
+
+  await channel.send({
+    embeds: [embed]
+  });
+}
 // ===== 更改訂單金額權限 =====
 function canEditOrderPrice(interaction) {
   const roleId =
@@ -298,6 +327,9 @@ async function createPlayOrder(interaction, service, time, price, note = '無', 
     embeds: [embed],
     components: [priceEditRow]
   });
+  if (isBankTransfer(paymentMethod)) {
+    await sendBankTransferInfo(interaction.channel);
+  }
   // ===== 派單紀錄 =====
   await sendPlayLog({
     title: '📦 新陪玩訂單',
@@ -661,20 +693,16 @@ async function submitTopupForm(interaction) {
       );
 
   await interaction.channel.send({
-
     embeds: [embed],
-
     components: [row]
-
   });
-
+  if (isBankTransfer(method)) {
+    await sendBankTransferInfo(interaction.channel);
+  }
   await interaction.editReply({
-
     content:
       '✅ 已送出儲值申請'
-
   });
-
 }
 // ===== 送出更改訂單金額 =====
 async function submitChangeOrderPrice(interaction) {
