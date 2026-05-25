@@ -724,19 +724,23 @@ async function submitChangeOrderPrice(interaction) {
 
   const priceText =
     interaction.fields.getTextInputValue('new_price');
-
-  const newPrice =
-    parseInt(
-      priceText.replace(/[^\d]/g, ''),
-      10
-    );
-
-  if (!newPrice || newPrice <= 0) {
+  const cleanPriceText =
+    priceText.replace(/[^\d]/g, '');
+  if (cleanPriceText === '') {
     return interaction.editReply({
-      content: '❌ 金額格式錯誤，請輸入數字'
+      content: '❌ 請輸入金額'
     });
   }
-
+  const newPrice =
+    Number(cleanPriceText);
+  if (
+    Number.isNaN(newPrice) ||
+    newPrice < 0
+  ) {
+    return interaction.editReply({
+      content: '❌ 金額不能小於 0'
+    });
+  }
   const { data: order, error } =
     await supabase
       .from('play_orders')
