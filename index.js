@@ -3579,7 +3579,7 @@ async function handleModalSubmit(interaction) {
         components: [row],
         flags: 64
       });
-
+    }
     if (interaction.customId.startsWith('transfer_modal_')) {
       const targetId =
         interaction.customId.replace(
