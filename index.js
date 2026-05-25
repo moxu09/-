@@ -1144,12 +1144,42 @@ async function sendPrivateRoomPanel(client) {
           .setStyle(ButtonStyle.Primary)
       );
 
-  await channel.send({
-    embeds: [embed],
-    components: [row]
-  });
+  const panel =
+    await getPanelMessage('private_room');
 
-  console.log('[PRIVATE ROOM] 面板已送出');
+  if (panel) {
+    try {
+      const oldMessage =
+        await channel.messages.fetch(
+          panel.message_id
+        );
+
+      await oldMessage.edit({
+        embeds: [embed],
+        components: [row]
+      });
+
+      console.log('[PRIVATE ROOM] 已更新舊面板');
+      return;
+
+    } catch (err) {
+      console.log('[PRIVATE ROOM] 舊面板不存在，重新建立');
+    }
+  }
+
+  const newMessage =
+    await channel.send({
+      embeds: [embed],
+      components: [row]
+    });
+
+  await savePanelMessage(
+    'private_room',
+    channel.id,
+    newMessage.id
+  );
+
+  console.log('[PRIVATE ROOM] 已建立新面板');
 }
 // ===== 指令定義 =====
 
