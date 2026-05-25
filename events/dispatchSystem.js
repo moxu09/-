@@ -108,7 +108,11 @@ async function playerOnline(interaction) {
     .from('players')
     .upsert({
       discord_id: interaction.user.id,
-      name: interaction.user.username,
+      // 不覆蓋資料庫原本設定好的陪陪名稱
+      name:
+        oldPlayer?.name ||
+        interaction.member?.displayName ||
+        interaction.user.username,
       game: oldPlayer?.game || 'delta_force',
       allowed_services: oldPlayer?.allowed_services || [],
       report_channel_id: oldPlayer?.report_channel_id || null,
@@ -117,7 +121,6 @@ async function playerOnline(interaction) {
     }, {
       onConflict: 'discord_id'
     });
-
   await interaction.editReply({
     content: '🟢 你已開始接單',
   });
