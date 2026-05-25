@@ -2654,9 +2654,36 @@ async function handleButtonInteraction(interaction) {
             confirmCloseButton,
             cancelCloseButton
           );
+      let closeTargetId = null;
+      // 如果是陪玩訂單，從 play_orders 找客人
+      if (customId === 'complete_order') {
+        const { data: closeOrder } =
+          await supabase
+            .from('play_orders')
+            .select('customer_id')
+            .eq('channel_id', interaction.channel.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+        closeTargetId = closeOrder?.customer_id || null;
+      }
+      // 如果找不到，從頻道權限找客人
+      if (!closeTargetId) {
+        const ownerOverwrite =
+          interaction.channel.permissionOverwrites.cache.find(p =>
+            p.id !== interaction.guild.id &&
+            p.id !== process.env.STAFF_ROLE &&
+            p.id !== client.user.id &&
+            !interaction.guild.roles.cache.has(p.id) &&
+            p.allow.has(PermissionFlagsBits.ViewChannel)
+          );
+        closeTargetId = ownerOverwrite?.id || null;
+      }
       await interaction.channel.send({
         content:
-          `📦 <@${order?.customer_id || ''}> 訂單已完成，請確認是否可以關閉此訂單頻道。`,
+         closeTargetId
+            ? `📦 <@${closeTargetId}> 訂單已完成，請確認是否可以關閉此訂單頻道。`
+            : `📦 訂單已完成，請客人確認是否可以關閉此訂單頻道。`,
         components: [row]
       });
       return await safeReply(interaction, {
