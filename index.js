@@ -1552,10 +1552,17 @@ client.on(Events.InteractionCreate, async interaction => {
       if (
         interaction.customId === 'open_topup_modal' ||
         interaction.customId === 'open_play_order_form' ||
-        interaction.customId.startsWith('change_order_price_')
+        interaction.customId.startsWith('change_order_price_') 
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
+      if (interaction.customId.startsWith('change_preferred_player_')) {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({ flags: 64 });
+        }
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
+      // ===== 其他普通按鈕都要先 defer =====
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferReply({ flags: 64 });
       }
@@ -1599,10 +1606,24 @@ client.on(Events.InteractionCreate, async interaction => {
         );
         return interaction.showModal(modal);
       }
-      try {
+      // ===== 陪玩指定陪陪選單 =====
+      if (
+        interaction.customId.startsWith('select_preferred_player_') ||
+        interaction.customId.startsWith('submit_change_preferred_player_')
+      ) {
         if (!interaction.deferred && !interaction.replied) {
           await interaction.deferReply({
             flags: 64
+          });
+        }
+        const handled =
+          await dispatchSystem.handleDispatchInteraction(interaction);
+        if (handled) return;
+      }
+      try {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({
+          flags: 64
           });
         }
       } catch (err) {
