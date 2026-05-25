@@ -2269,6 +2269,89 @@ async function handleButtonInteraction(interaction) {
           '✅ 已公開通知：不使用優惠券'
       });
     }
+    // ===== 客人確認關閉訂單 =====
+    if (customId === 'customer_confirm_close_order') {
+      const ownerOverwrite =
+        interaction.channel.permissionOverwrites.cache.find(p =>
+          p.id !== interaction.guild.id &&
+          p.id !== process.env.STAFF_ROLE &&
+          p.id !== client.user.id &&
+          !interaction.guild.roles.cache.has(p.id) &&
+          p.allow.has(PermissionFlagsBits.ViewChannel)
+        );
+      const customerId = ownerOverwrite?.id;
+      if (!customerId) {
+        return await interaction.editReply({
+          content: '❌ 找不到此訂單頻道的客人'
+        });
+      }
+      if (interaction.user.id !== customerId) {
+        return await interaction.editReply({
+          content: '❌ 只有建立此訂單的客人可以確認關閉'
+        });
+      }
+      await interaction.message.edit({
+        content: `✅ <@${customerId}> 已確認可以關閉訂單。`,
+        components: []
+      }).catch(() => {});
+      const saveButton =
+        new ButtonBuilder()
+          .setCustomId('save_order_log')
+          .setLabel('📁 儲存紀錄')
+          .setStyle(ButtonStyle.Success);
+      const deleteButton =
+        new ButtonBuilder()
+          .setCustomId('delete_order_now')
+          .setLabel('🗑️ 直接刪除')
+          .setStyle(ButtonStyle.Danger);
+      const row =
+        new ActionRowBuilder()
+          .addComponents(
+            saveButton,
+            deleteButton
+          );
+      await interaction.channel.send({
+        content:
+          `<@&${process.env.STAFF_ROLE}> 客人已確認關閉訂單，請選擇是否儲存紀錄。`,
+        components: [row]
+      });
+      return await interaction.editReply({
+        content: '✅ 已通知客服處理關閉流程'
+      });
+    }
+    // ===== 客人暫不關閉訂單 =====
+    if (customId === 'customer_cancel_close_order') {
+      const ownerOverwrite =
+        interaction.channel.permissionOverwrites.cache.find(p =>
+          p.id !== interaction.guild.id &&
+          p.id !== process.env.STAFF_ROLE &&
+          p.id !== client.user.id &&
+          !interaction.guild.roles.cache.has(p.id) &&
+          p.allow.has(PermissionFlagsBits.ViewChannel)
+        );
+      const customerId = ownerOverwrite?.id;
+      if (!customerId) {
+        return await interaction.editReply({
+          content: '❌ 找不到此訂單頻道的客人'
+        });
+      }
+      if (interaction.user.id !== customerId) {
+        return await interaction.editReply({
+          content: '❌ 只有建立此訂單的客人可以操作'
+        });
+      }
+      await interaction.message.edit({
+        content: `❌ <@${customerId}> 選擇暫不關閉訂單。`,
+        components: []
+      }).catch(() => {});
+      await interaction.channel.send({
+        content:
+          `<@&${process.env.STAFF_ROLE}> 客人選擇暫不關閉訂單，請先不要刪除頻道。`
+      });
+      return await interaction.editReply({
+        content: '✅ 已通知客服暫不關閉'
+      });
+    }
     // ===== 關閉儲值單 =====
     if (customId === 'close_ticket') {
       if (!isAdminOrStaff(interaction)) {
@@ -2436,26 +2519,30 @@ async function handleButtonInteraction(interaction) {
           }
         }
       }
-      // ===== 原本的完成訂單流程 =====
-      const saveButton =
+      // ===== 完成訂單後，先詢問客人是否關閉 =====
+      const confirmCloseButton =
         new ButtonBuilder()
-          .setCustomId('save_order_log')
-          .setLabel('📁 儲存紀錄')
+          .setCustomId('customer_confirm_close_order')
+          .setLabel('✅ 確認關閉訂單')
           .setStyle(ButtonStyle.Success);
-      const deleteButton =
+      const cancelCloseButton =
         new ButtonBuilder()
-          .setCustomId('delete_order_now')
-          .setLabel('🗑️ 直接刪除')
-          .setStyle(ButtonStyle.Danger);
+          .setCustomId('customer_cancel_close_order')
+          .setLabel('❌ 暫不關閉')
+          .setStyle(ButtonStyle.Secondary);
       const row =
         new ActionRowBuilder()
           .addComponents(
-            saveButton,
-            deleteButton
+            confirmCloseButton,
+            cancelCloseButton
           );
+      await interaction.channel.send({
+        content:
+          `📦 <@${order?.customer_id || ''}> 訂單已完成，請確認是否可以關閉此訂單頻道。`,
+        components: [row]
+      });
       return await safeReply(interaction, {
-        content: '📦 是否儲存訂單紀錄？',
-        components: [row],
+        content: '✅ 已送出關閉確認給客人',
         ephemeral: true
       });
     }
