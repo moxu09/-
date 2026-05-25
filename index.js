@@ -51,6 +51,7 @@ const STAFF_ROLE =
 const claimedDrops = new Set();
 const dropCooldown = new Map();
 const orderPayments = new Map();
+const pendingTips = new Map();
 // ===== Panel Message =====
 async function getPanelMessage(panelName) {
   const { data, error } = await supabase
@@ -2298,6 +2299,174 @@ async function handleButtonInteraction(interaction) {
           '✅ 已公開通知：不使用優惠券'
       });
     }
+    // ===== 客人確認送出打賞 =====
+    if (customId.startsWith('confirm_tip_submit_')) {
+      const tipConfirmId = customId.replace('confirm_tip_submit_', '');
+      const tipData = pendingTips.get(tipConfirmId);
+      if (!tipData) {
+        return await interaction.editReply({
+          content: '❌ 這筆打賞確認已失效，請重新填寫',
+          components: []
+        });
+      }
+      if (interaction.user.id !== tipData.createdBy) {
+        return await interaction.editReply({
+          content: '❌ 只有填寫這筆打賞的人可以確認送出'
+        });
+      }
+      const {
+        tipperId,
+        selectedStaffId,
+        item,
+        amount,
+        paymentMethod
+      } = tipData;
+      const isWalletPayment =
+        paymentMethod.includes("儲值卡") ||
+        paymentMethod.includes("儲值") ||
+        paymentMethod.includes("錢包") ||
+        paymentMethod.includes("餘額");
+      const needManualConfirm = !isWalletPayment;
+      let deductText = needManualConfirm
+        ? "待客服確認付款"
+        : "未自動扣款";
+      if (isWalletPayment) {
+        const { data: userData, error: userError } =
+          await supabase
+            .from("users")
+            .select("*")
+            .eq("user_id", tipperId)
+            .maybeSingle();
+        if (userError) {
+          console.error("[打賞扣款讀取使用者失敗]", userError);
+          return await interaction.editReply({
+            content: "❌ 讀取打賞人錢包失敗"
+          });
+        }
+        if (!userData) {
+          return await interaction.editReply({
+            content: "❌ 找不到打賞人的錢包資料"
+          });
+        }
+        if ((userData.coins || 0) < amount) {
+          return await interaction.editReply({
+            content:
+              `❌ 打賞人餘額不足\n\n` +
+              `需要：${amount} 星雨幣\n` +
+              `目前：${userData.coins || 0} 星雨幣`
+          });
+        }
+        const finalCoins =
+          (userData.coins || 0) - amount;
+        await supabase
+          .from("users")
+          .update({
+            coins: finalCoins,
+            total_spent: (userData.total_spent || 0) + amount,
+            month_spent: (userData.month_spent || 0) + amount,
+          })
+          .eq("user_id", tipperId);
+        await sendWalletLog(
+          tipperId,
+          "打賞消費",
+          -amount,
+          finalCoins,
+          `💝 打賞給 <@${selectedStaffId}>｜${item}`
+        );
+        deductText = `已從 <@${tipperId}> 餘額扣除 ${amount} 星雨幣`;
+      }
+      const embed = new EmbedBuilder()
+        .setColor("#ff99cc")
+        .setTitle("💝 打賞需求")
+        .addFields(
+          {
+            name: "打賞人",
+            value: `<@${tipperId}>`,
+            inline: true,
+          },  
+          {
+            name: "受賞員工",
+            value: `<@${selectedStaffId}>`,
+            inline: true,
+          },
+          {
+            name: "品項",
+            value: item,
+            inline: true,
+          },
+          {
+            name: "金額",
+            value: `NT$${amount}`,
+            inline: true,
+          },
+          {
+            name: "付款方式",
+            value: paymentMethod,
+            inline: true,
+          },
+          {
+            name: "扣款狀態",
+            value: deductText,
+            inline: false,
+          }
+        )
+        .setTimestamp();
+      const components = [];
+      if (needManualConfirm) {
+        const confirmTipButton =
+          new ButtonBuilder()
+            .setCustomId(`confirm_tip_paid_${tipperId}_${selectedStaffId}_${amount}`)
+            .setLabel('✅ 確認打賞付款')
+            .setStyle(ButtonStyle.Success);
+        const cancelTipButton =
+          new ButtonBuilder()
+            .setCustomId(`cancel_tip_${tipperId}_${selectedStaffId}_${amount}`)
+            .setLabel('❌ 取消打賞')
+            .setStyle(ButtonStyle.Danger);
+        const row =
+          new ActionRowBuilder()
+            .addComponents(
+              confirmTipButton,
+              cancelTipButton
+            );
+        components.push(row);
+      }
+      await interaction.channel.send({
+        embeds: [embed],
+        components
+      });
+      if (isBankTransfer(paymentMethod)) {
+        await sendBankTransferInfo(interaction.channel);
+      }
+      pendingTips.delete(tipConfirmId);
+      return await interaction.editReply({
+        content: isWalletPayment
+          ? "✅ 已確認打賞，並已完成餘額扣款"
+          : "✅ 已確認打賞，已送出給客服確認付款",
+        components: []
+      });
+    }
+    // ===== 客人取消送出打賞 ===== 
+    if (customId.startsWith('cancel_tip_submit_')) {
+      const tipConfirmId = customId.replace('cancel_tip_submit_', '');
+      const tipData = pendingTips.get(tipConfirmId);
+      if (!tipData) {
+        return await interaction.editReply({
+          content: '❌ 這筆打賞確認已失效',
+          components: []
+        });
+      } 
+      if (interaction.user.id !== tipData.createdBy) {
+        return await interaction.editReply({
+          content: '❌ 只有填寫這筆打賞的人可以取消'
+        });
+      }
+      pendingTips.delete(tipConfirmId);
+      return await interaction.editReply({
+        content: '❌ 已取消送出打賞',
+        components: []
+      });
+    }
     // ===== 確認打賞付款 =====
     if (customId.startsWith('confirm_tip_paid_')) {
       if (!isAdminOrStaff(interaction)) {
@@ -3352,150 +3521,65 @@ async function handleModalSubmit(interaction) {
           flags: 64,
         });
       }
-      // ===== 自動抓建立頻道的人 =====
-      const ownerOverwrite =
-        interaction.channel.permissionOverwrites.cache.find(p =>
-          p.id !== interaction.guild.id &&
-          p.id !== process.env.STAFF_ROLE &&
-          p.id !== client.user.id &&
-          !interaction.guild.roles.cache.has(p.id) &&
-          p.allow.has(PermissionFlagsBits.ViewChannel)
-        );
-      const tipperId = ownerOverwrite?.id;
-      if (!tipperId) {
+      const { data: orderData, error: orderError } =
+        await supabase
+          .from("play_orders")
+          .select("customer_id")
+        .eq("channel_id", interaction.channel.id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+      if (orderError) {
+        console.error("[打賞讀取訂單客人失敗]", orderError);
         return interaction.reply({
-          content: "❌ 找不到這個臨時頻道的建立者，無法判斷打賞人。",
+          content: "❌ 讀取訂單客人失敗，無法判斷打賞人。",
           flags: 64,
         });
       }
-      const isWalletPayment =
-        paymentMethod.includes("儲值卡") ||
-        paymentMethod.includes("錢包") ||
-        paymentMethod.includes("餘額");
-      const needManualConfirm =
-        !isWalletPayment;
-      let deductText = needManualConfirm
-        ? "待客服確認付款"
-        : "未自動扣款";
-      // ===== 儲值卡 / 錢包 / 餘額 自動扣款 =====
-      if (isWalletPayment) {
-        const { data: userData, error: userError } =
-          await supabase
-            .from("users")
-            .select("*")
-            .eq("user_id", tipperId)
-            .maybeSingle();
-        if (userError) {
-          console.error("[打賞扣款讀取使用者失敗]", userError);
-          return interaction.reply({
-            content: "❌ 讀取打賞人錢包失敗。",
-            flags: 64,
-          });
-        }
-        if (!userData) {
-          return interaction.reply({
-            content: "❌ 找不到打賞人的錢包資料，請確認他是否有使用過錢包系統。",
-            flags: 64,
-          });
-        }
-        if ((userData.coins || 0) < amount) {
-          return interaction.reply({
-            content:
-              `❌ 打賞人餘額不足\n\n` +
-              `需要：${amount} 星雨幣\n` +
-              `目前：${userData.coins || 0} 星雨幣`,
-            flags: 64,
-          });
-        }
-        const finalCoins =
-          (userData.coins || 0) - amount;
-        await supabase
-          .from("users")
-          .update({
-            coins: finalCoins,
-            total_spent: (userData.total_spent || 0) + amount,
-            month_spent: (userData.month_spent || 0) + amount,
-          })
-          .eq("user_id", tipperId);
-        await sendWalletLog(
-          tipperId,
-          "打賞消費",
-          -amount,
-          finalCoins,
-          `💝 打賞給 <@${selectedStaffId}>｜${item}`
-        );
-        deductText = `已從 <@${tipperId}> 餘額扣除 ${amount} 星雨幣`;
-      }
-      const embed = new EmbedBuilder()
-        .setColor("#ff99cc")
-        .setTitle("💝 打賞需求")
-        .addFields(
-          {
-            name: "打賞人",
-            value: `<@${tipperId}>`,
-            inline: true,
-          },
-          {
-            name: "受賞員工",
-            value: `<@${selectedStaffId}>`,
-            inline: true,
-          },
-          {
-            name: "品項",
-            value: item,
-            inline: true,
-          },
-          {
-            name: "金額",
-            value: `NT$${amount}`,
-            inline: true,
-          },
-          {
-            name: "付款方式",
-            value: paymentMethod,
-            inline: true,
-          },
-          {
-            name: "扣款狀態",
-            value: deductText,
-            inline: false,
-          }
-        )
-        .setTimestamp();
-        const components = [];
-        if (needManualConfirm) {
-          const confirmTipButton =
-            new ButtonBuilder()
-              .setCustomId(`confirm_tip_paid_${tipperId}_${selectedStaffId}_${amount}`)
-              .setLabel('✅ 確認打賞付款')
-              .setStyle(ButtonStyle.Success);
-          const cancelTipButton =
-            new ButtonBuilder()
-              .setCustomId(`cancel_tip_${tipperId}_${selectedStaffId}_${amount}`)
-              .setLabel('❌ 取消打賞')
-              .setStyle(ButtonStyle.Danger);
-          const row =
-           new ActionRowBuilder()
-              .addComponents(
-                confirmTipButton,
-                cancelTipButton
-              );
-          components.push(row);
-        }
-        await interaction.channel.send({
-          embeds: [embed],
-          components
+      const tipperId = orderData?.customer_id;
+      if (!tipperId) {
+        return interaction.reply({
+          content: "❌ 找不到這個臨時頻道對應的訂單客人，無法判斷打賞人。",
+          flags: 64,
         });
-        if (isBankTransfer(paymentMethod)) {
-          await sendBankTransferInfo(interaction.channel);
-        }
-      return interaction.reply({
-        content: isWalletPayment
-          ? "✅ 打賞需求已送出，並已從建立頻道者的餘額扣款！"
-          : "✅ 打賞需求已送出！",
-        flags: 64,
+      }
+      const tipConfirmId = `${Date.now()}_${interaction.user.id}`;
+      pendingTips.set(tipConfirmId, {
+        channelId: interaction.channel.id,
+        guildId: interaction.guild.id,
+        tipperId,
+        selectedStaffId,
+        item,
+        amount,
+        paymentMethod,
+        createdBy: interaction.user.id,
+        createdAt: Date.now()
       });
-    }
+      const confirmButton =
+        new ButtonBuilder()
+          .setCustomId(`confirm_tip_submit_${tipConfirmId}`)
+          .setLabel("✅ 確認打賞")
+          .setStyle(ButtonStyle.Success);
+      const cancelButton =
+        new ButtonBuilder()
+          .setCustomId(`cancel_tip_submit_${tipConfirmId}`)
+          .setLabel("❌ 取消")
+          .setStyle(ButtonStyle.Danger);
+      const row =
+        new ActionRowBuilder()
+          .addComponents(confirmButton, cancelButton);
+      return interaction.reply({
+        content:
+          `請確認是否送出這筆打賞：\n\n` +
+          `打賞人：<@${tipperId}>\n` +
+          `受賞員工：<@${selectedStaffId}>\n` +
+          `品項：${item}\n` +
+          `金額：NT$${amount}\n` +
+          `付款方式：${paymentMethod}`,
+        components: [row],
+        flags: 64
+      });
+
     if (interaction.customId.startsWith('transfer_modal_')) {
       const targetId =
         interaction.customId.replace(
