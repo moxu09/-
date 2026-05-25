@@ -1508,16 +1508,10 @@ client.on(Events.InteractionCreate, async interaction => {
         const modal = new ModalBuilder()
           .setCustomId(`tip_modal_${selectedStaffId}`)
           .setTitle("填寫打賞需求");
-        const tipperInput = new TextInputBuilder()
-          .setCustomId("tipper")
-          .setLabel("打賞人")
-          .setPlaceholder("請輸入打賞人的名字")
-          .setStyle(TextInputStyle.Short)
-          .setRequired(true);
         const itemInput = new TextInputBuilder()
           .setCustomId("item")
           .setLabel("品項")
-          .setPlaceholder("例如：明燈三千、特殊打賞、專寵獨賞")
+          .setPlaceholder("例如：明燈三千、明燈千里、雞米花")
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
         const amountInput = new TextInputBuilder()
@@ -1526,10 +1520,17 @@ client.on(Events.InteractionCreate, async interaction => {
           .setPlaceholder("請輸入金額，例如：9999")
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
+        const tipPaymentInput = new TextInputBuilder()
+          .setCustomId("tip_payment_method")
+          .setLabel("付款方式")
+          .setPlaceholder("轉帳 / 無卡 / 儲值卡 / 錢包 / 餘額")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
         modal.addComponents(
-          new ActionRowBuilder().addComponents(tipperInput),
           new ActionRowBuilder().addComponents(itemInput),
-          new ActionRowBuilder().addComponents(amountInput)
+          new ActionRowBuilder().addComponents(amountInput),
+          new ActionRowBuilder().addComponents(tipPaymentInput)
+
         );
         return interaction.showModal(modal);
       }
@@ -3106,16 +3107,96 @@ async function handleModalSubmit(interaction) {
   try {
     if (interaction.customId.startsWith("tip_modal_")) {
       const selectedStaffId = interaction.customId.replace("tip_modal_", "");
-      const tipper = interaction.fields.getTextInputValue("tipper");
       const item = interaction.fields.getTextInputValue("item");
-      const amount = interaction.fields.getTextInputValue("amount");
+      const amountText = interaction.fields.getTextInputValue("amount");
+      const paymentMethod = interaction.fields.getTextInputValue("tip_payment_method");
+      const amount = parseInt(
+        amountText.replace(/[^\d]/g, ""),
+        10
+      );
+      if (!amount || amount <= 0) {
+        return interaction.reply({
+          content: "❌ 金額格式錯誤，請輸入數字。",
+          flags: 64,
+        });
+      }
+      // ===== 自動抓建立頻道的人 =====
+      const ownerOverwrite =
+        interaction.channel.permissionOverwrites.cache.find(p =>
+          p.id !== interaction.guild.id &&
+          p.id !== process.env.STAFF_ROLE &&
+          p.id !== client.user.id &&
+          !interaction.guild.roles.cache.has(p.id) &&
+          p.allow.has(PermissionFlagsBits.ViewChannel)
+        );
+      const tipperId = ownerOverwrite?.id;
+      if (!tipperId) {
+        return interaction.reply({
+          content: "❌ 找不到這個臨時頻道的建立者，無法判斷打賞人。",
+          flags: 64,
+        });
+      }
+      const isWalletPayment =
+        paymentMethod.includes("儲值卡") ||
+        paymentMethod.includes("錢包") ||
+        paymentMethod.includes("餘額");
+      let deductText = "未自動扣款";
+      // ===== 儲值卡 / 錢包 / 餘額 自動扣款 =====
+      if (isWalletPayment) {
+        const { data: userData, error: userError } =
+          await supabase
+            .from("users")
+            .select("*")
+            .eq("user_id", tipperId)
+            .maybeSingle();
+        if (userError) {
+          console.error("[打賞扣款讀取使用者失敗]", userError);
+          return interaction.reply({
+            content: "❌ 讀取打賞人錢包失敗。",
+            flags: 64,
+          });
+        }
+        if (!userData) {
+          return interaction.reply({
+            content: "❌ 找不到打賞人的錢包資料，請確認他是否有使用過錢包系統。",
+            flags: 64,
+          });
+        }
+        if ((userData.coins || 0) < amount) {
+          return interaction.reply({
+            content:
+              `❌ 打賞人餘額不足\n\n` +
+              `需要：${amount} 星雨幣\n` +
+              `目前：${userData.coins || 0} 星雨幣`,
+            flags: 64,
+          });
+        }
+        const finalCoins =
+          (userData.coins || 0) - amount;
+        await supabase
+          .from("users")
+          .update({
+            coins: finalCoins,
+            total_spent: (userData.total_spent || 0) + amount,
+            month_spent: (userData.month_spent || 0) + amount,
+          })
+          .eq("user_id", tipperId);
+        await sendWalletLog(
+          tipperId,
+          "打賞消費",
+          -amount,
+          finalCoins,
+          `💝 打賞給 <@${selectedStaffId}>｜${item}`
+        );
+        deductText = `已從 <@${tipperId}> 餘額扣除 ${amount} 星雨幣`;
+      }
       const embed = new EmbedBuilder()
         .setColor("#ff99cc")
         .setTitle("💝 打賞需求")
         .addFields(
           {
             name: "打賞人",
-            value: tipper,
+            value: `<@${tipperId}>`,
             inline: true,
           },
           {
@@ -3130,8 +3211,18 @@ async function handleModalSubmit(interaction) {
           },
           {
             name: "金額",
-            value: `$${amount}`,
+            value: `NT$${amount}`,
             inline: true,
+          },
+          {
+            name: "付款方式",
+            value: paymentMethod,
+            inline: true,
+          },
+          {
+            name: "扣款狀態",
+            value: deductText,
+            inline: false,
           }
         )
         .setTimestamp();
@@ -3139,7 +3230,9 @@ async function handleModalSubmit(interaction) {
         embeds: [embed],
       });
       return interaction.reply({
-        content: "✅ 打賞需求已送出！",
+        content: isWalletPayment
+          ? "✅ 打賞需求已送出，並已從建立頻道者的餘額扣款！"
+          : "✅ 打賞需求已送出！",
         flags: 64,
       });
     }
