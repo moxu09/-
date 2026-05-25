@@ -7,11 +7,13 @@ const {
   PermissionFlagsBits,
   ModalBuilder,
   TextInputBuilder,
-  TextInputStyle
+  TextInputStyle,
+  StringSelectMenuBuilder
 } = require('discord.js');
 
 let supabase;
 let client;
+const pendingPlayOrders = new Map();
 
 function setup(supabaseInstance, clientInstance) {
   supabase = supabaseInstance;
@@ -46,6 +48,42 @@ async function sendBankTransferInfo(channel) {
     embeds: [embed]
   });
 }
+async function getAvailablePlayerOptions(service) {
+  const { data: players, error } =
+    await supabase
+      .from('players')
+      .select('*')
+      .eq('status', 'available');
+
+  if (error) {
+    console.error('[指定陪陪] 讀取可接單陪陪失敗', error);
+    return [];
+  }
+
+  return (players || [])
+    .filter(player => {
+      const allowedServices =
+        Array.isArray(player.allowed_services)
+          ? player.allowed_services
+          : String(player.allowed_services || '')
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean);
+
+      if (!allowedServices.length) return true;
+
+      return allowedServices.some(s =>
+        service.includes(s)
+      );
+    })
+    .slice(0, 24)
+    .map(player => ({
+      label: String(player.name || player.discord_id).slice(0, 100),
+      description: '目前可接單',
+      value: player.discord_id
+    }));
+}
+
 // ===== 更改訂單金額權限 =====
 function canEditOrderPrice(interaction) {
   const roleId =
@@ -57,6 +95,21 @@ function canEditOrderPrice(interaction) {
     interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
     interaction.member.roles.cache.has(roleId)
   );
+}
+function canChangePreferredPlayer(interaction, order) {
+  const roleId =
+    process.env.PRICE_EDIT_ROLE ||
+    process.env.STAFF_ROLE;
+
+  const isStaff =
+    interaction.guild.ownerId === interaction.user.id ||
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(roleId);
+
+  const isCustomer =
+    order.customer_id === interaction.user.id;
+
+  return isStaff || isCustomer;
 }
 // ===== 派單紀錄 =====
 async function sendPlayLog({
@@ -227,7 +280,15 @@ async function playerStatus(interaction) {
 }
 
 // 建立陪玩訂單
-async function createPlayOrder(interaction, service, time, price, note = '無', paymentMethod = '未填寫') {
+async function createPlayOrder(
+  interaction,
+  service,
+  time,
+  price,
+  note = '無',
+  paymentMethod = '未填寫',
+  preferredPlayerId = null
+) {
   const orderNo = `DF-${Date.now()}`;
   const discountRate = 1;
   const finalPrice =
@@ -239,12 +300,14 @@ async function createPlayOrder(interaction, service, time, price, note = '無', 
     .insert({
       order_no: orderNo,
       customer_id: interaction.user.id,
+      customer_username: interaction.user.username,
       channel_id: interaction.channel.id,
       service,
       price,
       final_price: finalPrice,
       discount_rate: discountRate,
       payment_method: paymentMethod,
+      preferred_player: preferredPlayerId,
       paid: false,
       note,
       status: 'pending'
@@ -274,6 +337,13 @@ async function createPlayOrder(interaction, service, time, price, note = '無', 
       {
         name: '👤 客人',
         value: `<@${interaction.user.id}>`,
+        inline: true
+      },
+      {
+        name: '🌟 指定陪陪',
+        value: preferredPlayerId
+          ? `<@${preferredPlayerId}>`
+          : '不指定',
         inline: true
       },
       {
@@ -322,7 +392,11 @@ async function createPlayOrder(interaction, service, time, price, note = '無', 
         new ButtonBuilder()
           .setCustomId(`change_order_price_${order.id}`)
           .setLabel('💰 更改金額')
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`change_preferred_player_${order.id}`)
+          .setLabel('🌟 更改指定陪陪')
+          .setStyle(ButtonStyle.Primary)
       );
 
   await interaction.channel.send({
@@ -563,54 +637,295 @@ async function submitPlayOrderForm(interaction) {
       flags: 64
     });
   }
+
   const service =
-    interaction.fields.getTextInputValue(
-      'service'
-    );
+    interaction.fields.getTextInputValue('service');
+
   const time =
-    interaction.fields.getTextInputValue(
-      'time'
-    );
+    interaction.fields.getTextInputValue('time');
+
   const priceText =
-    interaction.fields.getTextInputValue(
-      'price'
-    );
-  // ===== 付款方式 =====
+    interaction.fields.getTextInputValue('price');
+
   let paymentMethod = '未填寫';
   try {
     paymentMethod =
-      interaction.fields.getTextInputValue(
-        'payment_method'
-      ) || '未填寫';
+      interaction.fields.getTextInputValue('payment_method') || '未填寫';
   } catch {}
-  // ===== 備註 =====
+
   let note = '無';
   try {
     note =
-      interaction.fields.getTextInputValue(
-        'note'
-      ) || '無';
+      interaction.fields.getTextInputValue('note') || '無';
   } catch {}
-  // ===== 價格 =====
+
   const price =
     parseInt(
       priceText.replace(/[^\d]/g, ''),
       10
     );
+
   if (!price || price <= 0) {
     return interaction.editReply({
-      content:
-        '❌ 價格格式錯誤，請輸入數字。'
+      content: '❌ 價格格式錯誤，請輸入數字。'
     });
   }
-  await createPlayOrder(
-    interaction,
+
+  const selectId =
+    `${interaction.user.id}_${Date.now()}`;
+
+  pendingPlayOrders.set(selectId, {
+    userId: interaction.user.id,
     service,
     time,
     price,
     note,
     paymentMethod
+  });
+
+  setTimeout(() => {
+    pendingPlayOrders.delete(selectId);
+  }, 10 * 60 * 1000);
+
+  const playerOptions =
+    await getAvailablePlayerOptions(service);
+
+  const options = [
+    {
+      label: '不指定陪陪',
+      description: '讓所有可接單陪陪自由接單',
+      value: 'none'
+    },
+    ...playerOptions
+  ];
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`select_preferred_player_${selectId}`)
+      .setPlaceholder('請選擇指定陪陪，或選擇不指定')
+      .addOptions(options);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  return interaction.editReply({
+    content:
+      '✅ 需求已填寫完成\n\n' +
+      '請選擇是否指定陪陪：',
+    components: [row]
+  });
+}
+async function handlePreferredPlayerSelect(interaction) {
+  const selectId =
+    interaction.customId.replace(
+      'select_preferred_player_',
+      ''
+    );
+
+  const pending =
+    pendingPlayOrders.get(selectId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆需求已過期，請重新填寫',
+      components: []
+    });
+  }
+
+  if (interaction.user.id !== pending.userId) {
+    return interaction.editReply({
+      content: '❌ 只有填寫需求的人可以選擇陪陪',
+      components: []
+    });
+  }
+
+  const selectedValue =
+    interaction.values[0];
+
+  const preferredPlayerId =
+    selectedValue === 'none'
+      ? null
+      : selectedValue;
+
+  pendingPlayOrders.delete(selectId);
+
+  await createPlayOrder(
+    interaction,
+    pending.service,
+    pending.time,
+    pending.price,
+    pending.note,
+    pending.paymentMethod,
+    preferredPlayerId
   );
+
+  return interaction.editReply({
+    content:
+      preferredPlayerId
+        ? `✅ 已指定陪陪：<@${preferredPlayerId}>，訂單已送出`
+        : '✅ 已選擇不指定陪陪，訂單已送出',
+    components: []
+  });
+}
+async function openChangePreferredPlayerMenu(interaction) {
+  const orderId =
+    interaction.customId.replace(
+      'change_preferred_player_',
+      ''
+    );
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+  if (error || !order) {
+    console.log('[更改指定陪陪讀取訂單失敗]', error);
+    return interaction.editReply({
+      content: '❌ 找不到這張訂單'
+    });
+  }
+
+  if (!canChangePreferredPlayer(interaction, order)) {
+    return interaction.editReply({
+      content: '❌ 只有下單者或客服可以更改指定陪陪'
+    });
+  }
+
+  if (order.status !== 'pending') {
+    return interaction.editReply({
+      content: '❌ 這張訂單已被接單，不能再更改指定陪陪'
+    });
+  }
+
+  const playerOptions =
+    await getAvailablePlayerOptions(order.service || '');
+
+  const options = [
+    {
+      label: '不指定陪陪',
+      description: '改成所有可接單陪陪都可以接',
+      value: 'none'
+    },
+    ...playerOptions
+  ];
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`submit_change_preferred_player_${orderId}`)
+      .setPlaceholder('請選擇新的指定陪陪')
+      .addOptions(options.slice(0, 25));
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  return interaction.editReply({
+    content: '🌟 請選擇新的指定陪陪：',
+    components: [row]
+  });
+}
+async function submitChangePreferredPlayer(interaction) {
+  const orderId =
+    interaction.customId.replace(
+      'submit_change_preferred_player_',
+      ''
+    );
+
+  const selectedValue =
+    interaction.values[0];
+
+  const preferredPlayerId =
+    selectedValue === 'none'
+      ? null
+      : selectedValue;
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+  if (error || !order) {
+    console.log('[更改指定陪陪讀取訂單失敗]', error);
+    return interaction.editReply({
+      content: '❌ 找不到這張訂單',
+      components: []
+    });
+  }
+
+  if (!canChangePreferredPlayer(interaction, order)) {
+    return interaction.editReply({
+      content: '❌ 只有下單者或客服可以更改指定陪陪',
+      components: []
+    });
+  }
+
+  if (order.status !== 'pending') {
+    return interaction.editReply({
+      content: '❌ 這張訂單已被接單，不能再更改指定陪陪',
+      components: []
+    });
+  }
+
+  const { error: updateError } =
+    await supabase
+      .from('play_orders')
+      .update({
+        preferred_player: preferredPlayerId
+      })
+      .eq('id', orderId);
+
+  if (updateError) {
+    console.log('[更改指定陪陪失敗]', updateError);
+    return interaction.editReply({
+      content: '❌ 更改指定陪陪失敗',
+      components: []
+    });
+  }
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('🌟 指定陪陪已更新')
+        .setDescription(
+          `訂單編號：${order.order_no || '未知'}\n` +
+          `新的指定陪陪：${
+            preferredPlayerId
+              ? `<@${preferredPlayerId}>`
+              : '不指定'
+          }\n\n` +
+          `更改人：<@${interaction.user.id}>`
+        )
+        .setTimestamp()
+    ]
+  });
+
+  await sendPlayLog({
+    title: '🌟 指定陪陪已更新',
+    description:
+      `訂單編號：${order.order_no || '未知'}\n` +
+      `更改人：<@${interaction.user.id}>\n` +
+      `新的指定陪陪：${
+        preferredPlayerId
+          ? `<@${preferredPlayerId}>`
+          : '不指定'
+      }`,
+    color: '#66ccff'
+  });
+
+  return interaction.editReply({
+    content:
+      preferredPlayerId
+        ? `✅ 已改成指定陪陪：<@${preferredPlayerId}>`
+        : '✅ 已改成不指定陪陪',
+    components: []
+  });
 }
 async function submitTopupForm(interaction) {
 
@@ -889,6 +1204,16 @@ async function acceptPlayOrder(interaction) {
     if (!order || order.status !== 'pending') {
       return interaction.editReply({
         content: '❌ 這張訂單已經被接走了',
+      });
+    }
+    // ===== 指定陪陪限制 =====
+    if (
+      order.preferred_player &&
+      order.preferred_player !== interaction.user.id
+    ) {
+      return interaction.editReply({
+        content:
+          `❌ 這張訂單已指定給 <@${order.preferred_player}> 接單`
       });
     }
     // ===== 服務限制 =====
@@ -1317,6 +1642,10 @@ async function handleDispatchInteraction(interaction) {
       await openChangeOrderPriceModal(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('change_preferred_player_')) {
+      await openChangePreferredPlayerMenu(interaction);
+      return true;
+    }
     if (interaction.customId === 'player_online') {
       await playerOnline(interaction);
       return true; 
@@ -1349,8 +1678,17 @@ async function handleDispatchInteraction(interaction) {
       return true;
     }
   }
+  if (interaction.isStringSelectMenu()) {
+    if (interaction.customId.startsWith('select_preferred_player_')) {
+      await handlePreferredPlayerSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('submit_change_preferred_player_')) {
+      await submitChangePreferredPlayer(interaction);
+      return true;
+    }
+  }
   return false;
-
 }
 
 module.exports = {
@@ -1364,5 +1702,7 @@ module.exports = {
   openTopupModal,
   openPlayOrderModal,
   openChangeOrderPriceModal,
-  submitChangeOrderPrice
+  submitChangeOrderPrice,
+  openChangePreferredPlayerMenu,
+  submitChangePreferredPlayer
 };

@@ -1454,6 +1454,41 @@ async function sendBankTransferInfo(channel) {
     embeds: [embed]
   });
 }
+async function getAvailablePlayerOptions(service) {
+  const { data: players, error } =
+    await supabase
+      .from('players')
+      .select('*')
+      .eq('status', 'available');
+
+  if (error) {
+    console.error('[指定陪陪] 讀取可接單陪陪失敗', error);
+    return [];
+  }
+
+  return (players || [])
+    .filter(player => {
+      const allowedServices =
+        Array.isArray(player.allowed_services)
+          ? player.allowed_services
+          : String(player.allowed_services || '')
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean);
+
+      if (!allowedServices.length) return true;
+
+      return allowedServices.some(s =>
+        service.includes(s)
+      );
+    })
+    .slice(0, 24)
+    .map(player => ({
+      label: String(player.name || player.discord_id).slice(0, 100),
+      description: '目前可接單',
+      value: player.discord_id
+    }));
+}
 // ===== Interaction Handler =====
 client.on(Events.InteractionCreate, async interaction => {
   try {
