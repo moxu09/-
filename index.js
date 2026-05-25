@@ -1424,6 +1424,35 @@ async function getStaffOptionsFromRole(guild) {
     value: member.id,
   }));
 }
+function isBankTransfer(text = '') {
+  return (
+    text.includes('匯款') ||
+    text.includes('轉帳')
+  );
+}
+
+async function sendBankTransferInfo(channel) {
+  const embed = new EmbedBuilder()
+    .setColor('#ffd166')
+    .setTitle('🏦 匯款資訊')
+    .setDescription(
+      `請依照以下資訊完成匯款：\n\n` +
+      `銀行：將來銀行\n` +
+      `銀行代碼：823\n` +
+      `帳號：88620979281818\n` +
+      `戶名：許O星\n\n` +
+      `匯款完成後，請在此頻道上傳匯款截圖，等待客服確認。\n\n` +
+      `若有其他銀行之需求，請在下方告訴客服。`
+    )
+    .setFooter({
+      text: '請確認金額正確後再匯款'
+    })
+    .setTimestamp();
+
+  await channel.send({
+    embeds: [embed]
+  });
+}
 // ===== Interaction Handler =====
 client.on(Events.InteractionCreate, async interaction => {
   try {
@@ -2269,6 +2298,95 @@ async function handleButtonInteraction(interaction) {
           '✅ 已公開通知：不使用優惠券'
       });
     }
+    // ===== 確認打賞付款 =====
+    if (customId.startsWith('confirm_tip_paid_')) {
+      if (!isAdminOrStaff(interaction)) {
+        return await interaction.editReply({
+          content: '❌ 只有客服可以確認打賞付款'
+        });
+      }
+
+      const parts = customId.split('_');
+      const tipperId = parts[3];
+      const staffId = parts[4];
+      const amount = parts[5];
+
+      const oldEmbed = interaction.message.embeds[0];
+
+      const embed =
+        EmbedBuilder.from(oldEmbed)
+          .setColor('#57F287')
+          .setTitle('✅ 打賞已付款');
+
+      const fields =
+        oldEmbed.fields
+          .filter(field =>
+            field.name !== '扣款狀態' &&
+            field.name !== '打賞狀態'
+          );
+
+      embed.setFields(fields);
+
+      embed.addFields({
+        name: '打賞狀態',
+        value:
+          `✅ 已由 <@${interaction.user.id}> 確認付款\n` +
+          `打賞人：<@${tipperId}>\n` +
+          `受賞員工：<@${staffId}>\n` +
+          `金額：NT$${amount}`,
+        inline: false
+      });
+
+      await interaction.message.edit({
+        embeds: [embed],
+        components: []
+      });
+
+      return await interaction.editReply({
+        content: '✅ 已確認打賞付款'
+      });
+    }
+
+    // ===== 取消打賞 =====
+    if (customId.startsWith('cancel_tip_')) {
+      if (!isAdminOrStaff(interaction)) {
+        return await interaction.editReply({
+          content: '❌ 只有客服可以取消打賞'
+        });
+      }
+
+      const oldEmbed = interaction.message.embeds[0];
+
+      const embed =
+        EmbedBuilder.from(oldEmbed)
+          .setColor('#ff4444')
+          .setTitle('❌ 打賞已取消');
+
+      const fields =
+        oldEmbed.fields
+          .filter(field =>
+            field.name !== '扣款狀態' &&
+            field.name !== '打賞狀態'
+          );
+
+      embed.setFields(fields);
+
+      embed.addFields({
+        name: '打賞狀態',
+        value: `❌ 已由 <@${interaction.user.id}> 取消`,
+        inline: false
+      });
+
+      await interaction.message.edit({
+        embeds: [embed],
+        components: []
+      });
+
+      return await interaction.editReply({
+        content: '✅ 已取消打賞需求'
+      });
+    }
+
     // ===== 客人確認關閉訂單 =====
     if (customId === 'customer_confirm_close_order') {
       const ownerOverwrite =
@@ -3227,7 +3345,11 @@ async function handleModalSubmit(interaction) {
         paymentMethod.includes("儲值卡") ||
         paymentMethod.includes("錢包") ||
         paymentMethod.includes("餘額");
-      let deductText = "未自動扣款";
+      const needManualConfirm =
+        !isWalletPayment;
+      let deductText = needManualConfirm
+        ? "待客服確認付款"
+        : "未自動扣款";
       // ===== 儲值卡 / 錢包 / 餘額 自動扣款 =====
       if (isWalletPayment) {
         const { data: userData, error: userError } =
@@ -3313,9 +3435,33 @@ async function handleModalSubmit(interaction) {
           }
         )
         .setTimestamp();
-      await interaction.channel.send({
-        embeds: [embed],
-      });
+        const components = [];
+        if (needManualConfirm) {
+          const confirmTipButton =
+            new ButtonBuilder()
+              .setCustomId(`confirm_tip_paid_${tipperId}_${selectedStaffId}_${amount}`)
+              .setLabel('✅ 確認打賞付款')
+              .setStyle(ButtonStyle.Success);
+          const cancelTipButton =
+            new ButtonBuilder()
+              .setCustomId(`cancel_tip_${tipperId}_${selectedStaffId}_${amount}`)
+              .setLabel('❌ 取消打賞')
+              .setStyle(ButtonStyle.Danger);
+          const row =
+           new ActionRowBuilder()
+              .addComponents(
+                confirmTipButton,
+                cancelTipButton
+              );
+          components.push(row);
+        }
+        await interaction.channel.send({
+          embeds: [embed],
+          components
+        });
+        if (isBankTransfer(paymentMethod)) {
+          await sendBankTransferInfo(interaction.channel);
+        }
       return interaction.reply({
         content: isWalletPayment
           ? "✅ 打賞需求已送出，並已從建立頻道者的餘額扣款！"
