@@ -3907,8 +3907,9 @@ client.on('messageCreate', async (message) => {
   if (dropCooldown.has(channelId)) return;
   const random = Math.floor(Math.random() * 100);
   // 訊息少於 5 字不掉落
-  if (message.content.replace(/\s/g, '').length < 5) return;  // 5% 掉落機率
-  if (random >= 5) return;
+  if (message.content.replace(/\s/g, '').length < 5) return;  
+  // 0.5% 掉落機率
+  if (random >= 0.5) return;
   const reward = Math.floor(Math.random() * 50) + 1;
   const button = new ButtonBuilder()
     .setCustomId(`claim_${reward}`)
@@ -3930,7 +3931,7 @@ client.on('messageCreate', async (message) => {
 
   setTimeout(() => {
     dropCooldown.delete(channelId);
-  }, 3 * 60 * 1000);
+  }, 8 * 60 * 1000);
 });
 // ===== Login =====
 client.login(process.env.TOKEN);
