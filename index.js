@@ -1112,7 +1112,45 @@ async function sendOrderSystem(client) {
     );
   }
 }
+// ===== 私人臨時文字頻道面板 =====
+async function sendPrivateRoomPanel(client) {
+  const channel =
+    await client.channels.fetch(
+      process.env.PRIVATE_ROOM_PANEL_CHANNEL
+    ).catch(() => null);
 
+  if (!channel) {
+    console.log('[PRIVATE ROOM] 找不到面板頻道');
+    return;
+  }
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#66ccff')
+      .setTitle('🔐 私人文字房間')
+      .setDescription(
+        '按下下方按鈕後，系統會建立一個只有你看得到的臨時文字頻道。\n\n' +
+        '進入後你可以自行邀請想加入的人。'
+      )
+      .setTimestamp();
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('create_private_room')
+          .setLabel('建立私人文字頻道')
+          .setEmoji('🔐')
+          .setStyle(ButtonStyle.Primary)
+      );
+
+  await channel.send({
+    embeds: [embed],
+    components: [row]
+  });
+
+  console.log('[PRIVATE ROOM] 面板已送出');
+}
 // ===== 指令定義 =====
 
 const commands = [
@@ -1323,6 +1361,8 @@ await sendCheckinPanel(client);
 console.log('✅ 簽到系統已載入');
 await sendGachaPanel(client);
 console.log('✅ 扭蛋系統已載入');
+await sendPrivateRoomPanel(client);
+console.log('✅ 私人房間系統已載入');
 console.log('🌧️ 星雨機器人已成功上線');
 setInterval(async () => {
   try {
@@ -1548,6 +1588,43 @@ client.on(Events.InteractionCreate, async interaction => {
           });
         }
       }
+      // ===== 建立私人文字頻道 =====
+      if (interaction.customId === 'create_private_room') {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({ flags: 64 });
+        }
+        await createPrivateRoom(interaction);
+        return;
+      }
+      // ===== 關閉私人文字頻道 =====
+      if (interaction.customId.startsWith('private_room_close_')) {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({ flags: 64 });
+        }
+        const ownerId =
+          interaction.customId.replace(
+            'private_room_close_',
+            ''
+          );
+        const isStaff =
+          interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+          interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+        if (
+          interaction.user.id !== ownerId &&
+          !isStaff
+        ) {
+          return interaction.editReply({
+            content: '❌ 只有房間建立者或客服可以關閉'
+          });
+        }
+        await interaction.editReply({
+          content: '🗑️ 私人頻道將在 3 秒後刪除'
+        });
+        setTimeout(async () => {
+          await interaction.channel.delete().catch(() => {});
+        }, 3000);
+        return;
+      }
       // Modal 類按鈕不能 defer
       if (
         interaction.customId === 'open_topup_modal' ||
@@ -1632,6 +1709,42 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       await handleStringSelectInteraction(interaction);
       return;
+    }
+    // ===== User Select =====
+    if (interaction.isUserSelectMenu()) {
+      if (interaction.customId.startsWith('private_room_invite_')) {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({ flags: 64 });
+        }
+        const ownerId =
+          interaction.customId.replace(
+            'private_room_invite_',
+            ''
+          );
+        if (interaction.user.id !== ownerId) {
+          return interaction.editReply({
+            content: '❌ 只有房間建立者可以邀請成員'
+          });
+        }
+        const selectedUsers =
+          interaction.values;
+        for (const userId of selectedUsers) {
+          await interaction.channel.permissionOverwrites.edit(userId, {
+            ViewChannel: true,
+            SendMessages: true,
+            ReadMessageHistory: true,
+            AttachFiles: true,
+            EmbedLinks: true
+          });
+        }
+        await interaction.channel.send({
+          content:
+            `✅ 已邀請：${selectedUsers.map(id => `<@${id}>`).join('、')}`
+        });
+        return interaction.editReply({
+          content: '✅ 已完成邀請'
+        });
+      }
     }
   } catch (err) {
     console.error('[InteractionCreate 錯誤]', err);
@@ -2017,6 +2130,87 @@ async function handleSlashCommand(interaction) {
             ],
           });
         }
+}
+async function createPrivateRoom(interaction) {
+  const safeName =
+    interaction.user.username
+      .replace(/[^a-zA-Z0-9\u4e00-\u9fa5-_]/g, '')
+      .slice(0, 10);
+
+  const roomChannel =
+    await interaction.guild.channels.create({
+      name: `私人-${safeName}-${Date.now()}`,
+      type: ChannelType.GuildText,
+      parent: process.env.PRIVATE_ROOM_CATEGORY,
+      permissionOverwrites: [
+        {
+          id: interaction.guild.roles.everyone,
+          deny: [
+            PermissionFlagsBits.ViewChannel
+          ]
+        },
+        {
+          id: interaction.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks
+          ]
+        },
+        {
+          id: client.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.ManageChannels
+          ]
+        }
+      ]
+    });
+
+  const inviteMenu =
+    new UserSelectMenuBuilder()
+      .setCustomId(`private_room_invite_${interaction.user.id}`)
+      .setPlaceholder('選擇要邀請進來的人')
+      .setMinValues(1)
+      .setMaxValues(10);
+
+  const closeButton =
+    new ButtonBuilder()
+      .setCustomId(`private_room_close_${interaction.user.id}`)
+      .setLabel('關閉私人頻道')
+      .setEmoji('🗑️')
+      .setStyle(ButtonStyle.Danger);
+
+  const row1 =
+    new ActionRowBuilder()
+      .addComponents(inviteMenu);
+
+  const row2 =
+    new ActionRowBuilder()
+      .addComponents(closeButton);
+
+  await roomChannel.send({
+    content: `<@${interaction.user.id}> 你的私人文字頻道已建立。`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('🔐 私人文字房間')
+        .setDescription(
+          '這個頻道目前只有你看得到。\n\n' +
+          '你可以用下方選單邀請其他人進來。'
+        )
+        .setTimestamp()
+    ],
+    components: [row1, row2]
+  });
+
+  return interaction.editReply({
+    content: `✅ 已建立私人頻道：<#${roomChannel.id}>`
+  });
 }
 // ===== 完整按鈕交互處理 =====
 async function handleButtonInteraction(interaction) {

@@ -887,7 +887,75 @@ async function submitChangePreferredPlayer(interaction) {
       components: []
     });
   }
-
+  // ===== 重新發送到員工接單區 =====
+  const staffOrderChannel =
+    await client.channels
+      .fetch(process.env.PLAYER_ORDER_CHANNEL)
+      .catch(() => null);
+  if (staffOrderChannel) {
+    const resendEmbed =
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('🌟 陪玩指定已更新｜重新派單')
+        .addFields(
+          {
+            name: '📌 訂單編號',
+            value: order.order_no || '未知',
+            inline: true
+          },
+          {
+            name: '👤 客人',
+            value: `<@${order.customer_id}>`,
+            inline: true
+          },
+          {
+            name: '🌟 新指定陪陪',
+            value: preferredPlayerId
+              ? `<@${preferredPlayerId}>`
+              : '不指定',
+            inline: true
+          },
+          {
+            name: '🎮 服務項目',
+            value: order.service || '未填寫',
+            inline: false
+          },
+          {
+            name: '💰 商品金額',
+            value: `NT$${order.final_price || order.price || 0}`,
+            inline: true
+          },
+          {
+            name: '💳 付款方式',
+            value: order.payment_method || '未填寫',
+            inline: true
+          },
+          {
+            name: '📝 備註需求',
+            value: order.note || '無',
+            inline: false
+          }
+        )
+        .setFooter({
+          text: `由 ${interaction.user.username} 更改指定陪陪`
+        })
+        .setTimestamp();
+    const acceptRow =
+      new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`accept_play_order_${order.id}`)
+            .setLabel('接單')
+            .setStyle(ButtonStyle.Success)
+        );
+    await staffOrderChannel.send({
+      content: preferredPlayerId
+        ? `🌟 訂單已更改指定陪陪：<@${preferredPlayerId}>`
+        : '🌟 訂單已更改為不指定陪陪，開放可接單員工接單',
+      embeds: [resendEmbed],
+      components: [acceptRow]
+    });
+  }
   await interaction.channel.send({
     embeds: [
       new EmbedBuilder()
