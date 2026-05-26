@@ -1659,7 +1659,8 @@ client.on(Events.InteractionCreate, async interaction => {
       if (
         interaction.customId === 'open_topup_modal' ||
         interaction.customId === 'open_play_order_form' ||
-        interaction.customId.startsWith('change_order_price_') 
+        interaction.customId.startsWith('change_order_price_') ||
+        interaction.customId.startsWith('save_order_note_')
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }

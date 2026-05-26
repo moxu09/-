@@ -396,7 +396,11 @@ async function createPlayOrder(
         new ButtonBuilder()
           .setCustomId(`change_preferred_player_${order.id}`)
           .setLabel('🌟 更改指定陪陪')
-          .setStyle(ButtonStyle.Primary)
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`save_order_note_${order.id}`)
+          .setLabel('📝 存單')
+          .setStyle(ButtonStyle.Success)
       );
 
   await interaction.channel.send({
@@ -627,6 +631,33 @@ async function openChangeOrderPriceModal(interaction) {
 
   modal.addComponents(
     new ActionRowBuilder().addComponents(priceInput)
+  );
+
+  await interaction.showModal(modal);
+}
+async function openSaveOrderNoteModal(interaction) {
+  const orderId =
+    interaction.customId.replace(
+      'save_order_note_',
+      ''
+    );
+
+  const modal =
+    new ModalBuilder()
+      .setCustomId(`submit_save_order_note_${orderId}`)
+      .setTitle('📝 存單內容');
+
+  const noteInput =
+    new TextInputBuilder()
+      .setCustomId('saved_order_text')
+      .setLabel('請輸入要存單的內容')
+      .setPlaceholder('例如：闆闆要存單的內容')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(true);
+
+  modal.addComponents(
+    new ActionRowBuilder()
+      .addComponents(noteInput)
   );
 
   await interaction.showModal(modal);
@@ -1088,6 +1119,160 @@ async function submitTopupForm(interaction) {
   await interaction.editReply({
     content:
       '✅ 已送出儲值申請'
+  });
+}
+async function submitSaveOrderNote(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const orderId =
+    interaction.customId.replace(
+      'submit_save_order_note_',
+      ''
+    );
+
+  const savedText =
+    interaction.fields.getTextInputValue(
+      'saved_order_text'
+    );
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+  if (error || !order) {
+    console.log('[存單讀取訂單失敗]', error);
+    return interaction.editReply({
+      content: '❌ 找不到這張訂單'
+    });
+  }
+
+  const saveChannel =
+    await client.channels
+      .fetch(process.env.SAVED_ORDER_CHANNEL)
+      .catch(() => null);
+
+  if (!saveChannel) {
+    return interaction.editReply({
+      content: '❌ 找不到存單指定頻道，請檢查 SAVED_ORDER_CHANNEL'
+    });
+  }
+
+  const endButton =
+    new ButtonBuilder()
+      .setCustomId(`saved_order_end_${order.id}`)
+      .setLabel('已結束')
+      .setEmoji('✅')
+      .setStyle(ButtonStyle.Danger);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(endButton);
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#66ccff')
+      .setTitle('📝 訂單存單')
+      .addFields(
+        {
+          name: '📌 訂單編號',
+          value: order.order_no || '未知',
+          inline: true
+        },
+        {
+          name: '👤 客人',
+          value: `<@${order.customer_id}>`,
+          inline: true
+        },
+        {
+          name: '🎮 服務項目',
+          value: order.service || '未填寫',
+          inline: false
+        },
+        {
+          name: '💰 金額',
+          value: `NT$${order.final_price || order.price || 0}`,
+          inline: true
+        },
+        {
+          name: '💳 付款方式',
+          value: order.payment_method || '未填寫',
+          inline: true
+        },
+        {
+          name: '📝 存單內容',
+          value: savedText.slice(0, 1000),
+          inline: false
+        }
+      )
+      .setFooter({
+        text: `存單人：${interaction.user.username}`
+      })
+      .setTimestamp();
+
+  await saveChannel.send({
+    embeds: [embed],
+    components: [row]
+  });
+
+  await interaction.channel.send({
+    content:
+      `✅ <@${interaction.user.id}> 已完成存單，內容已送到指定頻道。`
+  });
+
+  return interaction.editReply({
+    content: '✅ 存單已送出'
+  });
+}
+async function handleSavedOrderEnd(interaction) {
+  const roleId =
+    process.env.STAFF_ROLE;
+
+  const isStaff =
+    interaction.guild.ownerId === interaction.user.id ||
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(roleId);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以按已結束'
+    });
+  }
+
+  const oldEmbed =
+    interaction.message.embeds[0];
+
+  const newEmbed =
+    EmbedBuilder.from(oldEmbed)
+      .setColor('#999999')
+      .setTitle('✅ 訂單存單｜已結束')
+      .addFields({
+        name: '🔒 結束人',
+        value: `<@${interaction.user.id}>`,
+        inline: true
+      });
+
+  const disabledRow =
+    new ActionRowBuilder()
+      .addComponents(
+        ButtonBuilder.from(
+          interaction.message.components[0].components[0]
+        )
+          .setDisabled(true)
+          .setLabel('已結束')
+      );
+
+  await interaction.message.edit({
+    embeds: [newEmbed],
+    components: [disabledRow]
+  });
+
+  return interaction.editReply({
+    content: '✅ 已標記為結束'
   });
 }
 // ===== 送出更改訂單金額 =====
@@ -1710,6 +1895,14 @@ async function handleDispatchInteraction(interaction) {
       await openChangeOrderPriceModal(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('save_order_note_')) {
+      await openSaveOrderNoteModal(interaction);
+      return true;
+    } 
+    if (interaction.customId.startsWith('saved_order_end_')) {
+      await handleSavedOrderEnd(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('change_preferred_player_')) {
       await openChangePreferredPlayerMenu(interaction);
       return true;
@@ -1745,6 +1938,10 @@ async function handleDispatchInteraction(interaction) {
       await submitChangeOrderPrice(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('submit_save_order_note_')) {
+      await submitSaveOrderNote(interaction);
+      return true;
+    }
   }
   if (interaction.isStringSelectMenu()) {
     if (interaction.customId.startsWith('select_preferred_player_')) {
@@ -1772,5 +1969,8 @@ module.exports = {
   openChangeOrderPriceModal,
   submitChangeOrderPrice,
   openChangePreferredPlayerMenu,
-  submitChangePreferredPlayer
+  submitChangePreferredPlayer,
+  openSaveOrderNoteModal,
+  submitSaveOrderNote,
+  handleSavedOrderEnd
 };
