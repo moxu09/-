@@ -1519,14 +1519,14 @@ setInterval(async () => {
 }, 60 * 60 * 1000);
 setInterval(async () => {
   const eightHoursAgo =
-    new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString();
+    new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
 
   const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
       .eq('status', 'available')
-      .lt('online_started_at', eightHoursAgo);
+      .lt('online_started_at', twelveHoursAgo);
 
   if (error || !players?.length) return;
 
