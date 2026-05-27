@@ -584,69 +584,131 @@ function getTodayDateString() {
   const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   return utc8.toISOString().split('T')[0];
 }
+// ===== SSR 連抽降權設定 =====
+// 抽到第一個 SSR 後，後續 SSR 權重只剩 15%
+const SSR_WEIGHT_AFTER_HIT = 0.15;
 
 async function performGacha(userId, guildId, amount, poolId = null) {
-    let pool;
-    if (poolId) {
-      const { data, error } =
-        await supabase
-          .from('gacha_pools')
-          .select('*')
-          .eq('guild_id', guildId)
-          .eq('id', poolId)
-          .single();
-      if (error || !data) {
-        throw new Error('找不到指定卡池');
-      }
-      pool = data;
-    } else {
-      const { data: pools } =
-        await supabase
-          .from('gacha_pools')
-          .select('*')
-          .eq('guild_id', guildId);
-      if (!pools || pools.length === 0) {
-        throw new Error('目前沒有卡池');
-      }
-      pool = pools[0];
+  let pool;
+
+  if (poolId) {
+    const { data, error } =
+      await supabase
+        .from('gacha_pools')
+        .select('*')
+        .eq('guild_id', guildId)
+        .eq('id', poolId)
+        .single();
+
+    if (error || !data) {
+      throw new Error('找不到指定卡池');
     }
-  const totalPrice = pool.price * amount;
 
-  const userData = await getUser(userId);
-  if (userData.coins < totalPrice) throw new Error('星雨幣不足');
+    pool = data;
+  } else {
+    const { data: pools } =
+      await supabase
+        .from('gacha_pools')
+        .select('*')
+        .eq('guild_id', guildId);
 
-  const { data: rewards } = await supabase
-    .from('gacha_rewards')
-    .select('*')
-    .eq('pool_id', pool.id);
+    if (!pools || pools.length === 0) {
+      throw new Error('目前沒有卡池');
+    }
 
-  if (!rewards || rewards.length === 0) throw new Error('卡池沒有獎勵');
+    pool = pools[0];
+  }
+
+  const totalPrice =
+    pool.price * amount;
+
+  const userData =
+    await getUser(userId);
+
+  if (userData.coins < totalPrice) {
+    throw new Error('星雨幣不足');
+  }
+
+  const { data: rewards } =
+    await supabase
+      .from('gacha_rewards')
+      .select('*')
+      .eq('pool_id', pool.id);
+
+  if (!rewards || rewards.length === 0) {
+    throw new Error('卡池沒有獎勵');
+  }
 
   let results = [];
   let totalRewardCoins = 0;
   let insertItems = [];
 
+  // ===== 本次抽取是否已經出過 SSR =====
+  let hasHitSSR = false;
+
   for (let i = 0; i < amount; i++) {
+    // ===== 動態權重 =====
+    const weightedRewards =
+      rewards.map(reward => {
+        let weight =
+          Number(reward.chance || 0);
+
+        // 抽到第一個 SSR 後，後續 SSR 權重大幅下降
+        if (
+          hasHitSSR &&
+          reward.rarity === 'SSR'
+        ) {
+          weight =
+            weight * SSR_WEIGHT_AFTER_HIT;
+        }
+
+        return {
+          ...reward,
+          adjustedWeight: weight
+        };
+      }).filter(reward =>
+        reward.adjustedWeight > 0
+      );
+
     const totalWeight =
-      rewards.reduce(
-        (sum, r) => sum + Number(r.chance || 0),
+      weightedRewards.reduce(
+        (sum, reward) =>
+          sum + reward.adjustedWeight,
         0
       );
-    let random = Math.random() * totalWeight;
-    let selected = rewards[0];
-    for (const reward of rewards) {
-      random -= Number(reward.chance);
+
+    if (totalWeight <= 0) {
+      throw new Error('卡池權重設定錯誤');
+    }
+
+    let random =
+      Math.random() * totalWeight;
+
+    let selected =
+      weightedRewards[0];
+
+    for (const reward of weightedRewards) {
+      random -= reward.adjustedWeight;
+
       if (random <= 0) {
         selected = reward;
         break;
       }
     }
 
-    const rewardCoins = selected.reward_coins || 0;
+    if (selected.rarity === 'SSR') {
+      hasHitSSR = true;
+    }
+
+    const rewardCoins =
+      selected.reward_coins || 0;
+
     totalRewardCoins += rewardCoins;
 
-    // 判斷是否是優惠券
-    const itemType = selected.reward_name.includes('優惠券') ? 'coupon' : 'gacha';
+    const itemType =
+      selected.reward_name.includes('優惠券')
+        ? 'coupon'
+        : 'gacha';
 
     insertItems.push({
       user_id: userId,
@@ -655,17 +717,22 @@ async function performGacha(userId, guildId, amount, poolId = null) {
       description: selected.reward_description,
       item_type: itemType
     });
+
     results.push({
       name: selected.reward_name,
       rarity: selected.rarity,
       description: selected.reward_description,
       coins: rewardCoins,
-      itemType
+      itemType,
+      weight: selected.adjustedWeight
     });
   }
 
   const finalCoins =
-    userData.coins - totalPrice + totalRewardCoins;
+    userData.coins -
+    totalPrice +
+    totalRewardCoins;
+
   const { error } =
     await supabase.rpc(
       'perform_gacha',
@@ -677,17 +744,17 @@ async function performGacha(userId, guildId, amount, poolId = null) {
       }
     );
 
-if (error) {
-  console.error(error);
-  throw new Error('扭蛋失敗');
-}
-return {
-  results,
-  totalRewardCoins,
-  finalCoins,
-  cost: totalPrice
-};
+  if (error) {
+    console.error(error);
+    throw new Error('扭蛋失敗');
+  }
 
+  return {
+    results,
+    totalRewardCoins,
+    finalCoins,
+    cost: totalPrice
+  };
 }
 // 刷新商店
 async function refreshShop(client) {
@@ -1262,7 +1329,7 @@ const commands = [
     .addNumberOption(option =>
       option
         .setName('機率')
-        .setDescription('例如：0.5 / 1 / 10')
+        .setDescription('權重數值，數字越大越容易抽到，例如：SSR=1、SR=20、R=79')
         .setRequired(true)
     )
     .addIntegerOption(option =>
@@ -1900,7 +1967,7 @@ async function handleSlashCommand(interaction) {
           const rewardCoins =
             interaction.options.getInteger('星雨幣') || 0;
           if (isNaN(chance) || chance <= 0) {
-            return replyError(interaction, '機率必須大於 0');
+            return replyError(interaction, '權重必須大於 0');
           }
           const { error } = await supabase
             .from('gacha_rewards')
