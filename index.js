@@ -2761,6 +2761,20 @@ async function handleButtonInteraction(interaction) {
       const staffId = parts[4];
       const amount = parts[5];
 
+      await supabase
+        .from('play_orders')
+        .update({
+          paid: true,
+          paid_at: new Date().toISOString(),
+          status: 'completed',
+          completed_at: new Date().toISOString()
+        })
+        .eq('customer_id', tipperId)
+        .eq('assigned_player', staffId)
+        .eq('final_price', Number(amount))
+        .eq('note', '打賞')
+        .order('created_at', { ascending: false })
+        .limit(1);
       const oldEmbed = interaction.message.embeds[0];
 
       const embed =
@@ -3303,6 +3317,7 @@ async function handleStringSelectInteraction(interaction) {
             name: channelName,
             type: ChannelType.GuildText,
             parent: process.env.ORDER_CATEGORY,
+            topic: `owner:${interaction.user.id}`,
             permissionOverwrites: [
               {
                 id: interaction.guild.roles.everyone,
@@ -3817,10 +3832,35 @@ async function handleModalSubmit(interaction) {
           flags: 64,
         });
       }
-      const tipperId = orderData?.customer_id;
+      let tipperId = orderData?.customer_id;
+      // ===== 優先從頻道 topic 找建立者 =====
+      if (!tipperId && interaction.channel.topic) {
+        const match =
+          interaction.channel.topic.match(/owner:(\d+)/);
+        if (match) {
+          tipperId = match[1];
+        }
+      }
+      // ===== 舊頻道沒有 topic，才從權限覆蓋找 =====
+      if (!tipperId) {
+        const ownerOverwrite =
+          interaction.channel.permissionOverwrites.cache.find(p => {
+            const isRole =
+              interaction.guild.roles.cache.has(p.id);
+            const isBot =
+              p.id === client.user.id;
+            const isStaff =
+              p.id === process.env.STAFF_ROLE;
+            const canView =
+              p.allow.has(PermissionFlagsBits.ViewChannel);
+            return !isRole && !isBot && !isStaff && canView;
+          });
+        tipperId = ownerOverwrite?.id;
+      }
       if (!tipperId) {
         return interaction.reply({
-          content: "❌ 找不到這個臨時頻道對應的訂單客人，無法判斷打賞人。",
+          content:
+            "❌ 找不到這個臨時頻道的建立者，請重新開單後再填寫打賞。",
           flags: 64,
         });
       }
