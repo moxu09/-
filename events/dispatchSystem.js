@@ -278,7 +278,146 @@ async function playerStatus(interaction) {
       `📦 完成單數：${data.total_orders}`,
   });
 }
+function buildPreferredPlayerText(preferredPlayerIds) {
+  if (!preferredPlayerIds) return '不指定';
 
+  const ids =
+    String(preferredPlayerIds)
+      .split(',')
+      .map(id => id.trim())
+      .filter(Boolean);
+
+  if (!ids.length) return '不指定';
+
+  return ids.map(id => `<@${id}>`).join('、');
+}
+
+async function sendOrderToStaffChannel(order) {
+  const channel =
+    await client.channels.fetch(process.env.PLAYER_ORDER_CHANNEL);
+
+  const preferredText =
+    buildPreferredPlayerText(order.preferred_player);
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#00ff99')
+      .setTitle('📦 已建立新陪玩訂單')
+      .addFields(
+        {
+          name: '📌 訂單編號',
+          value: order.order_no || '未知',
+          inline: true
+        },
+        {
+          name: '👤 客人',
+          value: `<@${order.customer_id}>`,
+          inline: true
+        },
+        {
+          name: '🌟 指定陪陪',
+          value: preferredText,
+          inline: true
+        },
+        {
+          name: '🎮 服務項目',
+          value: order.service || '未填寫',
+          inline: false
+        },
+        {
+          name: '🕒 預約時間',
+          value: order.play_time || order.time || '未填寫',
+          inline: true
+        },
+        {
+          name: '💳 付款方式',
+          value: order.payment_method || '未填寫',
+          inline: true
+        },
+        {
+          name: '💰 商品金額',
+          value: `NT$${order.final_price || order.price || 0}`,
+          inline: true
+        },
+        {
+          name: '📝 備註需求',
+          value: order.note || '無',
+          inline: false
+        }
+      )
+      .setFooter({
+        text: '星雨派單系統'
+      })
+      .setTimestamp();
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`accept_play_order_${order.id}`)
+          .setLabel('接單')
+          .setStyle(ButtonStyle.Success)
+      );
+
+  await channel.send({
+    content: order.preferred_player
+      ? `🌟 指定陪陪派單：${preferredText}`
+      : '📢 開放接單',
+    embeds: [embed],
+    components: [row]
+  });
+}
+
+async function sendDispatchChoicePanel(interaction, order) {
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`dispatch_assign_players_${order.id}`)
+          .setLabel('指定陪陪派單')
+          .setEmoji('🌟')
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId(`dispatch_open_order_${order.id}`)
+          .setLabel('開放自己接單')
+          .setEmoji('📢')
+          .setStyle(ButtonStyle.Success)
+      );
+
+  await interaction.channel.send({
+    content:
+      `<@&${process.env.STAFF_ROLE}> 請選擇這張訂單要怎麼派單。`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('📌 訂單派單選擇')
+        .setDescription(
+          `訂單編號：${order.order_no || order.id}\n\n` +
+          `你可以指定一位或多位陪陪，也可以開放給所有可接單陪陪自己接。`
+        )
+        .addFields(
+          {
+            name: '👤 客人',
+            value: `<@${order.customer_id}>`,
+            inline: true
+          },
+          {
+            name: '🎮 服務項目',
+            value: order.service || '未填寫',
+            inline: false
+          },
+          {
+            name: '💰 金額',
+            value: `NT$${order.final_price || order.price || 0}`,
+            inline: true
+          }
+        )
+        .setTimestamp()
+    ],
+    components: [row]
+  });
+}
 // 建立陪玩訂單
 async function createPlayOrder(
   interaction,
@@ -321,71 +460,7 @@ async function createPlayOrder(
       content: '❌ 建立訂單失敗',
     });
   }
-
-  const channel = await client.channels.fetch(process.env.PLAYER_ORDER_CHANNEL);
-
-  const embed = new EmbedBuilder()
-    .setColor('#00ff99')
-    .setTitle('📦 已建立新陪玩訂單')
-    .setThumbnail(interaction.user.displayAvatarURL())
-    .addFields(
-      {
-        name: '📌 訂單編號',
-        value: orderNo,
-        inline: true
-      },
-      {
-        name: '👤 客人',
-        value: `<@${interaction.user.id}>`,
-        inline: true
-      },
-      {
-        name: '🌟 指定陪陪',
-        value: preferredPlayerId
-          ? `<@${preferredPlayerId}>`
-          : '不指定',
-        inline: true
-      },
-      {
-        name: '🎮 服務項目',
-        value: service,
-        inline: false
-      },
-      {
-        name: '🕒 預約時間',
-        value: time,
-        inline: true
-      },
-      {
-        name: '💳 付款方式',
-        value: paymentMethod,
-        inline: true
-      },
-      {
-        name: '💰 商品金額',
-        value:
-          `原價：NT$${price}\n` +
-          `VIP折扣：${discountText}\n` +
-          `實收：NT$${finalPrice}`,
-        inline: false
-      },
-      {
-        name: '📝 備註需求',
-        value: note || '無',
-        inline: false
-      }
-    )
-    .setFooter({
-      text: '星雨派單系統'
-    })
-    .setTimestamp();
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`accept_play_order_${order.id}`)
-      .setLabel('接單')
-      .setStyle(ButtonStyle.Success)
-  );
-  await channel.send({ embeds: [embed], components: [row] });
+  await sendDispatchChoicePanel(interaction, order);
   const priceEditRow =
     new ActionRowBuilder()
       .addComponents(
@@ -394,8 +469,8 @@ async function createPlayOrder(
           .setLabel('💰 更改金額')
           .setStyle(ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId(`change_preferred_player_${order.id}`)
-          .setLabel('🌟 更改指定陪陪')
+          .setCustomId(`dispatch_assign_players_${order.id}`)
+          .setLabel('🌟 指定陪陪派單')
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId(`save_order_note_${order.id}`)
@@ -796,6 +871,177 @@ async function handlePreferredPlayerSelect(interaction) {
       preferredPlayerId
         ? `✅ 已指定陪陪：<@${preferredPlayerId}>，訂單已送出`
         : '✅ 已選擇不指定陪陪，訂單已送出',
+    components: []
+  });
+}
+async function openDispatchPlayerMenu(interaction) {
+  const orderId =
+    interaction.customId.replace(
+      'dispatch_assign_players_',
+      ''
+    );
+
+  if (
+    !interaction.member.roles.cache.has(process.env.STAFF_ROLE) &&
+    !interaction.member.permissions.has(PermissionFlagsBits.Administrator)
+  ) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以派單'
+    });
+  }
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+  if (error || !order) {
+    return interaction.editReply({
+      content: '❌ 找不到這張訂單'
+    });
+  }
+
+  if (order.status !== 'pending') {
+    return interaction.editReply({
+      content: '❌ 這張訂單已經被接單，不能再派單'
+    });
+  }
+
+  const playerOptions =
+    await getAvailablePlayerOptions(order.service || '');
+
+  if (!playerOptions.length) {
+    return interaction.editReply({
+      content: '❌ 目前沒有可接單陪陪'
+    });
+  }
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`submit_dispatch_players_${order.id}`)
+      .setPlaceholder('可多選指定陪陪')
+      .setMinValues(1)
+      .setMaxValues(Math.min(playerOptions.length, 10))
+      .addOptions(playerOptions.slice(0, 25));
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  return interaction.editReply({
+    content: '🌟 請選擇要指定派單的陪陪，可多選：',
+    components: [row]
+  });
+}
+
+async function dispatchOpenOrder(interaction) {
+  const orderId =
+    interaction.customId.replace(
+      'dispatch_open_order_',
+      ''
+    );
+
+  if (
+    !interaction.member.roles.cache.has(process.env.STAFF_ROLE) &&
+    !interaction.member.permissions.has(PermissionFlagsBits.Administrator)
+  ) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以派單'
+    });
+  }
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+  if (error || !order) {
+    return interaction.editReply({
+      content: '❌ 找不到這張訂單'
+    });
+  }
+
+  if (order.status !== 'pending') {
+    return interaction.editReply({
+      content: '❌ 這張訂單已經被接單，不能再派單'
+    });
+  }
+
+  const { data: updatedOrder, error: updateError } =
+    await supabase
+      .from('play_orders')
+      .update({
+        preferred_player: null
+      })
+      .eq('id', order.id)
+      .select()
+      .single();
+
+  if (updateError) {
+    console.log('[開放派單失敗]', updateError);
+    return interaction.editReply({
+      content: '❌ 開放派單失敗'
+    });
+  }
+
+  await sendOrderToStaffChannel(updatedOrder);
+
+  return interaction.editReply({
+    content: '✅ 已開放給所有可接單陪陪接單',
+    components: []
+  });
+}
+
+async function submitDispatchPlayers(interaction) {
+  const orderId =
+    interaction.customId.replace(
+      'submit_dispatch_players_',
+      ''
+    );
+
+  if (
+    !interaction.member.roles.cache.has(process.env.STAFF_ROLE) &&
+    !interaction.member.permissions.has(PermissionFlagsBits.Administrator)
+  ) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以派單',
+      components: []
+    });
+  }
+
+  const selectedPlayerIds =
+    interaction.values;
+
+  const preferredPlayerValue =
+    selectedPlayerIds.join(',');
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .update({
+        preferred_player: preferredPlayerValue
+      })
+      .eq('id', orderId)
+      .select()
+      .single();
+
+  if (error || !order) {
+    console.log('[指定派單失敗]', error);
+    return interaction.editReply({
+      content: '❌ 指定派單失敗',
+      components: []
+    });
+  }
+
+  await sendOrderToStaffChannel(order);
+
+  return interaction.editReply({
+    content:
+      `✅ 已指定派單給：${selectedPlayerIds.map(id => `<@${id}>`).join('、')}`,
     components: []
   });
 }
@@ -1460,14 +1706,22 @@ async function acceptPlayOrder(interaction) {
       });
     }
     // ===== 指定陪陪限制 =====
-    if (
-      order.preferred_player &&
-      order.preferred_player !== interaction.user.id
-    ) {
-      return interaction.editReply({
-        content:
-          `❌ 這張訂單已指定給 <@${order.preferred_player}> 接單`
-      });
+    if (order.preferred_player) {
+      const preferredPlayers =
+        String(order.preferred_player)
+          .split(',')
+          .map(id => id.trim())
+          .filter(Boolean);
+      if (
+        preferredPlayers.length &&
+        !preferredPlayers.includes(interaction.user.id)
+      ) {
+        return interaction.editReply({
+          content:
+            `❌ 這張訂單只開放指定陪陪接單：` +
+            preferredPlayers.map(id => `<@${id}>`).join('、')
+        });
+      }
     }
     // ===== 服務限制 =====
     const allowedServices =
@@ -1907,6 +2161,14 @@ async function handleDispatchInteraction(interaction) {
       await openChangePreferredPlayerMenu(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('dispatch_assign_players_')) {
+      await openDispatchPlayerMenu(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('dispatch_open_order_')) {
+      await dispatchOpenOrder(interaction);
+      return true;
+    }
     if (interaction.customId === 'player_online') {
       await playerOnline(interaction);
       return true; 
@@ -1944,6 +2206,10 @@ async function handleDispatchInteraction(interaction) {
     }
   }
   if (interaction.isStringSelectMenu()) {
+    if (interaction.customId.startsWith('submit_dispatch_players_')) {
+      await submitDispatchPlayers(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('select_preferred_player_')) {
       await handlePreferredPlayerSelect(interaction);
       return true;
@@ -1972,5 +2238,10 @@ module.exports = {
   submitChangePreferredPlayer,
   openSaveOrderNoteModal,
   submitSaveOrderNote,
+  sendOrderToStaffChannel,
+  sendDispatchChoicePanel,
+  openDispatchPlayerMenu,
+  dispatchOpenOrder,
+  submitDispatchPlayers,
   handleSavedOrderEnd
 };

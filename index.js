@@ -710,13 +710,19 @@ async function performGacha(userId, guildId, amount, poolId = null) {
         ? 'coupon'
         : 'gacha';
 
-    insertItems.push({
-      user_id: userId,
-      item_name: selected.reward_name,
-      rarity: selected.rarity,
-      description: selected.reward_description,
-      item_type: itemType
-    });
+    const isCoinReward =
+      selected.reward_name.includes('星雨幣') ||
+      selected.reward_name.includes('金幣') ||
+      selected.reward_name.includes('幣');
+    if (!isCoinReward) {
+      insertItems.push({
+        user_id: userId,
+        item_name: selected.reward_name,
+        rarity: selected.rarity,
+        description: selected.reward_description,
+        item_type: itemType
+      });
+    }
 
     results.push({
       name: selected.reward_name,
