@@ -1300,7 +1300,21 @@ const commands = [
     .setDescription('抽十次扭蛋'),
 
   // ===== 金錢 =====
-
+  new SlashCommandBuilder()
+    .setName('發紅包')
+    .setDescription('發送星雨幣紅包')
+    .addIntegerOption(option =>
+      option
+        .setName('金額')
+        .setDescription('紅包總金額')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('數量')
+        .setDescription('可領取人數')
+        .setRequired(true)
+    ),
   new SlashCommandBuilder()
     .setName('發錢')
     .setDescription('給予玩家星雨幣')
@@ -1816,6 +1830,19 @@ async function handleSlashCommand(interaction) {
   if (interaction.commandName === 'ping') {
     return interaction.editReply('Pong!');
   }
+  if (interaction.commandName === '發紅包') {
+    const totalAmount =
+      interaction.options.getInteger('金額');
+
+    const totalCount =
+      interaction.options.getInteger('數量');
+
+    return await createRedPacket(
+      interaction,
+      totalAmount,
+      totalCount
+    );
+  }
   // 扭蛋列表
   if (interaction.commandName === '扭蛋列表') {
     const { data, error } = await supabase
@@ -2162,6 +2189,272 @@ async function handleSlashCommand(interaction) {
           });
         }
 }
+async function createRedPacket(interaction, totalAmount, totalCount) {
+  if (!Number.isInteger(totalAmount) || totalAmount <= 0) {
+    return interaction.editReply({
+      content: '❌ 紅包金額必須大於 0'
+    });
+  }
+
+  if (!Number.isInteger(totalCount) || totalCount <= 0) {
+    return interaction.editReply({
+      content: '❌ 紅包數量必須大於 0'
+    });
+  }
+
+  if (totalCount > 50) {
+    return interaction.editReply({
+      content: '❌ 一包紅包最多 50 人領取'
+    });
+  }
+
+  if (totalAmount < totalCount) {
+    return interaction.editReply({
+      content: '❌ 紅包金額不能小於數量，至少每人 1 星雨幣'
+    });
+  }
+
+  const senderData = await getUser(interaction.user.id);
+
+  if ((senderData.coins || 0) < totalAmount) {
+    return interaction.editReply({
+      content: '❌ 你的星雨幣不足，無法發紅包'
+    });
+  }
+
+  const finalCoins = (senderData.coins || 0) - totalAmount;
+
+  await updateCoins(interaction.user.id, finalCoins);
+
+  await sendWalletLog(
+    interaction.user.id,
+    '發紅包',
+    -totalAmount,
+    finalCoins,
+    `🧧 發出紅包，共 ${totalAmount} 星雨幣 / ${totalCount} 份`
+  );
+
+  const packetNo = `RP-${Date.now()}`;
+
+  const { data: packet, error } =
+    await supabase
+      .from('red_packets')
+      .insert({
+        packet_no: packetNo,
+        sender_id: interaction.user.id,
+        total_amount: totalAmount,
+        remaining_amount: totalAmount,
+        total_count: totalCount,
+        remaining_count: totalCount,
+        status: 'active',
+        channel_id: interaction.channel.id
+      })
+      .select()
+      .single();
+
+  if (error || !packet) {
+    console.error('[紅包建立失敗]', error);
+
+    await updateCoins(interaction.user.id, senderData.coins || 0);
+
+    return interaction.editReply({
+      content: '❌ 紅包建立失敗，已退回星雨幣'
+    });
+  }
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#ff4d4d')
+      .setTitle('🧧 星雨紅包')
+      .setDescription(
+        `<@${interaction.user.id}> 發了一包紅包！\n\n` +
+        `💰 總金額：${totalAmount} 星雨幣\n` +
+        `👥 數量：${totalCount} 份\n\n` +
+        `快點下方按鈕搶紅包！`
+      )
+      .setFooter({
+        text: `紅包編號：${packetNo}`
+      })
+      .setTimestamp();
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`claim_red_packet_${packet.id}`)
+          .setLabel('搶紅包')
+          .setEmoji('🧧')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  const msg =
+    await interaction.channel.send({
+      embeds: [embed],
+      components: [row]
+    });
+
+  await supabase
+    .from('red_packets')
+    .update({
+      message_id: msg.id
+    })
+    .eq('id', packet.id);
+
+  return interaction.editReply({
+    content: `✅ 已發出紅包：${totalAmount} 星雨幣 / ${totalCount} 份`
+  });
+}
+
+async function claimRedPacket(interaction) {
+  const packetId =
+    interaction.customId.replace(
+      'claim_red_packet_',
+      ''
+    );
+
+  const { data: packet, error: packetError } =
+    await supabase
+      .from('red_packets')
+      .select('*')
+      .eq('id', packetId)
+      .single();
+
+  if (packetError || !packet) {
+    return interaction.editReply({
+      content: '❌ 找不到這包紅包'
+    });
+  }
+
+  if (packet.status !== 'active') {
+    return interaction.editReply({
+      content: '❌ 這包紅包已經結束'
+    });
+  }
+
+  if (packet.remaining_count <= 0 || packet.remaining_amount <= 0) {
+    return interaction.editReply({
+      content: '❌ 紅包已經被搶完了'
+    });
+  }
+
+  const { data: oldClaim } =
+    await supabase
+      .from('red_packet_claims')
+      .select('*')
+      .eq('packet_id', packet.id)
+      .eq('user_id', interaction.user.id)
+      .maybeSingle();
+
+  if (oldClaim) {
+    return interaction.editReply({
+      content: `❌ 你已經搶過了，獲得 ${oldClaim.amount} 星雨幣`
+    });
+  }
+
+  let claimAmount = 1;
+
+  if (packet.remaining_count === 1) {
+    claimAmount = packet.remaining_amount;
+  } else {
+    const max =
+      packet.remaining_amount - packet.remaining_count + 1;
+
+    claimAmount =
+      Math.max(
+        1,
+        Math.floor(Math.random() * max) + 1
+      );
+  }
+
+  const newRemainingAmount =
+    packet.remaining_amount - claimAmount;
+
+  const newRemainingCount =
+    packet.remaining_count - 1;
+
+  const newStatus =
+    newRemainingCount <= 0 ||
+    newRemainingAmount <= 0
+      ? 'finished'
+      : 'active';
+
+  const { error: claimError } =
+    await supabase
+      .from('red_packet_claims')
+      .insert({
+        packet_id: packet.id,
+        user_id: interaction.user.id,
+        amount: claimAmount
+      });
+
+  if (claimError) {
+    if (claimError.code === '23505') {
+      return interaction.editReply({
+        content: '❌ 你已經搶過這包紅包了'
+      });
+    }
+
+    console.error('[紅包領取失敗]', claimError);
+    return interaction.editReply({
+      content: '❌ 搶紅包失敗'
+    });
+  }
+
+  const userData = await getUser(interaction.user.id);
+  const finalCoins = (userData.coins || 0) + claimAmount;
+
+  await updateCoins(interaction.user.id, finalCoins);
+
+  await sendWalletLog(
+    interaction.user.id,
+    '搶紅包',
+    claimAmount,
+    finalCoins,
+    `🧧 搶到 <@${packet.sender_id}> 的紅包`
+  );
+
+  await supabase
+    .from('red_packets')
+    .update({
+      remaining_amount: newRemainingAmount,
+      remaining_count: newRemainingCount,
+      status: newStatus
+    })
+    .eq('id', packet.id);
+
+  if (newStatus === 'finished') {
+    const finishedEmbed =
+      EmbedBuilder.from(interaction.message.embeds[0])
+        .setColor('#999999')
+        .setTitle('🧧 星雨紅包｜已搶完')
+        .addFields({
+          name: '狀態',
+          value: '紅包已被搶完',
+          inline: false
+        });
+
+    const disabledRow =
+      new ActionRowBuilder()
+        .addComponents(
+          ButtonBuilder.from(
+            interaction.message.components[0].components[0]
+          )
+            .setDisabled(true)
+            .setLabel('已搶完')
+        );
+
+    await interaction.message.edit({
+      embeds: [finishedEmbed],
+      components: [disabledRow]
+    }).catch(() => {});
+  }
+
+  return interaction.editReply({
+    content:
+      `🧧 恭喜你搶到 ${claimAmount} 星雨幣！\n` +
+      `剩餘：${newRemainingCount} 份`
+  });
+}
 async function createPrivateRoom(interaction) {
   const safeName =
     interaction.user.username
@@ -2248,6 +2541,10 @@ async function handleButtonInteraction(interaction) {
   const customId = interaction.customId;
 
   try {
+    // ===== 搶紅包 =====
+    if (customId.startsWith('claim_red_packet_')) {
+      return await claimRedPacket(interaction);
+    }
     // ===== 每日簽到 =====
     if (customId === 'daily_checkin') {
       const today = getTodayDateString();
