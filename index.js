@@ -713,7 +713,9 @@ async function performGacha(userId, guildId, amount, poolId = null) {
     const isCoinReward =
       selected.reward_name.includes('星雨幣') ||
       selected.reward_name.includes('金幣') ||
-      selected.reward_name.includes('幣');
+      selected.reward_name.includes('幣') ||
+      String(selected.reward_description || '').includes('星雨幣');
+
     if (!isCoinReward) {
       insertItems.push({
         user_id: userId,
@@ -2185,9 +2187,22 @@ async function handleSlashCommand(interaction) {
         }
         // 我的商品
         if (interaction.commandName === '我的商品') {
-          const items = await getUserItems(
-          interaction.user.id
+          const rawItems = await getUserItems(
+            interaction.user.id
           );
+          const items = rawItems.filter(item => {
+            const name =
+              String(item.item_name || '');
+            const desc =
+              String(item.description || '');
+            return !(
+              name.includes('星雨幣') ||
+              name.includes('金幣') ||
+              name.includes('幣') ||
+              desc.includes('星雨幣') ||
+              desc.includes('金幣')
+            );
+          });
           if (!items.length) {
             return interaction.editReply({
               content: '📦 你目前沒有商品',
