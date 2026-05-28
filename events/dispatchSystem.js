@@ -2562,7 +2562,10 @@ async function handleDispatchInteraction(interaction) {
       await submitDispatchPlayers(interaction);
       return true;
     }
-    if (interaction.customId.startsWith('select_preferred_player_')) {
+    if (
+      interaction.customId.startsWith('select_preferred_player_') ||
+      interaction.customId.startsWith('select_reserve_player_')
+    ) {
       await handlePreferredPlayerSelect(interaction);
       return true;
     }
