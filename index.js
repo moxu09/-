@@ -1619,6 +1619,9 @@ async function getStaffOptionsFromRole(guild) {
     value: member.id,
   }));
 }
+function isNoCardPayment(text = '') {
+  return text.includes('無卡');
+}
 function isBankTransfer(text = '') {
   return (
     text.includes('匯款') ||
@@ -3143,7 +3146,9 @@ async function handleButtonInteraction(interaction) {
         embeds: [embed],
         components
       });
-      if (isBankTransfer(paymentMethod)) {
+      if (isNoCardPayment(method)) {
+        await sendNoCardPaymentInfo(interaction.channel);
+      } else if (isBankTransfer(method)) {
         await sendBankTransferInfo(interaction.channel);
       }
       pendingTips.delete(tipConfirmId);

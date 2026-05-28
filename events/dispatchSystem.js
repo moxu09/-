@@ -19,6 +19,12 @@ function setup(supabaseInstance, clientInstance) {
   supabase = supabaseInstance;
   client = clientInstance;
 }
+function isNoCardPayment(text = '') {
+  return (
+    text.includes('無卡') ||
+    text.includes('無卡存款')
+  );
+}
 function isBankTransfer(text = '') {
   return (
     text.includes('匯款') ||
@@ -41,6 +47,32 @@ async function sendBankTransferInfo(channel) {
     )
     .setFooter({
       text: '請確認金額正確後再匯款'
+    })
+    .setTimestamp();
+
+  await channel.send({
+    embeds: [embed]
+  });
+}
+async function sendNoCardPaymentInfo(channel) {
+  const embed = new EmbedBuilder()
+    .setColor('#ffd166')
+    .setTitle('🏧 無卡付款資訊')
+    .setDescription(
+      `請依照以下資訊完成無卡付款：\n\n` +
+      `銀行：中國信託\n` +
+      `銀行代碼：822\n` +
+      `帳號：901565426642\n` +
+      `戶名：許O星\n\n` +
+      `或是\n\n`
+      `銀行：國泰世華\n` +
+      `銀行代碼：013\n` +
+      `帳號：134500100962\n` +
+      `戶名：許O星\n\n` +
+      `付款完成後，請在此頻道上傳付款截圖，等待客服確認。`
+    )
+    .setFooter({
+      text: '請確認金額正確後再付款'
     })
     .setTimestamp();
 
@@ -721,7 +753,9 @@ const embed =
     embeds: [embed],
     components: [priceEditRow]
   });
-  if (isBankTransfer(paymentMethod)) {
+  if (isNoCardPayment(paymentMethod)) {
+    await sendNoCardPaymentInfo(interaction.channel);
+  } else if (isBankTransfer(paymentMethod)) {
     await sendBankTransferInfo(interaction.channel);
   }
   // ===== 派單紀錄 =====
@@ -1746,7 +1780,9 @@ async function submitTopupForm(interaction) {
     embeds: [embed],
     components: [row]
   });
-  if (isBankTransfer(method)) {
+  if (isNoCardPayment(method)) {
+    await sendNoCardPaymentInfo(interaction.channel);
+  } else if (isBankTransfer(method)) {
     await sendBankTransferInfo(interaction.channel);
   }
   await interaction.editReply({
