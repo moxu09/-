@@ -992,32 +992,59 @@ async function submitPlayOrderForm(interaction) {
     pendingPlayOrders.delete(selectId);
   }, 10 * 60 * 1000);
 
-  const options =
-    await getCustomerPreferredPlayerOptions(service);
-
-  const menu =
+  const onlineOptions =
+    await getAvailablePlayerOptions(service);
+  const offlineOptions =
+    await getOfflinePlayerOptions(service);
+  const onlineMenu =
     new StringSelectMenuBuilder()
       .setCustomId(`select_preferred_player_${selectId}`)
-      .setPlaceholder('請選擇指定陪陪，或選擇不指定')
-      .addOptions(options);
-
-  const row =
-    new ActionRowBuilder()
-      .addComponents(menu);
-
+      .setPlaceholder('選擇不指定，或指定目前上線陪陪')
+      .addOptions([
+        {
+          label: '不指定陪陪',
+          description: '讓可接單陪陪自由接單',
+          value: 'no_preference'
+        },
+        ...onlineOptions.slice(0, 24).map(option => ({
+          label: `🟢 ${option.label}`.slice(0, 100),
+          description: '目前上線，可直接指定',
+          value: `online_${option.value}`
+        }))
+      ]);
+  const rows = [
+    new ActionRowBuilder().addComponents(onlineMenu)
+  ];
+  if (offlineOptions.length > 0) {
+    const reserveMenu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`select_reserve_player_${selectId}`)
+        .setPlaceholder('預約未上線陪陪')
+        .addOptions(
+          offlineOptions.slice(0, 25).map(option => ({
+            label: `⚪ ${option.label}`.slice(0, 100),
+            description: '目前未上線，可依需求時間預約',
+            value: `reserve_${option.value}`
+          }))
+        );
+    rows.push(
+      new ActionRowBuilder().addComponents(reserveMenu)
+    );
+  }
   return interaction.editReply({
     content:
       '✅ 需求已填寫完成\n\n' +
-      '請選擇是否指定陪陪：',
-    components: [row]
+      '請選擇陪陪：\n' +
+      '🟢 上線陪陪可直接指定\n' +
+      '⚪ 未上線陪陪會使用你剛剛填的預約時間',
+    components: rows
   });
 }
 async function handlePreferredPlayerSelect(interaction) {
   const selectId =
-    interaction.customId.replace(
-      'select_preferred_player_',
-      ''
-    );
+    interaction.customId.startsWith('select_reserve_player_')
+      ? interaction.customId.replace('select_reserve_player_', '')
+      : interaction.customId.replace('select_preferred_player_', '');
 
   const pending =
     pendingPlayOrders.get(selectId);
@@ -1094,31 +1121,33 @@ async function handlePreferredPlayerSelect(interaction) {
     });
   }
 
-  // ===== 預約未上線陪陪：跳出時間視窗 =====
+  // ===== 預約未上線陪陪：直接用需求單的預約時間 =====
   if (selectedValue.startsWith('reserve_')) {
+    await interaction.deferReply({
+      flags: 64
+    });
     const playerId =
       selectedValue.replace('reserve_', '');
-
-    const modal =
-      new ModalBuilder()
-        .setCustomId(`submit_customer_reserve_time_${selectId}_${playerId}`)
-        .setTitle('填寫預約時間');
-
-    const timeInput =
-      new TextInputBuilder()
-        .setCustomId('reserved_time')
-        .setLabel('想預約的時間')
-        .setPlaceholder('例如：今天 22:00、明天晚上、5/30 晚上 8 點')
-        .setStyle(TextInputStyle.Short)
-        .setRequired(true);
-
-    modal.addComponents(
-      new ActionRowBuilder().addComponents(timeInput)
+    pendingPlayOrders.delete(selectId);
+    await createPlayOrder(
+      interaction,
+      pending.service,
+      pending.time,
+      pending.price,
+      pending.note,
+      pending.paymentMethod,
+      playerId,
+      pending.time,
+      'reserve'
     );
-
-    return interaction.showModal(modal);
+    return interaction.editReply({
+      content:
+        `✅ 已預約陪陪：<@${playerId}>\n` +
+        `🕒 預約時間：${pending.time}\n` +
+        `訂單已送出`,
+      components: []
+    });
   }
-
   return interaction.reply({
     content: '❌ 選擇格式錯誤，請重新填寫',
     flags: 64

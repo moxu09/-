@@ -1838,7 +1838,10 @@ client.on(Events.InteractionCreate, async interaction => {
         return interaction.showModal(modal);
       }
       // ===== 客人下單選陪陪：可能會開預約時間 Modal，不能先 defer =====
-      if (interaction.customId.startsWith('select_preferred_player_')) {
+      if (
+        interaction.customId.startsWith('select_preferred_player_') ||
+        interaction.customId.startsWith('select_reserve_player_')
+      ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
       // ===== 更改指定陪陪 =====
