@@ -48,6 +48,39 @@ async function sendBankTransferInfo(channel) {
     embeds: [embed]
   });
 }
+function formatAvailableTime(player) {
+  const time = player.available_time || {};
+
+  if (!time || Object.keys(time).length === 0) {
+    return '未填寫可接時間';
+  }
+
+  if (time.mode === 'daily') {
+    return `每天 ${time.daily || '未填寫'}`;
+  }
+
+  if (time.mode === 'weekday_holiday') {
+    return `平日 ${time.weekday || '未填寫'}｜假日 ${time.holiday || '未填寫'}`;
+  }
+
+  if (time.mode === 'weekly') {
+    const parts = [
+      ['一', time.monday],
+      ['二', time.tuesday],
+      ['三', time.wednesday],
+      ['四', time.thursday],
+      ['五', time.friday],
+      ['六', time.saturday],
+      ['日', time.sunday],
+    ]
+      .filter(([, value]) => value)
+      .map(([day, value]) => `週${day} ${value}`);
+
+    return parts.length ? parts.join('｜') : '未填寫可接時間';
+  }
+
+  return '未填寫可接時間';
+}
 async function getAvailablePlayerOptions(service) {
   const { data: players, error } =
     await supabase
@@ -79,7 +112,7 @@ async function getAvailablePlayerOptions(service) {
     .slice(0, 24)
     .map(player => ({
       label: String(player.name || player.discord_id).slice(0, 100),
-      description: '目前可接單',
+      description: formatAvailableTime(player).slice(0, 100),
       value: player.discord_id
     }));
 }
@@ -114,7 +147,7 @@ async function getOfflinePlayerOptions(service) {
     .slice(0, 24)
     .map(player => ({
       label: String(player.name || player.discord_id).slice(0, 90),
-      description: '⚪ 未上線，可預約時間',
+      description: formatAvailableTime(player).slice(0, 100),
       value: player.discord_id
     }));
 }
@@ -134,13 +167,13 @@ async function getCustomerPreferredPlayerOptions(service) {
 
     ...onlineOptions.map(option => ({
       label: `🟢 ${option.label}`.slice(0, 100),
-      description: '目前上線，可直接指定',
+      description: String(option.description || '未填寫可接時間').slice(0, 100),
       value: `online_${option.value}`
     })),
 
     ...offlineOptions.map(option => ({
       label: `⚪ ${option.label}`.slice(0, 100),
-      description: '目前未上線，可預約時間',
+      description: String(option.description || '未填寫可接時間').slice(0, 100),
       value: `reserve_${option.value}`
     }))
   ];
@@ -590,7 +623,13 @@ async function createPlayOrder(
       content: '❌ 建立訂單失敗',
     });
   }
-  await sendDispatchChoicePanel(interaction, order);
+  // ===== 有指定陪陪就直接發到員工接單區 =====
+  // 不管是上線指定，還是預約未上線指定，都直接送出
+  if (preferredPlayerId) {
+  await sendOrderToStaffChannel(order);
+  } else {
+    await sendDispatchChoicePanel(interaction, order);
+  }
   const preferredText =
   preferredPlayerId
     ? `<@${preferredPlayerId}>`
@@ -1008,7 +1047,7 @@ async function submitPlayOrderForm(interaction) {
         },
         ...onlineOptions.slice(0, 24).map(option => ({
           label: `🟢 ${option.label}`.slice(0, 100),
-          description: '目前上線，可直接指定',
+          description: String(option.description || '未填寫可接時間').slice(0, 100),
           value: `online_${option.value}`
         }))
       ]);
@@ -1023,7 +1062,7 @@ async function submitPlayOrderForm(interaction) {
         .addOptions(
           offlineOptions.slice(0, 25).map(option => ({
             label: `⚪ ${option.label}`.slice(0, 100),
-            description: '目前未上線，可依需求時間預約',
+            description: String(option.description || '未填寫可接時間').slice(0, 100),
             value: `reserve_${option.value}`
           }))
         );
