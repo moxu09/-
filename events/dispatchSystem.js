@@ -83,7 +83,70 @@ async function getAvailablePlayerOptions(service) {
       value: player.discord_id
     }));
 }
+async function getOfflinePlayerOptions(service) {
+  const { data: players, error } =
+    await supabase
+      .from('players')
+      .select('*')
+      .neq('status', 'available');
 
+  if (error) {
+    console.error('[預約陪陪] 讀取未上線陪陪失敗', error);
+    return [];
+  }
+
+  return (players || [])
+    .filter(player => {
+      const allowedServices =
+        Array.isArray(player.allowed_services)
+          ? player.allowed_services
+          : String(player.allowed_services || '')
+              .split(',')
+              .map(s => s.trim())
+              .filter(Boolean);
+
+      if (!allowedServices.length) return true;
+
+      return allowedServices.some(s =>
+        String(service || '').includes(s)
+      );
+    })
+    .slice(0, 24)
+    .map(player => ({
+      label: String(player.name || player.discord_id).slice(0, 90),
+      description: '⚪ 未上線，可預約時間',
+      value: player.discord_id
+    }));
+}
+async function getCustomerPreferredPlayerOptions(service) {
+  const onlineOptions =
+    await getAvailablePlayerOptions(service);
+
+  const offlineOptions =
+    await getOfflinePlayerOptions(service);
+
+  const options = [
+    {
+      label: '不指定陪陪',
+      description: '讓可接單陪陪自由接單',
+      value: 'no_preference'
+    },
+
+    ...onlineOptions.map(option => ({
+      label: `🟢 ${option.label}`.slice(0, 100),
+      description: '目前上線，可直接指定',
+      value: `online_${option.value}`
+    })),
+
+    ...offlineOptions.map(option => ({
+      label: `⚪ ${option.label}`.slice(0, 100),
+      description: '目前未上線，可預約時間',
+      value: `reserve_${option.value}`
+    }))
+  ];
+
+  return options.slice(0, 25);
+}
 // ===== 更改訂單金額權限 =====
 function canEditOrderPrice(interaction) {
   const roleId =
@@ -181,83 +244,139 @@ async function playerOnline(interaction) {
 
 // 陪玩下班
 async function playerOffline(interaction) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
+  await supabase
+    .from('players')
+    .update({
+      status: 'offline'
+    })
+    .eq('discord_id', interaction.user.id);
 
-  const { data: player } =
+  await interaction.editReply({
+    content: '🔴 你已停止接單'
+  });
+}
+function getTodayRangeTW() {
+  const now = new Date();
+
+  const taiwanNow =
+    new Date(now.getTime() + 8 * 60 * 60 * 1000);
+
+  const dateText =
+    taiwanNow.toISOString().slice(0, 10);
+
+  const start =
+    new Date(`${dateText}T00:00:00+08:00`);
+
+  const end =
+    new Date(`${dateText}T23:59:59+08:00`);
+
+  return {
+    dateText,
+    start: start.toISOString(),
+    end: end.toISOString()
+  };
+}
+
+async function sendDailyPlayerSummary() {
+  const {
+    dateText,
+    start,
+    end
+  } = getTodayRangeTW();
+
+  const { data: players, error: playerError } =
     await supabase
       .from('players')
-      .select('*')
-      .eq('discord_id', interaction.user.id)
-      .single();
+      .select('*');
 
-  const { data: orders } =
+  if (playerError) {
+    console.log('[每日陪玩總結] 讀取陪玩失敗', playerError);
+    return;
+  }
+
+  if (!players?.length) {
+    return;
+  }
+
+  const { data: orders, error: orderError } =
     await supabase
       .from('play_orders')
       .select('*')
-      .eq('assigned_player', interaction.user.id)
       .eq('status', 'completed')
-      .gte('completed_at', today.toISOString());
+      .gte('completed_at', start)
+      .lte('completed_at', end);
 
-  await supabase
-    .from('players')
-    .update({ status: 'offline' })
-    .eq('discord_id', interaction.user.id);
+  if (orderError) {
+    console.log('[每日陪玩總結] 讀取訂單失敗', orderError);
+    return;
+  }
 
-  const totalOrders = orders?.length || 0;
+  for (const player of players) {
+    const playerOrders =
+      (orders || []).filter(order => {
+        const assignedPlayers =
+          String(order.assigned_player || '')
+            .split(',')
+            .map(id => id.trim())
+            .filter(Boolean);
 
-  const totalPrice =
-    orders?.reduce(
-      (sum, order) => sum + (order.price || 0),
-      0
-    ) || 0;
-
-  const orderList = orders?.length
-    ? orders
-        .map((order, index) => {
-          return (
-            `${index + 1}. ${order.service}\n` +
-            `訂單編號：${order.order_no}\n` +
-            `商品金額（折前）：NT$${order.price}`+
-            `內容：${order.note || '無'}`
-          );
-        })
-        .join('\n\n')
-    : '今日尚無完成訂單';
-
-  const reportEmbed =
-    new EmbedBuilder()
-      .setColor('#ff4444')
-      .setTitle('📊 陪玩下班統計')
-      .setDescription(
-        `陪玩：<@${interaction.user.id}>\n\n` +
-        `完成訂單：${totalOrders}\n` +
-        `總金額：NT$${totalPrice}\n\n` +
-        `━━━━━━━━━━\n\n` +
-        `${orderList}`
-      )
-      .setTimestamp();
-
-  if (player?.report_channel_id) {
-    const reportChannel =
-      await client.channels
-        .fetch(player.report_channel_id)
-        .catch(() => null);
-
-    if (reportChannel) {
-      await reportChannel.send({
-        embeds: [reportEmbed]
+        return assignedPlayers.includes(player.discord_id);
       });
+
+    const totalOrders =
+      playerOrders.length;
+
+    const totalPrice =
+      playerOrders.reduce(
+        (sum, order) =>
+          sum + Number(order.final_price || order.price || 0),
+        0
+      );
+
+    const orderList =
+      playerOrders.length
+        ? playerOrders
+            .map((order, index) => {
+              return (
+                `${index + 1}. ${order.service || '未填寫'}\n` +
+                `訂單編號：${order.order_no || order.id}\n` +
+                `金額：NT$${order.final_price || order.price || 0}\n` +
+                `內容：${order.note || '無'}`
+              );
+            })
+            .join('\n\n')
+        : '今日尚無完成訂單';
+
+    const embed =
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('📊 陪玩每日總結')
+        .setDescription(
+          `日期：${dateText}\n` +
+          `陪玩：<@${player.discord_id}>\n\n` +
+          `完成訂單：${totalOrders}\n` +
+          `總金額：NT$${totalPrice}\n\n` +
+          `━━━━━━━━━━\n\n` +
+          `${orderList}`
+        )
+        .setTimestamp();
+
+    if (player.report_channel_id) {
+      const reportChannel =
+        await client.channels
+          .fetch(player.report_channel_id)
+          .catch(() => null);
+
+      if (reportChannel) {
+        await reportChannel.send({
+          embeds: [embed]
+        });
+      }
     }
   }
 
-  await interaction.editReply({
-    content:
-      `🔴 你已停止接單\n\n` +
-      `📊 今日統計已送出`
-  });
+  console.log(`[每日陪玩總結] 已送出 ${dateText}`);
 }
-
 // 查看狀態
 async function playerStatus(interaction) {
   const { data } = await supabase
@@ -326,7 +445,7 @@ async function sendOrderToStaffChannel(order) {
         },
         {
           name: '🕒 預約時間',
-          value: order.play_time || order.time || '未填寫',
+          value: order.reserved_time || order.play_time || order.time || '未填寫',
           inline: true
         },
         {
@@ -360,9 +479,12 @@ async function sendOrderToStaffChannel(order) {
       );
 
   await channel.send({
-    content: order.preferred_player
-      ? `🌟 指定陪陪派單：${preferredText}`
-      : '📢 開放接單',
+    content:
+      order.dispatch_type === 'reserve'
+        ? `🕒 預約派單：<@${order.reserved_player}>｜時間：${order.reserved_time}`
+        : order.preferred_player
+          ? `🌟 指定陪陪派單：${preferredText}`
+          : '📢 開放接單',
     embeds: [embed],
     components: [row]
   });
@@ -426,7 +548,9 @@ async function createPlayOrder(
   price,
   note = '無',
   paymentMethod = '未填寫',
-  preferredPlayerId = null
+  preferredPlayerId = null,
+  reservedTime = null,
+  dispatchType = null
 ) {
   const orderNo = `DF-${Date.now()}`;
   const discountRate = 1;
@@ -447,6 +571,12 @@ async function createPlayOrder(
       discount_rate: discountRate,
       payment_method: paymentMethod,
       preferred_player: preferredPlayerId,
+      reserved_player:
+        dispatchType === 'reserve'
+          ? preferredPlayerId
+          : null,
+      reserved_time: reservedTime,
+      dispatch_type: dispatchType,
       paid: false,
       note,
       status: 'pending'
@@ -461,6 +591,75 @@ async function createPlayOrder(
     });
   }
   await sendDispatchChoicePanel(interaction, order);
+  const preferredText =
+  preferredPlayerId
+    ? `<@${preferredPlayerId}>`
+    : '不指定';
+
+const orderTypeText =
+  dispatchType === 'reserve'
+    ? '預約未上線陪陪'
+    : preferredPlayerId
+      ? '指定陪陪'
+      : '不指定陪陪';
+
+const embed =
+  new EmbedBuilder()
+    .setColor('#00ff99')
+    .setTitle('📋 陪玩訂單內容')
+    .addFields(
+      {
+        name: '📌 訂單編號',
+        value: order.order_no || orderNo,
+        inline: true
+      },
+      {
+        name: '👤 客人',
+        value: `<@${interaction.user.id}>`,
+        inline: true
+      },
+      {
+        name: '🎮 服務項目',
+        value: service || '未填寫',
+        inline: false
+      },
+      {
+        name: '🕒 需求時間',
+        value: time || '未填寫',
+        inline: true
+      },
+      {
+        name: '📌 指定方式',
+        value: orderTypeText,
+        inline: true
+      },
+      {
+        name: '🌟 陪陪',
+        value: preferredText,
+        inline: true
+      },
+      {
+        name: '🕒 預約時間',
+        value: reservedTime || '無',
+        inline: true
+      },
+      {
+        name: '💰 商品金額',
+        value: `NT$${finalPrice}`,
+        inline: true
+      },
+      {
+        name: '💳 付款方式',
+        value: paymentMethod || '未填寫',
+        inline: true
+      },
+      {
+        name: '📝 備註需求',
+        value: note || '無',
+        inline: false
+      }
+    )
+    .setTimestamp();
   const priceEditRow =
     new ActionRowBuilder()
       .addComponents(
@@ -793,17 +992,8 @@ async function submitPlayOrderForm(interaction) {
     pendingPlayOrders.delete(selectId);
   }, 10 * 60 * 1000);
 
-  const playerOptions =
-    await getAvailablePlayerOptions(service);
-
-  const options = [
-    {
-      label: '不指定陪陪',
-      description: '讓所有可接單陪陪自由接單',
-      value: 'none'
-    },
-    ...playerOptions
-  ];
+  const options =
+    await getCustomerPreferredPlayerOptions(service);
 
   const menu =
     new StringSelectMenuBuilder()
@@ -833,26 +1023,144 @@ async function handlePreferredPlayerSelect(interaction) {
     pendingPlayOrders.get(selectId);
 
   if (!pending) {
-    return interaction.editReply({
+    return interaction.reply({
       content: '❌ 這筆需求已過期，請重新填寫',
-      components: []
+      flags: 64
     });
   }
 
   if (interaction.user.id !== pending.userId) {
-    return interaction.editReply({
+    return interaction.reply({
       content: '❌ 只有填寫需求的人可以選擇陪陪',
-      components: []
+      flags: 64
     });
   }
 
   const selectedValue =
     interaction.values[0];
 
-  const preferredPlayerId =
-    selectedValue === 'none'
-      ? null
-      : selectedValue;
+  // ===== 不指定陪陪 =====
+  if (selectedValue === 'no_preference') {
+    await interaction.deferReply({
+      flags: 64
+    });
+
+    pendingPlayOrders.delete(selectId);
+
+    await createPlayOrder(
+      interaction,
+      pending.service,
+      pending.time,
+      pending.price,
+      pending.note,
+      pending.paymentMethod,
+      null,
+      null,
+      'open'
+    );
+
+    return interaction.editReply({
+      content: '✅ 已選擇不指定陪陪，訂單已送出',
+      components: []
+    });
+  }
+
+  // ===== 指定目前上線陪陪 =====
+  if (selectedValue.startsWith('online_')) {
+    await interaction.deferReply({
+      flags: 64
+    });
+
+    const playerId =
+      selectedValue.replace('online_', '');
+
+    pendingPlayOrders.delete(selectId);
+
+    await createPlayOrder(
+      interaction,
+      pending.service,
+      pending.time,
+      pending.price,
+      pending.note,
+      pending.paymentMethod,
+      playerId,
+      null,
+      'assign'
+    );
+
+    return interaction.editReply({
+      content: `✅ 已指定陪陪：<@${playerId}>，訂單已送出`,
+      components: []
+    });
+  }
+
+  // ===== 預約未上線陪陪：跳出時間視窗 =====
+  if (selectedValue.startsWith('reserve_')) {
+    const playerId =
+      selectedValue.replace('reserve_', '');
+
+    const modal =
+      new ModalBuilder()
+        .setCustomId(`submit_customer_reserve_time_${selectId}_${playerId}`)
+        .setTitle('填寫預約時間');
+
+    const timeInput =
+      new TextInputBuilder()
+        .setCustomId('reserved_time')
+        .setLabel('想預約的時間')
+        .setPlaceholder('例如：今天 22:00、明天晚上、5/30 晚上 8 點')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(timeInput)
+    );
+
+    return interaction.showModal(modal);
+  }
+
+  return interaction.reply({
+    content: '❌ 選擇格式錯誤，請重新填寫',
+    flags: 64
+  });
+}
+async function submitCustomerReserveTime(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const raw =
+    interaction.customId.replace(
+      'submit_customer_reserve_time_',
+      ''
+    );
+
+  const parts =
+    raw.split('_');
+
+  const selectId =
+    `${parts[0]}_${parts[1]}`;
+
+  const playerId =
+    parts.slice(2).join('_');
+
+  const pending =
+    pendingPlayOrders.get(selectId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆需求已過期，請重新填寫'
+    });
+  }
+
+  if (interaction.user.id !== pending.userId) {
+    return interaction.editReply({
+      content: '❌ 只有填寫需求的人可以預約陪陪'
+    });
+  }
+
+  const reservedTime =
+    interaction.fields.getTextInputValue('reserved_time');
 
   pendingPlayOrders.delete(selectId);
 
@@ -863,14 +1171,16 @@ async function handlePreferredPlayerSelect(interaction) {
     pending.price,
     pending.note,
     pending.paymentMethod,
-    preferredPlayerId
+    playerId,
+    reservedTime,
+    'reserve'
   );
 
   return interaction.editReply({
     content:
-      preferredPlayerId
-        ? `✅ 已指定陪陪：<@${preferredPlayerId}>，訂單已送出`
-        : '✅ 已選擇不指定陪陪，訂單已送出',
+      `✅ 已預約陪陪：<@${playerId}>\n` +
+      `🕒 預約時間：${reservedTime}\n` +
+      `訂單已送出`,
     components: []
   });
 }
@@ -1079,16 +1389,9 @@ async function openChangePreferredPlayerMenu(interaction) {
   }
 
   const playerOptions =
-    await getAvailablePlayerOptions(order.service || '');
+    await getCustomerPreferredPlayerOptions(order.service || '');
 
-  const options = [
-    {
-      label: '不指定陪陪',
-      description: '改成所有可接單陪陪都可以接',
-      value: 'none'
-    },
-    ...playerOptions
-  ];
+  const options = playerOptions;
 
   const menu =
     new StringSelectMenuBuilder()
@@ -1115,11 +1418,21 @@ async function submitChangePreferredPlayer(interaction) {
   const selectedValue =
     interaction.values[0];
 
-  const preferredPlayerId =
-    selectedValue === 'none'
-      ? null
-      : selectedValue;
-
+  let preferredPlayerId = null;
+  let reservedTime = null;
+  let dispatchType = 'open';
+  if (selectedValue === 'no_preference') {
+    preferredPlayerId = null;
+    dispatchType = 'open';
+  }
+  if (selectedValue.startsWith('online_')) {
+    preferredPlayerId = selectedValue.replace('online_', '');
+    dispatchType = 'assign';
+  }
+  if (selectedValue.startsWith('reserve_')) {
+    preferredPlayerId = selectedValue.replace('reserve_', '');
+    dispatchType = 'reserve';
+  }
   const { data: order, error } =
     await supabase
       .from('play_orders')
@@ -1153,7 +1466,13 @@ async function submitChangePreferredPlayer(interaction) {
     await supabase
       .from('play_orders')
       .update({
-        preferred_player: preferredPlayerId
+        preferred_player: preferredPlayerId,
+        reserved_player:
+          dispatchType === 'reserve'
+            ? preferredPlayerId
+            : null, 
+        reserved_time: reservedTime,
+        dispatch_type: dispatchType
       })
       .eq('id', orderId);
 
@@ -2192,6 +2511,10 @@ async function handleDispatchInteraction(interaction) {
       await submitPlayOrderForm(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('submit_customer_reserve_time_')) {
+      await submitCustomerReserveTime(interaction);
+      return true;
+    }
     if (interaction.customId === 'submit_topup_form') {
       await submitTopupForm(interaction);
       return true;
@@ -2228,8 +2551,12 @@ module.exports = {
   createPlayOrder,
   sendPlayerPanel,
   sendPlayOrderFormButton,
+  sendDailyPlayerSummary,
   submitTopupForm,
   submitPlayOrderForm,
+  submitCustomerReserveTime,
+  getCustomerPreferredPlayerOptions,
+  getOfflinePlayerOptions,
   openTopupModal,
   openPlayOrderModal,
   openChangeOrderPriceModal,

@@ -1483,6 +1483,41 @@ console.log('✅ 扭蛋系統已載入');
 await sendPrivateRoomPanel(client);
 console.log('✅ 私人房間系統已載入');
 console.log('🌧️ 星雨機器人已成功上線');
+startDailySummaryScheduler();
+let lastDailySummaryDate = null;
+
+function startDailySummaryScheduler() {
+  const runCheck = async () => {
+    try {
+      const now = new Date();
+      const taiwanNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+
+      const hour = taiwanNow.getUTCHours();
+      const dateText = taiwanNow.toISOString().slice(0, 10);
+
+      if (hour === 0 && lastDailySummaryDate !== dateText) {
+        lastDailySummaryDate = dateText;
+
+        await dispatchSystem.sendDailyPlayerSummary();
+        console.log(`[每日陪玩總結] 已送出 ${dateText}`);
+      }
+    } catch (err) {
+      console.log('[每日陪玩總結排程錯誤]', err);
+    }
+  };
+
+  const now = new Date();
+  const msToNextHour =
+    (60 - now.getMinutes()) * 60 * 1000 -
+    now.getSeconds() * 1000 -
+    now.getMilliseconds();
+
+  setTimeout(() => {
+    runCheck(); // 先在下一個整點檢查一次
+
+    setInterval(runCheck, 60 * 60 * 1000); // 之後每小時整點檢查
+  }, msToNextHour);
+}
 setInterval(async () => {
   try {
     const now =
@@ -1518,7 +1553,7 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000);
 setInterval(async () => {
-  const eightHoursAgo =
+  const twelveHoursAgo =
     new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
 
   const { data: players, error } =
@@ -1799,15 +1834,15 @@ client.on(Events.InteractionCreate, async interaction => {
           new ActionRowBuilder().addComponents(itemInput),
           new ActionRowBuilder().addComponents(amountInput),
           new ActionRowBuilder().addComponents(tipPaymentInput)
-
         );
         return interaction.showModal(modal);
       }
-      // ===== 陪玩指定陪陪選單 =====
-      if (
-        interaction.customId.startsWith('select_preferred_player_') ||
-        interaction.customId.startsWith('submit_change_preferred_player_')
-      ) {
+      // ===== 客人下單選陪陪：可能會開預約時間 Modal，不能先 defer =====
+      if (interaction.customId.startsWith('select_preferred_player_')) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
+      // ===== 更改指定陪陪 =====
+      if (interaction.customId.startsWith('submit_change_preferred_player_')) {
         if (!interaction.deferred && !interaction.replied) {
           await interaction.deferReply({
             flags: 64
@@ -1817,16 +1852,20 @@ client.on(Events.InteractionCreate, async interaction => {
           await dispatchSystem.handleDispatchInteraction(interaction);
         if (handled) return;
       }
+      // ===== 其他下拉選單 =====
       try {
         if (!interaction.deferred && !interaction.replied) {
           await interaction.deferReply({
-          flags: 64
+            flags: 64
           });
         }
       } catch (err) {
         console.error('[StringSelect defer 失敗]', err);
         return;
       }
+      const handled =
+        await dispatchSystem.handleDispatchInteraction(interaction);
+      if (handled) return;
       await handleStringSelectInteraction(interaction);
       return;
     }
