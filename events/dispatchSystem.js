@@ -94,7 +94,7 @@ async function sendCardPaymentInfo(channel) {
     .setTitle('💳 刷卡付款資訊')
     .setDescription(
       `請點擊以下連結完成刷卡付款：\n\n` +
-      `🔗 付款連結：https://pcpay.tw/aUPZY\n\n` +
+      `🔗 付款連結：https://pcpay.tw/aCU67\n\n` +
       `付款完成後，請在此頻道上傳付款成功截圖，等待客服確認。\n\n` +
       `截圖請包含：\n` +
       `1. 付款成功畫面\n` +
