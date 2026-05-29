@@ -19,6 +19,14 @@ function setup(supabaseInstance, clientInstance) {
   supabase = supabaseInstance;
   client = clientInstance;
 }
+function isCardPayment(text = '') {
+  return (
+    text.includes('刷卡') ||
+    text.includes('信用卡') ||
+    text.includes('信用卡付款') ||
+    text.includes('card')
+  );
+}
 function isNoCardPayment(text = '') {
   return (
     text.includes('無卡') ||
@@ -70,6 +78,28 @@ async function sendNoCardPaymentInfo(channel) {
       `帳號：134500100962\n` +
       `戶名：許O星\n\n` +
       `付款完成後，請在此頻道上傳存款明細，等待客服確認。`
+    )
+    .setFooter({
+      text: '請確認金額正確後再付款'
+    })
+    .setTimestamp();
+
+  await channel.send({
+    embeds: [embed]
+  });
+}
+async function sendCardPaymentInfo(channel) {
+  const embed = new EmbedBuilder()
+    .setColor('#9b5cff')
+    .setTitle('💳 刷卡付款資訊')
+    .setDescription(
+      `請點擊以下連結完成刷卡付款：\n\n` +
+      `🔗 付款連結：https://pcpay.tw/aUPZY\n\n` +
+      `付款完成後，請在此頻道上傳付款成功截圖，等待客服確認。\n\n` +
+      `截圖請包含：\n` +
+      `1. 付款成功畫面\n` +
+      `2. 付款金額\n` +
+      `3. 交易時間或交易編號`
     )
     .setFooter({
       text: '請確認金額正確後再付款'
@@ -753,7 +783,9 @@ const embed =
     embeds: [embed],
     components: [priceEditRow]
   });
-  if (isNoCardPayment(paymentMethod)) {
+  if (isCardPayment(paymentMethod)) {
+    await sendCardPaymentInfo(interaction.channel);
+  } else if (isNoCardPayment(paymentMethod)) {
     await sendNoCardPaymentInfo(interaction.channel);
   } else if (isBankTransfer(paymentMethod)) {
     await sendBankTransferInfo(interaction.channel);
@@ -874,7 +906,7 @@ async function openPlayOrderModal(interaction) {
   const paymentInput = new TextInputBuilder()
     .setCustomId('payment_method')
     .setLabel('付款方式')
-    .setPlaceholder('轉帳 / 無卡 / 儲值卡 / 加密貨幣')
+    .setPlaceholder('轉帳 / 無卡 / 信用卡 / 儲值卡 / 加密貨幣')
     .setStyle(TextInputStyle.Short)
     .setRequired(true);
 
@@ -918,7 +950,7 @@ async function openTopupModal(interaction) {
     new TextInputBuilder()
       .setCustomId('method')
       .setLabel('付款方式')
-      .setPlaceholder('匯款/無卡/加密貨幣/美金轉帳')
+      .setPlaceholder('匯款/無卡/信用卡/加密貨幣/美金轉帳')
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
 
@@ -1780,7 +1812,9 @@ async function submitTopupForm(interaction) {
     embeds: [embed],
     components: [row]
   });
-  if (isNoCardPayment(method)) {
+  if (isCardPayment(method)) {
+    await sendCardPaymentInfo(interaction.channel);
+  } else if (isNoCardPayment(method)) {
     await sendNoCardPaymentInfo(interaction.channel);
   } else if (isBankTransfer(method)) {
     await sendBankTransferInfo(interaction.channel);
