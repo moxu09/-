@@ -69,7 +69,7 @@ async function sendNoCardPaymentInfo(channel) {
       `銀行代碼：013\n` +
       `帳號：134500100962\n` +
       `戶名：許O星\n\n` +
-      `付款完成後，請在此頻道上傳付款截圖，等待客服確認。`
+      `付款完成後，請在此頻道上傳存款明細，等待客服確認。`
     )
     .setFooter({
       text: '請確認金額正確後再付款'
