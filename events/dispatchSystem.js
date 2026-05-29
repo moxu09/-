@@ -64,7 +64,7 @@ async function sendNoCardPaymentInfo(channel) {
       `銀行代碼：822\n` +
       `帳號：901565426642\n` +
       `戶名：許O星\n\n` +
-      `或是\n\n`
+      `或是\n\n` +
       `銀行：國泰世華\n` +
       `銀行代碼：013\n` +
       `帳號：134500100962\n` +
