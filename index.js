@@ -1446,7 +1446,31 @@ const commands = [
         )
     )
 ].map(command => command.toJSON());
+let lastDailySummaryDate = null;
 
+function startDailySummaryScheduler() {
+  const runCheck = async () => {
+    try {
+      const now = new Date();
+      const taiwanNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+      const hour = taiwanNow.getUTCHours();
+      const minute = taiwanNow.getUTCMinutes();
+      const dateText = taiwanNow.toISOString().slice(0, 10);
+      if (
+        hour === 23 &&
+        minute === 59 &&
+        lastDailySummaryDate !== dateText
+      ) {
+        lastDailySummaryDate = dateText;
+        await dispatchSystem.sendDailyPlayerSummary();
+        console.log(`[每日陪玩總結] 已送出 ${dateText}`);
+      }
+    } catch (err) {
+      console.log('[每日陪玩總結排程錯誤]', err);
+    }
+  };
+  setInterval(runCheck, 60 * 1000);
+}
 client.once(Events.ClientReady, async () => {
 try {
 console.log('🚀 星雨系統啟動中...');
@@ -1484,40 +1508,7 @@ await sendPrivateRoomPanel(client);
 console.log('✅ 私人房間系統已載入');
 console.log('🌧️ 星雨機器人已成功上線');
 startDailySummaryScheduler();
-let lastDailySummaryDate = null;
 
-function startDailySummaryScheduler() {
-  const runCheck = async () => {
-    try {
-      const now = new Date();
-      const taiwanNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-
-      const hour = taiwanNow.getUTCHours();
-      const dateText = taiwanNow.toISOString().slice(0, 10);
-
-      if (hour === 0 && lastDailySummaryDate !== dateText) {
-        lastDailySummaryDate = dateText;
-
-        await dispatchSystem.sendDailyPlayerSummary();
-        console.log(`[每日陪玩總結] 已送出 ${dateText}`);
-      }
-    } catch (err) {
-      console.log('[每日陪玩總結排程錯誤]', err);
-    }
-  };
-
-  const now = new Date();
-  const msToNextHour =
-    (60 - now.getMinutes()) * 60 * 1000 -
-    now.getSeconds() * 1000 -
-    now.getMilliseconds();
-
-  setTimeout(() => {
-    runCheck(); // 先在下一個整點檢查一次
-
-    setInterval(runCheck, 60 * 60 * 1000); // 之後每小時整點檢查
-  }, msToNextHour);
-}
 setInterval(async () => {
   try {
     const now =
