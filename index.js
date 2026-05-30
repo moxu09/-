@@ -282,48 +282,68 @@ async function sendWalletLog(
   note = ''
 ) {
   if (amount === 0 && type !== '十抽') return;
-    try {
-      const user =
-        await client.users.fetch(userId);
-      const embed =
-        new EmbedBuilder()
-          .setColor('#ffd700')
-          .setTitle('💰 錢包異動通知')
-          .addFields(
-            {
-              name: '📌 類型',
-              value: type,
-              inline: true
-            },
-            {
-              name: '💵 異動金額',
-              value: `${amount} 星雨幣`,
-              inline: true
-            },
-            {
-              name: '💳 目前餘額',
-              value: `${balance} 星雨幣`,
-              inline: true
-            }
-          )
-          .setTimestamp();
-      if (note) {
-        embed.setDescription(note);
-      }
-      try {
-        await user.send({ embeds: [embed] });
-      } catch (err) {
-        console.log('[錢包通知失敗]', err.code, err.message);
-        // DM 失敗不要中斷主流程
-        return false;
-      }
-    } catch (err) {
-      console.error(
-        '[錢包通知失敗]',
-        err
-      );
+
+  // ===== 寫入錢包明細資料庫 =====
+  try {
+    const { error: logError } =
+      await supabase
+        .from('wallet_logs')
+        .insert({
+          user_id: userId,
+          type,
+          amount,
+          balance,
+          note
+        });
+
+    if (logError) {
+      console.error('[錢包明細寫入失敗]', logError);
     }
+  } catch (err) {
+    console.error('[錢包明細寫入錯誤]', err);
   }
+
+  // ===== 私訊通知玩家 =====
+  try {
+    const user =
+      await client.users.fetch(userId);
+
+    const embed =
+      new EmbedBuilder()
+        .setColor('#ffd700')
+        .setTitle('💰 錢包異動通知')
+        .addFields(
+          {
+            name: '📌 類型',
+            value: type,
+            inline: true
+          },
+          {
+            name: '💵 異動金額',
+            value: `${amount} 星雨幣`,
+            inline: true
+          },
+          {
+            name: '💳 目前餘額',
+            value: `${balance} 星雨幣`,
+            inline: true
+          }
+        )
+        .setTimestamp();
+
+    if (note) {
+      embed.setDescription(note);
+    }
+
+    await user.send({
+      embeds: [embed]
+    }).catch(err => {
+      console.log('[錢包通知失敗]', err.code, err.message);
+    });
+  } catch (err) {
+    console.error('[錢包通知失敗]', err);
+  }
+}
 // 更新簽到
 async function updateCheckin(userId, date) {
   const { error } = await supabase.from('users').update({ last_checkin: date }).eq('user_id', userId);
@@ -383,7 +403,22 @@ async function getTransferRecords(userId) {
   }
   return data || [];
 }
+async function getWalletLogs(userId) {
+  const { data, error } =
+    await supabase
+      .from('wallet_logs')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(15);
 
+  if (error) {
+    console.error('[錢包明細查詢失敗]', error);
+    return [];
+  }
+
+  return data || [];
+}
 // 讀取商店商品
 async function getShopItems() {
   const { data, error } = await supabase.from('shop_items').select('*').order('price', { ascending: true });
@@ -982,7 +1017,7 @@ async function sendAtmPanel(client) {
         `💰 查看餘額｜確認目前星雨幣\n` +
         `💸 玩家轉帳｜轉帳給指定玩家\n` +
         `💠 消費資訊｜查看累積消費\n` +
-        `📜 交易紀錄｜查看最近轉帳紀錄`
+        `📜 交易紀錄｜查看最近錢包明細`
       )
       .setThumbnail(client.user.displayAvatarURL())
       .setFooter({
@@ -2079,37 +2114,45 @@ async function handleSlashCommand(interaction) {
         }
         // 交易紀錄
         if (interaction.commandName === '交易紀錄') {
-          const records = await getTransferRecords(
+          const records = await getWalletLogs(
             interaction.user.id
           );
           if (!records.length) {
             return interaction.editReply({
-              content: '目前沒有交易紀錄',
+              content: '目前沒有錢包明細',
             });
           }
-          const text = records.map(r =>{
+          const text = records.map(record => {
               const time =
                 new Date(
-                  r.created_at
+                  record.created_at
                 ).toLocaleString(
                   'zh-TW',
                   {
                     hour12: false
                   }
                 );
-              return (
-                `💸 <@${r.sender_id}> ➜ <@${r.receiver_id}>\n💰 ${r.amount} 星雨幣\n🕒 ${time}`
-              );
-            }).join('\n\n');
-          return interaction.editReply({
-            embeds: [
-              new EmbedBuilder()
-                .setColor('#00ffff')
-                .setTitle('📜 最近交易紀錄')
-                .setDescription(text)
-            ],
-          });
-        }
+                const amountText =
+                  Number(record.amount) > 0
+                    ? `+${record.amount}`
+                    : `${record.amount}`;
+                return (
+                  `📌 ${record.type}\n` +
+                  `💰 異動：${amountText} 星雨幣\n` +
+                  `💳 餘額：${record.balance} 星雨幣\n` +
+                  `🕒 ${time}` +
+                  `${record.note ? `\n📝 ${record.note}` : ''}`
+                );
+              }).join('\n\n');
+            return interaction.editReply({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor('#00ffff')
+                  .setTitle('📜 錢包明細')
+                  .setDescription(text.slice(0, 3800))
+              ],
+            });
+          }
         // 儲值
         if (interaction.commandName === '發錢') {
           if (interaction.guild.ownerId !== interaction.user.id) {
@@ -2768,32 +2811,37 @@ async function handleButtonInteraction(interaction) {
       });
     }
     if (customId === 'transfer_records') {
-      const records = await getTransferRecords(
-        interaction.user.id
-      );
+      const records =
+        await getWalletLogs(interaction.user.id);
       if (!records.length) {
-        return interaction.editReply({
-          content: '📜 目前沒有交易紀錄'
+        return await interaction.editReply({
+          content: '📜 目前沒有錢包明細'
         });
       }
       const text =
-        records.map(r => {
+        records.map(record => {
           const time =
-            new Date(r.created_at)
+            new Date(record.created_at)
               .toLocaleString('zh-TW', {
                 hour12: false
               });
+          const amountText =
+            Number(record.amount) > 0
+              ? `+${record.amount}`
+              : `${record.amount}`;
           return (
-            `💸 <@${r.sender_id}> ➜ <@${r.receiver_id}>\n` +
-            `💰 ${r.amount} 星雨幣\n` +
-            `🕒 ${time}`
+            `📌 ${record.type}\n` +
+            `💰 異動：${amountText} 星雨幣\n` +
+            `💳 餘額：${record.balance} 星雨幣\n` +
+            `🕒 ${time}` +
+            `${record.note ? `\n📝 ${record.note}` : ''}`
           );
         }).join('\n\n');
-      return interaction.editReply({
+      return await interaction.editReply({
         embeds: [
           new EmbedBuilder()
             .setColor('#00ffff')
-            .setTitle('📜 最近交易紀錄')
+            .setTitle('📜 錢包明細')
             .setDescription(text.slice(0, 3800))
         ]
       });
