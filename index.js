@@ -956,12 +956,19 @@ async function sendAtmPanel(client) {
       .setLabel('💠 消費資訊')
       .setStyle(ButtonStyle.Secondary);
 
+  const transferRecordButton =
+    new ButtonBuilder()
+      .setCustomId('transfer_records')
+      .setLabel('📜 交易紀錄')
+      .setStyle(ButtonStyle.Secondary);
+
   const row =
     new ActionRowBuilder()
       .addComponents(
         balanceButton,
         transferButton,
-        consumeButton
+        consumeButton,
+        transferRecordButton
       );
 
   const embed =
@@ -974,7 +981,8 @@ async function sendAtmPanel(client) {
         `━━━━━━━━━━━━━━\n` +
         `💰 查看餘額｜確認目前星雨幣\n` +
         `💸 玩家轉帳｜轉帳給指定玩家\n` +
-        `💠 消費資訊｜查看累積消費`
+        `💠 消費資訊｜查看累積消費\n` +
+        `📜 交易紀錄｜查看最近轉帳紀錄`
       )
       .setThumbnail(client.user.displayAvatarURL())
       .setFooter({
@@ -2759,7 +2767,37 @@ async function handleButtonInteraction(interaction) {
         components: [row]
       });
     }
-
+    if (customId === 'transfer_records') {
+      const records = await getTransferRecords(
+        interaction.user.id
+      );
+      if (!records.length) {
+        return interaction.editReply({
+          content: '📜 目前沒有交易紀錄'
+        });
+      }
+      const text =
+        records.map(r => {
+          const time =
+            new Date(r.created_at)
+              .toLocaleString('zh-TW', {
+                hour12: false
+              });
+          return (
+            `💸 <@${r.sender_id}> ➜ <@${r.receiver_id}>\n` +
+            `💰 ${r.amount} 星雨幣\n` +
+            `🕒 ${time}`
+          );
+        }).join('\n\n');
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#00ffff')
+            .setTitle('📜 最近交易紀錄')
+            .setDescription(text.slice(0, 3800))
+        ]
+      });
+    }
     // ===== 掉落領取 =====
     if (customId.startsWith('claim_')) {
       const reward = parseInt(customId.split('_')[1]);
