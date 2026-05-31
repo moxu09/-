@@ -2431,36 +2431,53 @@ async function sendCustomerFinalConfirm(channel, order) {
   });
 }
 async function handleStaffConfirmOrderPaid(interaction) {
-  await interaction.deferReply({ flags: 64 });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
   if (
     !interaction.member.roles.cache.has(process.env.STAFF_ROLE) &&
     !interaction.member.permissions.has(PermissionFlagsBits.Administrator)
   ) {
-    return interaction.editReply({ content: '❌ 只有客服可以確認付款' });
+    return interaction.editReply({
+      content: '❌ 只有客服可以確認付款'
+    });
   }
 
-  const orderId = interaction.customId.replace('staff_confirm_order_paid_', '');
+  const orderId =
+    interaction.customId.replace('staff_confirm_order_paid_', '');
 
-  const { data: order, error } = await supabase
-    .from('play_orders')
-    .update({
-      paid: true,
-      paid_at: new Date().toISOString()
-    })
-    .eq('id', orderId)
-    .select()
-    .single();
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .update({
+        paid: true,
+        paid_at: new Date().toISOString(),
+        status: 'waiting_confirm'
+      })
+      .eq('id', orderId)
+      .select()
+      .single();
 
   if (error || !order) {
-    return interaction.editReply({ content: '❌ 確認付款失敗' });
+    console.error('[客服確認付款] 失敗', error);
+
+    return interaction.editReply({
+      content: '❌ 確認付款失敗，請查看後台紀錄'
+    });
   }
 
   await interaction.channel.send({
-    content: `✅ 已由 <@${interaction.user.id}> 確認付款，<@${order.customer_id}> 現在可按「確認正確」送出派單。`
+    content:
+      `✅ 已由 <@${interaction.user.id}> 確認付款。\n` +
+      `<@${order.customer_id}> 現在可以按「確認正確」送出派單。`
   });
 
-  return interaction.editReply({ content: '✅ 已標記為已付款' });
+  return interaction.editReply({
+    content: '✅ 已標記為已付款'
+  });
 }
 async function handleCustomerConfirmOrder(interaction) {
   await interaction.deferReply({
