@@ -163,12 +163,22 @@ function matchPlayerService(player, keyword) {
   const allowedServices =
     normalizeAllowedServices(player.allowed_services);
 
-  if (!allowedServices.length) return true;
+  // 沒設定服務，就先不讓他出現在選單，避免誤接技術單
+  if (!allowedServices.length) return false;
 
-  return allowedServices.some(service =>
-    String(keyword || '').includes(service) ||
-    service.includes(String(keyword || ''))
-  );
+  const target =
+    String(keyword || '')
+      .replace(/\s+/g, '')
+      .trim();
+
+  return allowedServices.some(service => {
+    const serviceText =
+      String(service || '')
+        .replace(/\s+/g, '')
+        .trim();
+
+    return serviceText === target;
+  });
 }
 
 function matchPlayerGender(player, genderPreference) {
@@ -192,7 +202,7 @@ function matchPlayerGender(player, genderPreference) {
 
 async function getQualifiedPlayerOptions(pending) {
   const keyword =
-    `${pending.game || ''} ${pending.item || ''}`;
+    `${pending.game || ''}${pending.item || ''}`;
 
   const { data: players, error } =
     await supabase
