@@ -344,6 +344,171 @@ async function sendWalletLog(
     console.error('[錢包通知失敗]', err);
   }
 }
+function isWalletPayment(text = '') {
+  const value = String(text || '');
+
+  return (
+    value.includes('儲值卡') ||
+    value.includes('錢包') ||
+    value.includes('餘額')
+  );
+}
+
+function isMonthlyPayment(text = '') {
+  const value = String(text || '');
+
+  return (
+    value.includes('月結') ||
+    value.includes('月結付款') ||
+    value.includes('月結會員')
+  );
+}
+
+function isNeedManualPaidPayment(text = '') {
+  const value = String(text || '');
+
+  return (
+    value.includes('匯款') ||
+    value.includes('轉帳') ||
+    value.includes('無卡') ||
+    value.includes('刷卡') ||
+    value.includes('信用卡') ||
+    value.includes('美金') ||
+    value.includes('加密貨幣')
+  );
+}
+async function payOrderByWallet(order) {
+  const userId = order.customer_id;
+
+  const amount =
+    Number(order.final_price || order.price || 0);
+
+  if (!amount || amount <= 0) {
+    throw new Error('訂單金額錯誤');
+  }
+
+  const userData =
+    await getUser(userId);
+
+  const currentCoins =
+    Number(userData.coins || 0);
+
+  if (currentCoins < amount) {
+    throw new Error(
+      `餘額不足，目前餘額 ${currentCoins} 星雨幣，需要 ${amount} 星雨幣`
+    );
+  }
+
+  const finalCoins =
+    currentCoins - amount;
+
+  await updateCoins(userId, finalCoins);
+
+  await sendWalletLog(
+    userId,
+    '訂單扣款',
+    -amount,
+    finalCoins,
+    `訂單 ${order.order_no || order.id}｜${order.service || '陪玩訂單'}`
+  );
+
+  await supabase
+    .from('play_orders')
+    .update({
+      paid: true,
+      paid_at: new Date().toISOString()
+    })
+    .eq('id', order.id);
+
+  return {
+    amount,
+    finalCoins
+  };
+}
+async function payOrderByMonthly(order) {
+  const userId = order.customer_id;
+
+  const amount =
+    Number(order.final_price || order.price || 0);
+
+  if (!amount || amount <= 0) {
+    throw new Error('訂單金額錯誤');
+  }
+
+  const { data: account, error: accountError } =
+    await supabase
+      .from('member_monthly_accounts')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+  if (accountError || !account) {
+    throw new Error('尚未開通月結會員');
+  }
+
+  if (!account.enabled) {
+    throw new Error('月結會員目前已停用');
+  }
+
+  const monthlyLimit =
+    Number(account.monthly_limit || 0);
+
+  const usedAmount =
+    Number(account.used_amount || 0);
+
+  const availableAmount =
+    monthlyLimit - usedAmount;
+
+  if (availableAmount < amount) {
+    throw new Error(
+      `月結額度不足，目前可用 NT$${availableAmount}`
+    );
+  }
+
+  const billingMonth =
+    getBillingMonth();
+
+  const cashback =
+    Math.floor(amount * 0.03);
+
+  await supabase
+    .from('member_monthly_accounts')
+    .update({
+      used_amount: usedAmount + amount,
+      updated_at: new Date().toISOString()
+    })
+    .eq('user_id', userId);
+
+  await supabase
+    .from('member_monthly_transactions')
+    .insert({
+      user_id: userId,
+      source_type: 'order',
+      source_id: String(order.id),
+      item_name: order.service || order.order_item || '陪玩訂單',
+      benefit_type: order.game || '陪玩服務',
+      amount,
+      cashback,
+      billing_month: billingMonth,
+      status: 'unbilled'
+    });
+
+  await supabase
+    .from('play_orders')
+    .update({
+      paid: true,
+      paid_at: new Date().toISOString()
+    })
+    .eq('id', order.id);
+
+  return {
+    amount,
+    cashback,
+    usedAmount: usedAmount + amount,
+    monthlyLimit,
+    availableAmount: monthlyLimit - usedAmount - amount
+  };
+}
 // 更新簽到
 async function updateCheckin(userId, date) {
   const { error } = await supabase.from('users').update({ last_checkin: date }).eq('user_id', userId);
@@ -418,6 +583,137 @@ async function getWalletLogs(userId) {
   }
 
   return data || [];
+}
+async function generateMonthlyBills() {
+  const billingMonth = getBillingMonth();
+  const dueDate = getNextMonthDueDate();
+
+  const { data: transactions, error } =
+    await supabase
+      .from('member_monthly_transactions')
+      .select('*')
+      .eq('billing_month', billingMonth)
+      .eq('status', 'unbilled');
+
+  if (error) {
+    console.error('[月結帳單] 讀取交易失敗', error);
+    return;
+  }
+
+  if (!transactions || transactions.length === 0) {
+    console.log('[月結帳單] 本月沒有未結帳交易');
+    return;
+  }
+
+  const grouped = {};
+
+  for (const tx of transactions) {
+    if (!grouped[tx.user_id]) {
+      grouped[tx.user_id] = [];
+    }
+
+    grouped[tx.user_id].push(tx);
+  }
+
+  for (const userId of Object.keys(grouped)) {
+    const list = grouped[userId];
+
+    const totalAmount =
+      list.reduce(
+        (sum, tx) => sum + Number(tx.amount || 0),
+        0
+      );
+
+    const cashbackAmount =
+      list.reduce(
+        (sum, tx) => sum + Number(tx.cashback || 0),
+        0
+      );
+
+    const { data: existingBill } =
+      await supabase
+        .from('member_monthly_bills')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('billing_month', billingMonth)
+        .maybeSingle();
+
+    if (existingBill) {
+      console.log(`[月結帳單] ${userId} ${billingMonth} 已有帳單，略過`);
+      continue;
+    }
+
+    const { data: bill, error: billError } =
+      await supabase
+        .from('member_monthly_bills')
+        .insert({
+          user_id: userId,
+          billing_month: billingMonth,
+          total_amount: totalAmount,
+          cashback_amount: cashbackAmount,
+          status: 'unpaid',
+          due_date: dueDate
+        })
+        .select()
+        .single();
+
+    if (billError || !bill) {
+      console.error('[月結帳單] 建立帳單失敗', billError);
+      continue;
+    }
+
+    await supabase
+      .from('member_monthly_transactions')
+      .update({
+        status: 'billed'
+      })
+      .in(
+        'id',
+        list.map(tx => tx.id)
+      );
+
+    const detailText =
+      list.map((tx, index) => {
+        return (
+          `${index + 1}. ${tx.item_name || '未填寫項目'}\n` +
+          `類型：${tx.source_type || '未填寫'}\n` +
+          `金額：NT$${Number(tx.amount || 0).toLocaleString('zh-TW')}\n` +
+          `待回饋：${Number(tx.cashback || 0).toLocaleString('zh-TW')} 星雨幣`
+        );
+      }).join('\n\n');
+
+    const user =
+      await client.users
+        .fetch(userId)
+        .catch(() => null);
+
+    if (user) {
+      await user.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#ffd166')
+            .setTitle('🌙 星雨月結帳單')
+            .setDescription(
+              `結帳月份：${billingMonth}\n` +
+              `需繳金額：NT$${totalAmount.toLocaleString('zh-TW')}\n` +
+              `待發回饋：${cashbackAmount.toLocaleString('zh-TW')} 星雨幣\n` +
+              `繳款期限：${dueDate}\n\n` +
+              `請於期限前完成繳款，並將付款截圖提供給客服確認。\n\n` +
+              `━━━━━━━━━━━━━━\n` +
+              `帳單細項：\n${detailText.slice(0, 3000)}`
+            )
+            .setFooter({
+              text: '星雨月結會員｜逾期可能暫停月結資格'
+            })
+            .setTimestamp()
+        ]
+      }).catch(err => {
+        console.log('[月結帳單] 私訊失敗', userId, err.message);
+      });
+    }
+  }
+
+  console.log(`[月結帳單] ${billingMonth} 已產生完成`);
 }
 // 讀取商店商品
 async function getShopItems() {
@@ -618,6 +914,28 @@ function getTodayDateString() {
   const now = new Date();
   const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   return utc8.toISOString().split('T')[0];
+}
+function getTaiwanNow() {
+  return new Date(Date.now() + 8 * 60 * 60 * 1000);
+}
+
+function getBillingMonth(date = new Date()) {
+  const taiwanDate =
+    new Date(date.getTime() + 8 * 60 * 60 * 1000);
+
+  return taiwanDate.toISOString().slice(0, 7);
+}
+
+function getNextMonthDueDate() {
+  const taiwanNow = getTaiwanNow();
+
+  const year = taiwanNow.getUTCFullYear();
+  const month = taiwanNow.getUTCMonth();
+
+  const dueDate =
+    new Date(Date.UTC(year, month + 1, 16));
+
+  return dueDate.toISOString().slice(0, 10);
 }
 // ===== SSR 連抽降權設定 =====
 // 抽到第一個 SSR 後，後續 SSR 權重只剩 15%
@@ -972,40 +1290,50 @@ async function sendAtmPanel(client) {
     );
 
   if (!channel) return;
-
   const balanceButton =
     new ButtonBuilder()
       .setCustomId('check_coins')
       .setLabel('💰 查看餘額')
       .setStyle(ButtonStyle.Primary);
-
   const transferButton =
     new ButtonBuilder()
       .setCustomId('transfer_menu')
       .setLabel('💸 玩家轉帳')
       .setStyle(ButtonStyle.Success);
-
   const consumeButton =
     new ButtonBuilder()
       .setCustomId('consume_info')
       .setLabel('💠 消費資訊')
       .setStyle(ButtonStyle.Secondary);
-
   const transferRecordButton =
     new ButtonBuilder()
       .setCustomId('transfer_records')
       .setLabel('📜 交易紀錄')
       .setStyle(ButtonStyle.Secondary);
-
+  const switchBenefitButton =
+    new ButtonBuilder()
+      .setCustomId('switch_benefit')
+      .setLabel('🔄 切換權益')
+      .setStyle(ButtonStyle.Primary);
+  const monthlyInfoButton =
+    new ButtonBuilder()
+      .setCustomId('monthly_info')
+      .setLabel('🌙 查詢月結')
+      .setStyle(ButtonStyle.Secondary);
   const row =
     new ActionRowBuilder()
       .addComponents(
         balanceButton,
         transferButton,
         consumeButton,
-        transferRecordButton
+        transferRecordButton,
+        switchBenefitButton
       );
-
+  const row2 =
+    new ActionRowBuilder()
+      .addComponents(
+        monthlyInfoButton
+      );
   const embed =
     new EmbedBuilder()
       .setColor('#00ffff')
@@ -1017,7 +1345,9 @@ async function sendAtmPanel(client) {
         `💰 查看餘額｜確認目前星雨幣\n` +
         `💸 玩家轉帳｜轉帳給指定玩家\n` +
         `💠 消費資訊｜查看累積消費\n` +
-        `📜 交易紀錄｜查看最近錢包明細`
+        `📜 交易紀錄｜查看最近錢包明細\n` +
+        `🔄 切換權益｜每日最多切換 2 次\n` +
+        `🌙 查詢月結｜查看保證金與剩餘額度`
       )
       .setThumbnail(client.user.displayAvatarURL())
       .setFooter({
@@ -1037,7 +1367,7 @@ async function sendAtmPanel(client) {
 
       await msg.edit({
         embeds: [embed],
-        components: [row]
+        components: [row, row2]
       });
 
       console.log('[ATM] 已更新');
@@ -1051,7 +1381,7 @@ async function sendAtmPanel(client) {
   const newMsg =
     await channel.send({
       embeds: [embed],
-      components: [row]
+      components: [row, row2]
     });
 
   await savePanelMessage(
@@ -1460,6 +1790,51 @@ const commands = [
         .setDescription('輸入金額')
         .setRequired(true)
     ),
+  new SlashCommandBuilder()
+    .setName('設定月結')
+    .setDescription('設定會員月結保證金與額度')
+    .addUserOption(option =>
+     option
+        .setName('玩家')
+        .setDescription('選擇會員')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('保證金')
+        .setDescription('輸入保證金金額，月結額度會等於保證金')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('標記月結已繳')
+    .setDescription('標記會員月結帳單已繳款，並發放回饋')
+    .addUserOption(option =>
+      option
+        .setName('玩家')
+        .setDescription('選擇會員')
+        .setRequired(true)
+    ) 
+    .addStringOption(option =>
+      option
+        .setName('月份')
+        .setDescription('帳單月份，例如 2026-06')
+        .setRequired(true)
+    ),
+  new SlashCommandBuilder()
+    .setName('保證金抵扣')
+    .setDescription('從會員保證金抵扣逾期月結帳單')
+    .addUserOption(option =>
+      option
+        .setName('玩家')
+        .setDescription('選擇會員')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('月份')
+        .setDescription('帳單月份，例如 2026-06')
+        .setRequired(true)
+    ),
   // ===== 商店 =====
   new SlashCommandBuilder()
     .setName('新增商品')
@@ -1514,6 +1889,44 @@ function startDailySummaryScheduler() {
   };
   setInterval(runCheck, 60 * 1000);
 }
+let lastMonthlyBillDate = null;
+
+function startMonthlyBillScheduler() {
+  const runCheck = async () => {
+    try {
+      const taiwanNow = getTaiwanNow();
+
+      const dateText =
+        taiwanNow.toISOString().slice(0, 10);
+
+      const day =
+        taiwanNow.getUTCDate();
+
+      const hour =
+        taiwanNow.getUTCHours();
+
+      const minute =
+        taiwanNow.getUTCMinutes();
+
+      if (
+        day === 25 &&
+        hour === 12 &&
+        minute === 0 &&
+        lastMonthlyBillDate !== dateText
+      ) {
+        lastMonthlyBillDate = dateText;
+
+        await generateMonthlyBills();
+
+        console.log(`[月結帳單] 已執行 ${dateText}`);
+      }
+    } catch (err) {
+      console.log('[月結帳單排程錯誤]', err);
+    }
+  };
+
+  setInterval(runCheck, 60 * 1000);
+}
 client.once(Events.ClientReady, async () => {
 try {
 console.log('🚀 星雨系統啟動中...');
@@ -1551,6 +1964,7 @@ await sendPrivateRoomPanel(client);
 console.log('✅ 私人房間系統已載入');
 console.log('🌧️ 星雨機器人已成功上線');
 startDailySummaryScheduler();
+startMonthlyBillScheduler();
 
 setInterval(async () => {
   try {
@@ -1652,6 +2066,198 @@ async function getStaffOptionsFromRole(guild) {
     description: member.user.username.slice(0, 100),
     value: member.id,
   }));
+}
+
+function isMonthlyEligibleItem(text = '') {
+  const value = String(text || '');
+
+  return (
+    value.includes('特戰英豪') ||
+    value.includes('三角洲') ||
+    value.includes('PUBG') ||
+    value.includes('STEAM') ||
+    value.includes('陪聊') ||
+    value.includes('陪伴') ||
+    value.includes('聊天') ||
+    value.includes('打賞') ||
+    value.includes('禮物')
+  );
+}
+
+async function getUserBenefitType(userId) {
+  const { data } =
+    await supabase
+      .from('user_benefits')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+  return data?.benefit_type || '陪聊服務';
+}
+
+function isBenefitMatched(itemName, benefitType) {
+  const item = String(itemName || '');
+
+  if (benefitType === '特戰英豪') {
+    return item.includes('特戰英豪') || item.includes('VALORANT');
+  }
+
+  if (benefitType === '三角洲行動') {
+    return item.includes('三角洲');
+  }
+
+  if (benefitType === 'PUBG') {
+    return item.includes('PUBG') || item.includes('絕地求生');
+  }
+
+  if (benefitType === 'STEAM') {
+    return item.includes('STEAM') || item.includes('Steam');
+  }
+
+  if (benefitType === '陪聊服務') {
+    return (
+      item.includes('陪聊') ||
+      item.includes('陪伴') ||
+      item.includes('聊天')
+    );
+  }
+
+  if (benefitType === '打賞禮物') {
+    return (
+      item.includes('打賞') ||
+      item.includes('禮物')
+    );
+  }
+
+  return false;
+}
+async function createMonthlyTransaction({
+  userId,
+  sourceType,
+  sourceId = null,
+  itemName = '',
+  amount
+}) {
+  const payAmount = Number(amount || 0);
+
+  if (!payAmount || payAmount <= 0) {
+    throw new Error('月結金額錯誤');
+  }
+
+  if (!isMonthlyEligibleItem(itemName)) {
+    throw new Error('此項目不適用月結付款');
+  }
+
+  const { data: account, error: accountError } =
+    await supabase
+      .from('member_monthly_accounts')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+  if (accountError || !account) {
+    throw new Error('尚未開通月結會員');
+  }
+
+  if (!account.enabled) {
+    throw new Error('月結會員目前已停用');
+  }
+
+  const monthlyLimit =
+    Number(account.monthly_limit || 0);
+
+  const usedAmount =
+    Number(account.used_amount || 0);
+
+  const availableAmount =
+    Math.max(0, monthlyLimit - usedAmount);
+
+  if (availableAmount < payAmount) {
+    throw new Error(
+      `月結額度不足，目前可用 NT$${availableAmount}`
+    );
+  }
+
+  const benefitType =
+    await getUserBenefitType(userId);
+
+  const matchedBenefit =
+    isBenefitMatched(itemName, benefitType);
+
+  const billingMonth =
+    getBillingMonth();
+
+  const rawCashback =
+    matchedBenefit
+      ? Math.floor(payAmount * 0.03)
+      : 0;
+
+  // 每月回饋上限 30000
+  const { data: monthTransactions } =
+    await supabase
+      .from('member_monthly_transactions')
+      .select('cashback')
+      .eq('user_id', userId)
+      .eq('billing_month', billingMonth);
+
+  const currentMonthCashback =
+    (monthTransactions || []).reduce(
+      (sum, tx) => sum + Number(tx.cashback || 0),
+      0
+    );
+
+  const cashback =
+    Math.min(
+      rawCashback,
+      Math.max(0, 30000 - currentMonthCashback)
+    );
+
+  const newUsedAmount =
+    usedAmount + payAmount;
+
+  const { error: updateError } =
+    await supabase
+      .from('member_monthly_accounts')
+      .update({
+        used_amount: newUsedAmount,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', userId);
+
+  if (updateError) {
+    console.error('[月結] 更新已使用額度失敗', updateError);
+    throw new Error('更新月結額度失敗');
+  }
+
+  const { error: txError } =
+    await supabase
+      .from('member_monthly_transactions')
+      .insert({
+        user_id: userId,
+        source_type: sourceType,
+        source_id: sourceId,
+        item_name: itemName,
+        benefit_type: benefitType,
+        amount: payAmount,
+        cashback,
+        billing_month: billingMonth,
+        status: 'unbilled'
+      });
+
+  if (txError) {
+    console.error('[月結] 建立交易失敗', txError);
+    throw new Error('建立月結交易失敗');
+  }
+
+  return {
+    amount: payAmount,
+    benefitType,
+    matchedBenefit,
+    cashback,
+    usedAmount: newUsedAmount,
+    monthlyLimit,
+    availableAmount: Math.max(0, monthlyLimit - newUsedAmount)
+  };
 }
 function isNoCardPayment(text = '') {
   return text.includes('無卡');
@@ -1820,6 +2426,8 @@ client.on(Events.InteractionCreate, async interaction => {
       if (
         interaction.customId === 'open_topup_modal' ||
         interaction.customId === 'open_play_order_form' ||
+        interaction.customId.startsWith('new_order_note_yes_') ||
+        interaction.customId.startsWith('staff_quote_price_') ||
         interaction.customId.startsWith('change_order_price_') ||
         interaction.customId.startsWith('save_order_note_')
       ) {
@@ -1876,9 +2484,17 @@ client.on(Events.InteractionCreate, async interaction => {
       }
       // ===== 客人下單選陪陪：可能會開預約時間 Modal，不能先 defer =====
       if (
-        interaction.customId.startsWith('select_preferred_player_') ||
-        interaction.customId.startsWith('select_reserve_player_')
+        interaction.customId.startsWith('new_order_game_') ||
+        interaction.customId.startsWith('new_order_item_') ||
+        interaction.customId.startsWith('new_order_count_') ||
+        interaction.customId.startsWith('new_order_gender_') ||
+        interaction.customId.startsWith('new_order_player_') ||
+        interaction.customId.startsWith('new_order_duration_') ||
+        interaction.customId.startsWith('quote_select_coupon_') ||
+        interaction.customId.startsWith('quote_payment_method_') ||
+        interaction.customId.startsWith('submit_dispatch_players_')
       ) {
+
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
       // ===== 更改指定陪陪 =====
@@ -2204,6 +2820,330 @@ async function handleSlashCommand(interaction) {
           return interaction.editReply({
             content:
               `❌ 已扣除 <@${target.id}> ${amount} 星雨幣`,
+          });
+        }
+        if (interaction.commandName === '設定月結') {
+          if (!isAdminOrStaff(interaction)) {
+            return replyError(interaction, '你沒有權限');
+          }
+          const target =
+            interaction.options.getUser('玩家');
+          const guarantee =
+            interaction.options.getInteger('保證金');
+          if (!guarantee || guarantee <= 0) {
+            return replyError(interaction, '保證金必須大於 0');
+          }
+          const { data: oldAccount } =
+            await supabase
+              .from('member_monthly_accounts')
+              .select('*')
+              .eq('user_id', target.id)
+              .maybeSingle();
+          const beforeAmount =
+            Number(oldAccount?.guarantee_amount || 0);
+          const { error } =
+            await supabase
+              .from('member_monthly_accounts')
+              .upsert({
+                user_id: target.id,
+                guarantee_amount: guarantee,
+                monthly_limit: guarantee,
+                used_amount: Number(oldAccount?.used_amount || 0),
+                enabled: true,
+                updated_at: new Date().toISOString()
+              }, {
+                onConflict: 'user_id'
+              });
+          if (error) {
+            console.error('[設定月結失敗]', error);
+            return replyError(interaction, '設定月結失敗');
+          }
+          await supabase
+            .from('member_guarantee_logs')
+            .insert({
+              user_id: target.id,
+              type: oldAccount ? '調整保證金' : '設定保證金',
+              amount: guarantee - beforeAmount,
+              before_amount: beforeAmount,
+              after_amount: guarantee,
+              note: `客服 ${interaction.user.id} 設定`
+            });
+          return interaction.editReply({
+            content:
+              `✅ 已設定 <@${target.id}> 月結會員\n` +
+              `保證金：NT$${guarantee}\n` +
+              `月結額度：NT$${guarantee}\n` +
+              `目前已使用：NT$${Number(oldAccount?.used_amount || 0)}`
+          });
+        }
+        if (interaction.commandName === '標記月結已繳') {
+          if (!isAdminOrStaff(interaction)) {
+            return replyError(interaction, '你沒有權限');
+          }
+          const target =
+            interaction.options.getUser('玩家');
+          const billingMonth =
+            interaction.options.getString('月份');
+          if (!/^\d{4}-\d{2}$/.test(billingMonth)) {
+            return replyError(interaction, '月份格式錯誤，請輸入例如 2026-06');
+          }
+          const { data: bill, error: billError } =
+            await supabase
+              .from('member_monthly_bills')
+              .select('*')
+              .eq('user_id', target.id)
+              .eq('billing_month', billingMonth)
+              .maybeSingle();
+            if (billError) {
+            console.error('[月結已繳] 查詢帳單失敗', billError);
+            return replyError(interaction, '查詢帳單失敗');
+          }
+          if (!bill) {
+            return replyError(interaction, '找不到這個月份的月結帳單');
+          }
+          if (bill.status === 'paid') {
+            return interaction.editReply({
+              content: '✅ 這張帳單已經是已繳狀態'
+            });
+          }
+          if (bill.status === 'deducted') {
+            return replyError(interaction, '這張帳單已經由保證金抵扣，不能再標記已繳');
+          }
+          const { data: account, error: accountError } =
+            await supabase
+              .from('member_monthly_accounts')
+              .select('*')
+              .eq('user_id', target.id)
+              .maybeSingle();
+          if (accountError || !account) {
+            console.error('[月結已繳] 查詢帳戶失敗', accountError);
+            return replyError(interaction, '找不到會員月結帳戶');
+          }
+          const totalAmount =
+            Number(bill.total_amount || 0);
+          const cashbackAmount =
+            Number(bill.cashback_amount || 0);
+          const oldUsedAmount =
+            Number(account.used_amount || 0);
+          const newUsedAmount =
+            Math.max(0, oldUsedAmount - totalAmount);
+          // ===== 更新帳單狀態 =====
+          const { error: updateBillError } =
+            await supabase
+              .from('member_monthly_bills')
+              .update({
+                status: 'paid',
+                paid_at: new Date().toISOString()
+              })
+              .eq('id', bill.id);
+          if (updateBillError) {
+            console.error('[月結已繳] 更新帳單失敗', updateBillError);
+            return replyError(interaction, '更新帳單失敗');
+          }
+          // ===== 釋放已使用額度 =====
+          const { error: updateAccountError } =
+            await supabase
+              .from('member_monthly_accounts')
+              .update({
+                used_amount: newUsedAmount,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', target.id);
+          if (updateAccountError) {
+            console.error('[月結已繳] 更新月結額度失敗', updateAccountError);
+            return replyError(interaction, '帳單已標記，但更新額度失敗');
+          }
+          // ===== 更新交易狀態 =====
+          await supabase
+            .from('member_monthly_transactions')
+            .update({
+              status: 'paid'
+            })
+            .eq('user_id', target.id)
+            .eq('billing_month', billingMonth)
+            .in('status', ['billed', 'unbilled']);
+          // ===== 發放回饋 =====
+          if (cashbackAmount > 0) {
+            const userData =
+              await getUser(target.id);
+            const finalCoins =
+              Number(userData.coins || 0) + cashbackAmount;
+            await updateCoins(target.id, finalCoins);
+            await sendWalletLog(
+              target.id,
+              '月結回饋',
+              cashbackAmount,
+              finalCoins,
+              `🌙 ${billingMonth} 月結帳單已繳清，發放 3% 回饋`
+            );
+          }
+          const targetUser =
+            await client.users
+              .fetch(target.id)
+              .catch(() => null);
+          if (targetUser) {
+            await targetUser.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor('#57F287')
+                  .setTitle('✅ 月結帳單已確認繳款')
+                  .setDescription(
+                    `結帳月份：${billingMonth}\n` +
+                    `已繳金額：NT$${totalAmount.toLocaleString('zh-TW')}\n` +
+                    `發放回饋：${cashbackAmount.toLocaleString('zh-TW')} 星雨幣\n\n` +
+                    `你的月結可用額度已恢復。`
+                  )
+                  .setTimestamp()
+              ]
+            }).catch(() => {});
+          }
+          return interaction.editReply({
+            content:
+              `✅ 已標記 <@${target.id}> ${billingMonth} 月結帳單為已繳\n` +
+              `繳款金額：NT$${totalAmount.toLocaleString('zh-TW')}\n` + 
+              `發放回饋：${cashbackAmount.toLocaleString('zh-TW')} 星雨幣\n` +
+              `已使用額度：NT$${oldUsedAmount.toLocaleString('zh-TW')} → NT$${newUsedAmount.toLocaleString('zh-TW')}`
+          });
+        }
+        if (interaction.commandName === '保證金抵扣') {
+          if (!isAdminOrStaff(interaction)) {
+            return replyError(interaction, '你沒有權限');
+          }
+          const target =
+            interaction.options.getUser('玩家');
+          const billingMonth =
+            interaction.options.getString('月份');
+          if (!/^\d{4}-\d{2}$/.test(billingMonth)) {
+            return replyError(interaction, '月份格式錯誤，請輸入例如 2026-06');
+          }
+          const { data: bill, error: billError } =
+            await supabase
+              .from('member_monthly_bills')
+              .select('*')
+              .eq('user_id', target.id)
+              .eq('billing_month', billingMonth)
+              .maybeSingle();
+          if (billError) {
+            console.error('[保證金抵扣] 查詢帳單失敗', billError);
+            return replyError(interaction, '查詢帳單失敗');
+          }
+          if (!bill) {
+            return replyError(interaction, '找不到這個月份的月結帳單');
+          }
+          if (bill.status === 'paid') {
+            return replyError(interaction, '這張帳單已經繳款，不能抵扣');
+          }
+          if (bill.status === 'deducted') {
+            return interaction.editReply({
+              content: '✅ 這張帳單已經由保證金抵扣'
+            });
+          }
+          const { data: account, error: accountError } =
+            await supabase
+              .from('member_monthly_accounts')
+              .select('*')
+              .eq('user_id', target.id)
+              .maybeSingle();
+          if (accountError || !account) {
+            console.error('[保證金抵扣] 查詢月結帳戶失敗', accountError);
+            return replyError(interaction, '找不到會員月結帳戶');
+          }
+          const totalAmount =
+            Number(bill.total_amount || 0);
+          const oldGuarantee =
+            Number(account.guarantee_amount || 0);
+          const oldUsedAmount =
+            Number(account.used_amount || 0);
+          if (oldGuarantee < totalAmount) {
+            return replyError(
+              interaction,
+              `保證金不足，帳單 NT$${totalAmount.toLocaleString('zh-TW')}，目前保證金 NT$${oldGuarantee.toLocaleString('zh-TW')}`
+            );
+          }
+          const newGuarantee =
+            oldGuarantee - totalAmount;
+          const newMonthlyLimit =
+            newGuarantee;
+          const newUsedAmount =
+            Math.max(0, oldUsedAmount - totalAmount);
+          // ===== 更新帳單狀態 =====
+          const { error: updateBillError } =
+            await supabase
+              .from('member_monthly_bills')
+              .update({
+                status: 'deducted',
+                paid_at: new Date().toISOString()
+              })
+              .eq('id', bill.id);
+          if (updateBillError) {
+            console.error('[保證金抵扣] 更新帳單失敗', updateBillError);
+            return replyError(interaction, '更新帳單失敗');
+          }
+          // ===== 更新月結帳戶 =====
+          const { error: updateAccountError } =
+            await supabase
+              .from('member_monthly_accounts')
+              .update({
+                guarantee_amount: newGuarantee,
+                monthly_limit: newMonthlyLimit,
+                used_amount: newUsedAmount,
+                enabled: false,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', target.id);
+          if (updateAccountError) {
+            console.error('[保證金抵扣] 更新帳戶失敗', updateAccountError);
+            return replyError(interaction, '帳單已抵扣，但更新月結帳戶失敗');
+          }
+          // ===== 更新交易狀態 =====
+          await supabase
+            .from('member_monthly_transactions')
+            .update({
+              status: 'deducted'
+            })
+            .eq('user_id', target.id)
+            .eq('billing_month', billingMonth)
+            .in('status', ['billed', 'unbilled']);
+          // ===== 寫入保證金紀錄 =====
+          await supabase
+            .from('member_guarantee_logs')
+            .insert({
+              user_id: target.id,
+              type: '帳單抵扣',
+              amount: -totalAmount,
+              before_amount: oldGuarantee,
+              after_amount: newGuarantee,
+              note: `${billingMonth} 月結帳單逾期，由客服 ${interaction.user.id} 抵扣`
+            });
+          const targetUser =
+            await client.users
+              .fetch(target.id)
+              .catch(() => null);
+          if (targetUser) {
+            await targetUser.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor('#ff9966')
+                  .setTitle('⚠️ 月結帳單已由保證金抵扣')
+                  .setDescription(
+                    `帳單月份：${billingMonth}\n` +
+                    `抵扣金額：NT$${totalAmount.toLocaleString('zh-TW')}\n\n` +
+                    `原保證金：NT$${oldGuarantee.toLocaleString('zh-TW')}\n` +
+                    `剩餘保證金：NT$${newGuarantee.toLocaleString('zh-TW')}\n` +
+                    `剩餘月結額度：NT$${newMonthlyLimit.toLocaleString('zh-TW')}\n\n` +
+                    `你的月結資格已暫停，如需恢復請聯繫客服。`
+                  )
+                  .setTimestamp()
+              ]
+            }).catch(() => {});
+          }
+          return interaction.editReply({
+            content:
+              `✅ 已從 <@${target.id}> 保證金抵扣 ${billingMonth} 月結帳單\n` +
+              `抵扣金額：NT$${totalAmount.toLocaleString('zh-TW')}\n` +
+              `保證金：NT$${oldGuarantee.toLocaleString('zh-TW')} → NT$${newGuarantee.toLocaleString('zh-TW')}\n` +
+              `已使用額度：NT$${oldUsedAmount.toLocaleString('zh-TW')} → NT$${newUsedAmount.toLocaleString('zh-TW')}\n` +
+              `月結狀態：已暫停`
           });
         }
         // 新增商品
@@ -2846,6 +3786,127 @@ async function handleButtonInteraction(interaction) {
         ]
       });
     }
+    if (customId === 'switch_benefit') {
+      const menu =
+        new StringSelectMenuBuilder()
+          .setCustomId('select_benefit_type')
+          .setPlaceholder('請選擇要切換的權益')
+          .addOptions([
+            {
+              label: '特戰英豪',
+              description: '切換為特戰英豪相關權益',
+              value: '特戰英豪'
+            },
+            {
+              label: '三角洲行動',
+              description: '切換為三角洲行動相關權益',
+              value: '三角洲行動'
+            },
+            {
+              label: 'PUBG',
+              description: '切換為 PUBG 相關權益',
+              value: 'PUBG'
+            },
+            {
+              label: 'STEAM',
+              description: '切換為 STEAM 遊戲相關權益',
+              value: 'STEAM'
+            },
+            {
+              label: '陪聊服務',
+              description: '切換為陪聊 / 陪伴服務權益',
+              value: '陪聊服務'
+            },
+            {
+              label: '打賞禮物',
+              description: '切換為打賞禮物相關權益',
+              value: '打賞禮物'
+            }
+          ]);
+      const row =
+        new ActionRowBuilder()
+          .addComponents(menu);
+      return interaction.editReply({
+        content:
+          '🔄 請選擇你要切換的權益：\n\n' +
+          '每日最多可以切換 2 次。',
+        components: [row]
+      });
+    }
+    if (customId === 'monthly_info') {
+      const { data: account, error } =
+        await supabase
+          .from('member_monthly_accounts')
+          .select('*')
+          .eq('user_id', interaction.user.id)
+          .maybeSingle();
+      if (error) {
+        console.error('[查詢月結失敗]', error);
+        return interaction.editReply({
+          content: '❌ 查詢月結資料失敗，請稍後再試。'
+        });
+      }
+      if (!account) {
+        return interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#999999')
+              .setTitle('🌙 星雨月結會員')
+              .setDescription(
+                `你目前尚未開通月結會員。\n\n` +
+                `如需開通，請聯繫客服設定保證金與月結額度。`
+              )
+          ]
+        });
+      }
+      const guaranteeAmount =
+        Number(account.guarantee_amount || 0);
+      const monthlyLimit =
+        Number(account.monthly_limit || 0);
+      const usedAmount =
+        Number(account.used_amount || 0);
+      const availableAmount =
+        Math.max(0, monthlyLimit - usedAmount);
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(account.enabled ? '#66ccff' : '#999999')
+            .setTitle('🌙 星雨月結會員')
+            .addFields(
+              {
+                name: '狀態',
+                value: account.enabled ? '✅ 已啟用' : '⛔ 已停用',
+                inline: true
+              },
+              {
+                name: '保證金',
+                value: `NT$${guaranteeAmount.toLocaleString('zh-TW')}`,
+                inline: true
+              },
+              {
+                name: '月結額度',
+                value: `NT$${monthlyLimit.toLocaleString('zh-TW')}`,
+                inline: true
+              },
+              {
+                name: '已使用',
+                value: `NT$${usedAmount.toLocaleString('zh-TW')}`,
+                inline: true
+              },
+              {
+                name: '剩餘可用',
+                value: `NT$${availableAmount.toLocaleString('zh-TW')}`,
+                inline: true
+              }
+            )
+            .setDescription(
+              `每月 25 日結帳，繳款期限為次月 16 日。\n` +
+              `月結額度僅限平台指定服務使用，不可提領、不可轉讓、不可兌現。`
+            )
+            .setTimestamp()
+        ]
+      });
+    }
     // ===== 掉落領取 =====
     if (customId.startsWith('claim_')) {
       const reward = parseInt(customId.split('_')[1]);
@@ -3223,10 +4284,12 @@ async function handleButtonInteraction(interaction) {
         embeds: [embed],
         components
       });
-      if (isNoCardPayment(method)) {
+      if (isNoCardPayment(paymentMethod)) {
         await sendNoCardPaymentInfo(interaction.channel);
-      } else if (isBankTransfer(method)) {
+      } else if (isBankTransfer(paymentMethod)) {
         await sendBankTransferInfo(interaction.channel);
+      } else if (isCardPayment(paymentMethod)) {
+        await sendCardPaymentInfo(interaction.channel);
       }
       pendingTips.delete(tipConfirmId);
       return await interaction.editReply({
@@ -3490,126 +4553,165 @@ async function handleButtonInteraction(interaction) {
               'channel_id',
               interaction.channel.id
             )
+            .order('created_at', { ascending: false })
+            .limit(1)
             .maybeSingle();
         if (order) {
-          // ===== 儲值卡扣款 =====
-          if (
-            order.payment_method &&
-            (
-              order.payment_method.includes('儲值卡') ||
-              order.payment_method.includes('錢包') ||
-              order.payment_method.includes('餘額') 
-            )&&
-            !order.paid
-          ) {
-            const { data: userData } =
-              await supabase
-                .from('users')
-                .select('*')
-                .eq(
-                  'user_id',
-                  order.customer_id
-                )
-                .single();
-            if (!userData) {
+          // ===== 完成訂單前付款處理 =====
+          const paymentMethod =
+            order.payment_method || '';
+          if (!order.paid) {
+            try {
+              if (isWalletPayment(paymentMethod)) {
+                const result =
+                  await payOrderByWallet(order);
+                await interaction.channel.send({
+                  embeds: [
+                    new EmbedBuilder()
+                      .setColor('#57F287')
+                      .setTitle('💳 儲值卡 / 錢包付款已扣款')
+                      .setDescription(
+                        `扣款金額：${result.amount} 星雨幣\n` +
+                        `剩餘餘額：${result.finalCoins} 星雨幣`
+                      )
+                      .setTimestamp()
+                  ]
+                });
+              }
+              else if (isMonthlyPayment(paymentMethod)) {
+                const result =
+                  await payOrderByMonthly(order);
+                await interaction.channel.send({
+                  embeds: [
+                    new EmbedBuilder()
+                      .setColor('#66ccff')
+                      .setTitle('🌙 月結付款已成立')
+                      .setDescription(
+                        `本次月結金額：NT$${result.amount.toLocaleString('zh-TW')}\n` +
+                        `待發回饋：${result.cashback.toLocaleString('zh-TW')} 星雨幣\n\n` +
+                        `已使用額度：NT$${result.usedAmount.toLocaleString('zh-TW')} / NT$${result.monthlyLimit.toLocaleString('zh-TW')}\n` +
+                        `剩餘可用額度：NT$${result.availableAmount.toLocaleString('zh-TW')}`
+                      )
+                      .setTimestamp()
+                  ]
+                });
+              }
+              else if (isNeedManualPaidPayment(paymentMethod)) {
+                await supabase
+                  .from('play_orders')
+                  .update({
+                    paid: true,
+                    paid_at: new Date().toISOString()
+                  })
+                  .eq('id', order.id);
+                await interaction.channel.send({
+                  embeds: [
+                    new EmbedBuilder()
+                      .setColor('#57F287')
+                      .setTitle('✅ 付款已確認')
+                      .setDescription(
+                        `付款方式：${paymentMethod}\n` +
+                        `此訂單已標記為已付款。`
+                      )
+                      .setTimestamp()
+                  ]
+                });
+              }
+              else {
+                return await safeReply(interaction, {
+                  content:
+                    `❌ 無法判斷付款方式：${paymentMethod || '未填寫'}\n` +
+                    `請先確認訂單付款方式。`,
+                  ephemeral: true
+                });
+              }
+            } catch (err) {
               return await safeReply(interaction, {
-                content: '❌ 找不到客戶資料',
+                content: `❌ 完成訂單失敗：${err.message}`,
                 ephemeral: true
               });
             }
-            const payAmount =
-              Number(
-                order.final_price ||
-                order.price
-              );
-            if (
-              userData.coins < payAmount
-            ) {
-              return await safeReply(interaction, {
-                content:
-                  `❌ 客戶餘額不足\n\n` +
-                  `需要：${payAmount}\n` +
-                  `目前：${userData.coins}`,
-                ephemeral: true
-              });
-            }
-            const finalCoins =
-              userData.coins - payAmount;
-            // ===== 扣款 =====
-            await supabase
-              .from('users')
-              .update({
-                coins: finalCoins,
-                total_spent:
-                  (userData.total_spent || 0) + payAmount,
-                month_spent:
-                  (userData.month_spent || 0) + payAmount
-              })
-              .eq(
-                'user_id',
-                order.customer_id
-              );
-            await sendWalletLog(
-              order.customer_id,
-              '訂單消費',
-              -payAmount,
-              finalCoins,
-              `🎮 ${order.service}`
-            );
-            // ===== 標記付款 =====
-            await supabase
-              .from('play_orders')
-              .update({
-                paid: true,
-                paid_at: new Date(),
-                status: 'completed',
-                completed_at: new Date()
-              })
-              .eq('id', order.id);
-            // ===== 陪玩恢復可接單 =====
-            if (order.assigned_player) {
+          }
+          // ===== 標記訂單完成 =====
+          await supabase
+            .from('play_orders')
+            .update({
+              status: 'completed',
+              completed_at: new Date().toISOString()
+            })
+            .eq('id', order.id);
+          // ===== 陪玩恢復可接單 =====
+          if (order.assigned_player) {
+            const assignedPlayers =
+              String(order.assigned_player || '')
+                .split(',')
+                .map(id => id.trim())
+                .filter(Boolean);
+            for (const playerId of assignedPlayers) {
               await supabase
                 .from('players')
                 .update({
                   status: 'available'
                 })
-                .eq(
-                  'discord_id',
-                  order.assigned_player
-                );
+                .eq('discord_id', playerId);
             }
-            // ===== DM 通知 =====
-            const targetUser =
-              await client.users
-                .fetch(order.customer_id)
-                .catch(() => null);
-            if (targetUser) {
-              const embed =
-                new EmbedBuilder()
-                  .setColor('#ff4444')
-                  .setTitle('💳 訂單扣款成功')
-                  .setDescription(
-                    `🎮 ${order.service}\n` +
-                    `💰 扣除 ${payAmount} 星雨幣\n` +
-                    `🏦 剩餘 ${finalCoins} 星雨幣`
-                  );
-              await targetUser.send({
-                embeds: [embed]
-              }).catch(() => {});
-            }
-            await interaction.channel.send({
-              embeds: [
-                new EmbedBuilder()
-                  .setColor('#57F287')
-                  .setTitle('💰 已自動扣款')
-                  .setDescription(
-                    `已扣除 ${payAmount} 星雨幣`
-                  )
-              ]
-            });
           }
         }
       }
+      // ===== 多位陪陪薪資平分 =====
+      const assignedPlayers =
+        String(order.assigned_player || '')
+          .split(',')
+          .map(id => id.trim())
+          .filter(Boolean);
+      const playerCount =
+        assignedPlayers.length || 1;
+      const totalPrice =
+        Number(order.final_price || order.price || 0);
+      const splitAmount =
+        Math.floor(totalPrice / playerCount);
+      // ===== 寫入薪資紀錄：多位陪陪平分 =====
+      if (assignedPlayers.length > 0 && totalPrice > 0) {
+        for (const playerId of assignedPlayers) {
+          const { data: player } =
+            await supabase
+              .from('players')
+              .select('*')
+              .eq('discord_id', playerId)
+              .maybeSingle();
+          const salaryRate =
+            Number(player?.salary_rate || 0.8);
+          const salaryAmount =
+            Math.floor(splitAmount * salaryRate);
+          await supabase
+            .from('salary_orders')
+            .insert({
+              order_id: order.id,
+              order_no: order.order_no,
+              player_id: playerId,
+              customer_id: order.customer_id,
+              service: order.service || order.order_item || '陪玩訂單',
+              total_amount: splitAmount,
+              salary_amount: salaryAmount,
+              status: 'unpaid'
+            });
+        }
+      }
+      await interaction.channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#ffcc00')
+            .setTitle('🏁 訂單已完成')
+            .setDescription(
+              `訂單編號：${order.order_no || order.id}\n` +
+              `陪玩：${assignedPlayers.map(id => `<@${id}>`).join('、') || '未指定'}\n` +
+              `服務：${order.service || order.order_item || '未填寫'}\n` +
+              `商品金額：NT$${totalPrice.toLocaleString('zh-TW')}\n` +
+              `每位分攤金額：NT$${splitAmount.toLocaleString('zh-TW')}`
+            )
+            .setTimestamp()
+        ]
+      });
       // ===== 完成訂單後，先詢問客人是否關閉 =====
       const confirmCloseButton =
         new ButtonBuilder()
@@ -3763,7 +4865,7 @@ ${content || '(無內容)'}
         fs.unlinkSync(`./${fileName}`);
 
         await interaction.editReply({
-          content: '✅ 已儲存紀錄\n10 秒後刪除頻道'
+          content: '✅ 已儲存紀錄\n10 秒後刪fe除頻道'
         });
 
         setTimeout(async () => {
@@ -3801,6 +4903,59 @@ async function handleStringSelectInteraction(interaction) {
       return await safeEditReply(interaction, {
         content: '❌ 選擇無效',
         ephemeral: true
+      });
+    }
+    if (customId === 'select_benefit_type') {
+      const today = getTodayDateString();
+      const { data: oldBenefit, error: oldError } =
+        await supabase
+          .from('user_benefits')
+          .select('*')
+          .eq('user_id', interaction.user.id)
+          .maybeSingle();
+      if (oldError) {
+        console.error('[切換權益] 查詢失敗', oldError);
+        return interaction.editReply({
+          content: '❌ 查詢權益資料失敗，請稍後再試。',
+          components: []
+        });
+      }
+      let switchCount = 0;
+      if (oldBenefit?.switch_date === today) {
+        switchCount = Number(oldBenefit.switch_count || 0);
+      }
+      if (switchCount >= 2) {
+        return interaction.editReply({
+          content:
+            '❌ 你今天已經切換 2 次權益了。\n' +
+            '請明天再切換。',
+          components: []
+        });
+      }
+      const { error } =
+        await supabase
+          .from('user_benefits')
+          .upsert({
+            user_id: interaction.user.id,
+            benefit_type: value,
+            switch_date: today,
+            switch_count: switchCount + 1,
+            updated_at: new Date().toISOString()
+          }, {
+            onConflict: 'user_id'
+          });
+      if (error) {
+        console.error('[切換權益] 儲存失敗', error);
+        return interaction.editReply({
+          content: '❌ 切換權益失敗，請稍後再試。',
+          components: []
+        });
+      }
+      return interaction.editReply({
+        content:
+          `✅ 已切換權益為：${value}\n` +
+          `今日剩餘切換次數：${2 - (switchCount + 1)} 次`,
+        components: []
       });
     }
     // ===== 訂單系統 =====
@@ -3876,12 +5031,16 @@ async function handleStringSelectInteraction(interaction) {
               .setColor('#ff66cc')
               .setTitle('🛒 訂單建立成功')
               .setDescription(
-                '• 請幫我按下上方按鈕填寫？'
+                '請依照上方選單一步一步完成需求填寫。\n' +
+                '填寫完成後，客服會協助報價。'
               );
           try {
-            await dispatchSystem.sendPlayOrderFormButton(orderChannel);
+            await dispatchSystem.startNewOrderFlow(
+              orderChannel,
+              interaction.user
+            );
           } catch (err) {
-            console.error('[派單面板錯誤]', err);
+            console.error('[新下單流程錯誤]', err);
           }
           await orderChannel.send({
             content:
