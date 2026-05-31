@@ -4569,124 +4569,47 @@ async function handleButtonInteraction(interaction) {
             .order('created_at', { ascending: false })
             .limit(1)
             .maybeSingle();
-        if (order) {
-          // ===== 完成訂單前付款處理 =====
-          const paymentMethod =
-            order.payment_method || '';
-          if (!order.paid) {
-            try {
-              if (isWalletPayment(paymentMethod)) {
-                const result =
-                  await payOrderByWallet(order);
-                await interaction.channel.send({
-                  embeds: [
-                    new EmbedBuilder()
-                      .setColor('#57F287')
-                      .setTitle('💳 儲值卡 / 錢包付款已扣款')
-                      .setDescription(
-                        `扣款金額：${result.amount} 星雨幣\n` +
-                        `剩餘餘額：${result.finalCoins} 星雨幣`
-                      )
-                      .setTimestamp()
-                  ]
-                });
-              }
-              else if (isMonthlyPayment(paymentMethod)) {
-                const result =
-                  await payOrderByMonthly(order);
-                await interaction.channel.send({
-                  embeds: [
-                    new EmbedBuilder()
-                      .setColor('#66ccff')
-                      .setTitle('🌙 月結付款已成立')
-                      .setDescription(
-                        `本次月結金額：NT$${result.amount.toLocaleString('zh-TW')}\n` +
-                        `待發回饋：${result.cashback.toLocaleString('zh-TW')} 星雨幣\n\n` +
-                        `已使用額度：NT$${result.usedAmount.toLocaleString('zh-TW')} / NT$${result.monthlyLimit.toLocaleString('zh-TW')}\n` +
-                        `剩餘可用額度：NT$${result.availableAmount.toLocaleString('zh-TW')}`
-                      )
-                      .setTimestamp()
-                  ]
-                });
-              }
-              else if (isNeedManualPaidPayment(paymentMethod)) {
-                await supabase
-                  .from('play_orders')
-                  .update({
-                    paid: true,
-                    paid_at: new Date().toISOString()
-                  })
-                  .eq('id', order.id);
-                await interaction.channel.send({
-                  embeds: [
-                    new EmbedBuilder()
-                      .setColor('#57F287')
-                      .setTitle('✅ 付款已確認')
-                      .setDescription(
-                        `付款方式：${paymentMethod}\n` +
-                        `此訂單已標記為已付款。`
-                      )
-                      .setTimestamp()
-                  ]
-                });
-              }
-              else {
-                return await safeReply(interaction, {
-                  content:
-                    `❌ 無法判斷付款方式：${paymentMethod || '未填寫'}\n` +
-                    `請先確認訂單付款方式。`,
-                  ephemeral: true
-                });
-              }
-            } catch (err) {
-              return await safeReply(interaction, {
-                content: `❌ 完成訂單失敗：${err.message}`,
-                ephemeral: true
-              });
-            }
-          }
-          // ===== 標記訂單完成 =====
-          await supabase
-            .from('play_orders')
-            .update({
-              status: 'completed',
-              completed_at: new Date().toISOString()
-            })
-            .eq('id', order.id);
-          // ===== 陪玩恢復可接單 =====
-          if (order.assigned_player) {
-            const assignedPlayers =
-              String(order.assigned_player || '')
-                .split(',')
-                .map(id => id.trim())
-                .filter(Boolean);
-            for (const playerId of assignedPlayers) {
-              await supabase
-                .from('players')
-                .update({
-                  status: 'available'
-                })
-                .eq('discord_id', playerId);
-            }
-          }
+        if (!order) {
+          return await safeReply(interaction, {
+            content:
+              '❌ 找不到這個頻道對應的訂單。\n' +
+              '請確認客人是否已完成下單流程，並且訂單有寫入 play_orders。',
+            ephemeral: true
+          });
         }
-      }
-      // ===== 多位陪陪薪資平分 =====
-      const assignedPlayers =
-        String(order.assigned_player || '')
-          .split(',')
-          .map(id => id.trim())
-          .filter(Boolean);
-      const playerCount =
-        assignedPlayers.length || 1;
-      const totalPrice =
-        Number(order.final_price || order.price || 0);
-      const splitAmount =
-        Math.floor(totalPrice / playerCount);
-      // ===== 寫入薪資紀錄：多位陪陪平分 =====
-      if (assignedPlayers.length > 0 && totalPrice > 0) {
-        for (const playerId of assignedPlayers) {
-          const { data: player } =
+        const assignedPlayers =
+          String(order.assigned_player || '')
+            .split(',')
+            .map(id => id.trim())
+            .filter(Boolean);
+        if (!assignedPlayers.length) {
+          return await safeReply(interaction, {
+            content:
+              '❌ 這張訂單目前還沒有陪玩接單，不能完成訂單。\n' +
+              '請先讓陪玩到員工接單區按「接單」。',
+            ephemeral: true
+          });
+        }
+        // ===== 完成訂單前付款檢查 =====
+        if (!order.paid) {
+          return await safeReply(interaction, {
+            content:
+              '❌ 這張訂單尚未確認付款，不能完成訂單。\n' +
+              '請先讓客服按「客服確認已付款」，或確認儲值卡 / 月結是否已成功扣款。',
+            ephemeral: true
+          });
+        }
+        // ===== 多位陪陪薪資平分 =====
+        const playerCount =
+          assignedPlayers.length || 1;
+        const totalPrice =
+          Number(order.final_price || order.price || 0);
+        const splitAmount =
+          Math.floor(totalPrice / playerCount);
+    // ===== 寫入薪資紀錄：多位陪陪平分 =====
+    if (assignedPlayers.length > 0 && totalPrice > 0) {
+      for (const playerId of assignedPlayers) {
+        const { data: player } =
             await supabase
               .from('players')
               .select('*')
@@ -4778,6 +4701,7 @@ async function handleButtonInteraction(interaction) {
         content: '✅ 已送出關閉確認給客人',
         ephemeral: true
       });
+     }
     }
     // ===== 直接刪除訂單頻道 =====
     if (customId === 'delete_order_now') {
