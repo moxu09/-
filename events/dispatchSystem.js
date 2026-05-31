@@ -1476,22 +1476,33 @@ async function createWaitingQuoteOrder(interaction, flowId, pending) {
 
   if (error || !order) {
     console.error('[新下單] 建立待報價訂單失敗', error);
-
     const payload = {
-      content: '❌ 建立訂單失敗，請稍後再試。',
+      content:
+        '❌ 建立訂單失敗，請檢查 Supabase play_orders 欄位是否完整。\n' +
+        `錯誤：${error?.message || '未知錯誤'}`,
       components: []
     };
-
-    if (interaction.isModalSubmit()) {
-      return interaction.reply({
-        ...payload,
-        flags: 64
+    if (interaction.deferred || interaction.replied) {
+      return interaction.editReply(payload).catch(async () => {
+        return interaction.followUp({
+          ...payload,
+          flags: 64
+        }).catch(() => {});
       });
     }
-
-    return interaction.editReply(payload);
+    if (interaction.isButton() || interaction.isStringSelectMenu()) {
+      return interaction.update(payload).catch(async () => {
+        return interaction.reply({
+          ...payload,
+          flags: 64
+        }).catch(() => {});
+      });
+    }
+    return interaction.reply({
+      ...payload,
+      flags: 64
+    }).catch(() => {});
   }
-
   pendingNewOrders.delete(flowId);
 
   const embed =
@@ -1553,16 +1564,37 @@ async function createWaitingQuoteOrder(interaction, flowId, pending) {
   };
 
   if (interaction.isModalSubmit()) {
-    await interaction.reply({
-      ...payload,
-      flags: 64
-    });
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(payload).catch(async () => {
+        await interaction.followUp({
+          ...payload,
+          flags: 64
+        }).catch(() => {});
+      });
+    } else {
+      await interaction.reply({
+        ...payload,
+        flags: 64
+      }).catch(() => {});
+    }
   } else {
-    await interaction.update(payload);
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(payload).catch(async () => {
+        await interaction.followUp({
+          ...payload,
+          flags: 64
+        }).catch(() => {});
+      });
+    } else {
+      await interaction.update(payload).catch(async () => {
+        await interaction.reply({
+          ...payload,
+          flags: 64
+        }).catch(() => {});
+      });
+    }
   }
-
   await sendStaffQuotePanel(order);
-
   return true;
 }
 async function sendStaffQuotePanel(order) {
