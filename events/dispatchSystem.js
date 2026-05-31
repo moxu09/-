@@ -16,6 +16,7 @@ let client;
 let paymentHelpers = {};
 
 const pendingNewOrders = new Map();
+const pendingTopups = new Map();
 
 function setup(supabaseInstance, clientInstance, helpers = {}) {
   supabase = supabaseInstance;
@@ -2708,13 +2709,10 @@ async function startNewOrderFlow(channel, user) {
   });
 }
 async function openTopupModal(interaction) {
-
   const modal =
     new ModalBuilder()
       .setCustomId('submit_topup_form')
       .setTitle('💰 儲值申請');
-
-  // ===== 金額 =====
 
   const amountInput =
     new TextInputBuilder()
@@ -2723,18 +2721,6 @@ async function openTopupModal(interaction) {
       .setPlaceholder('例如：1000')
       .setStyle(TextInputStyle.Short)
       .setRequired(true);
-
-  // ===== 付款方式 =====
-
-  const methodInput =
-    new TextInputBuilder()
-      .setCustomId('method')
-      .setLabel('付款方式')
-      .setPlaceholder('匯款/無卡/信用卡/加密貨幣/美金轉帳')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true);
-
-  // ===== 備註 =====
 
   const noteInput =
     new TextInputBuilder()
@@ -2745,21 +2731,13 @@ async function openTopupModal(interaction) {
       .setRequired(false);
 
   modal.addComponents(
-
-    new ActionRowBuilder()
-      .addComponents(amountInput),
-
-    new ActionRowBuilder()
-      .addComponents(methodInput),
-
-    new ActionRowBuilder()
-      .addComponents(noteInput)
-
+    new ActionRowBuilder().addComponents(amountInput),
+    new ActionRowBuilder().addComponents(noteInput)
   );
 
   await interaction.showModal(modal);
-
 }
+
 // ===== 開啟更改訂單金額視窗 =====
 async function openChangeOrderPriceModal(interaction) {
   if (!canEditOrderPrice(interaction)) {
@@ -2934,72 +2912,136 @@ async function submitDispatchPlayers(interaction) {
   });
 }
 async function submitTopupForm(interaction) {
-
   await interaction.deferReply({
     flags: 64
   });
-
   const amountText =
     interaction.fields.getTextInputValue(
       'amount'
     );
-
-  const method =
-    interaction.fields.getTextInputValue(
-      'method'
-    );
-
   let note = '無';
-
   try {
-
     note =
       interaction.fields.getTextInputValue(
         'note'
       ) || '無';
-
   } catch {}
-
   // ===== 金額處理 =====
-
   const amount =
     parseInt(
       amountText.replace(/[^\d]/g, ''),
       10
     );
-
   if (!amount || amount <= 0) {
-
     return interaction.editReply({
       content: '❌ 金額格式錯誤'
     });
+  }
+  const topupId =
+    `${interaction.user.id}_${Date.now()}`;
 
+  pendingTopups.set(topupId, {
+    userId: interaction.user.id,
+    amount,
+    note
+  });
+
+  setTimeout(() => {
+    pendingTopups.delete(topupId);
+  }, 30 * 60 * 1000);
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`topup_payment_method_${topupId}`)
+      .setPlaceholder('請選擇付款方式')
+      .addOptions([
+        {
+          label: '匯款 / 轉帳',
+          description: '顯示銀行帳號，付款後上傳截圖',
+          value: '匯款'
+        },
+        {
+          label: '無卡',
+          description: '顯示無卡帳號，付款後上傳截圖',
+          value: '無卡'
+        },
+        {
+          label: '刷卡',
+          description: '顯示刷卡付款連結',
+          value: '刷卡'
+        },
+        {
+          label: '美金轉帳',
+          description: '請等待客服提供帳號',
+          value: '美金轉帳'
+        },
+        {
+          label: '加密貨幣',
+          description: '請等待客服提供錢包地址',
+          value: '加密貨幣'
+        }
+      ]);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  return interaction.editReply({
+    content:
+      `✅ 已填寫儲值金額：NT$${amount}\n` +
+      `📝 備註：${note}\n\n` +
+      `請繼續選擇付款方式：`,
+    components: [row]
+  });
+}
+async function handleTopupPaymentMethodSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
   }
 
-  // ===== Embed =====
+  const topupId =
+    interaction.customId.replace('topup_payment_method_', '');
+
+  const pending =
+    pendingTopups.get(topupId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆儲值申請已過期，請重新填寫。',
+      components: []
+    });
+  }
+
+  if (pending.userId !== interaction.user.id) {
+    return interaction.editReply({
+      content: '❌ 只有建立儲值申請的人可以選擇付款方式。',
+      components: []
+    });
+  }
+
+  const method =
+    interaction.values[0];
+
+  const { amount, note } = pending;
+
+  pendingTopups.delete(topupId);
 
   const embed =
     new EmbedBuilder()
       .setColor('#ffd166')
       .setTitle('💰 儲值申請')
       .setDescription(
-
         `👤 會員：${interaction.user}\n\n` +
-
         `💵 儲值金額：NT$${amount}\n` +
-
         `💳 付款方式：${method}\n` +
-
         `📝 備註：${note}`
-
       );
-
-  // ===== 按鈕 =====
 
   const row =
     new ActionRowBuilder()
       .addComponents(
-
         new ButtonBuilder()
           .setCustomId(
             `confirm_topup_${interaction.user.id}_${amount}`
@@ -3013,23 +3055,41 @@ async function submitTopupForm(interaction) {
           .setLabel('關閉單子')
           .setEmoji('🗑️')
           .setStyle(ButtonStyle.Danger)
-
       );
 
   await interaction.channel.send({
     embeds: [embed],
     components: [row]
   });
+
   if (isCardPayment(method)) {
     await sendCardPaymentInfo(interaction.channel);
   } else if (isNoCardPayment(method)) {
     await sendNoCardPaymentInfo(interaction.channel);
   } else if (isBankTransfer(method)) {
     await sendBankTransferInfo(interaction.channel);
+  } else if (
+    method.includes('美金') ||
+    method.includes('加密貨幣')
+  ) {
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#ffaa00')
+          .setTitle('💳 特殊付款方式')
+          .setDescription(
+            `<@${interaction.user.id}> 你選擇了：${method}\n\n` +
+            `請等待客服提供付款帳號 / 錢包地址。\n` +
+            `付款完成後請上傳付款截圖，等待客服確認。`
+          )
+          .setTimestamp()
+      ]
+    });
   }
-  await interaction.editReply({
-    content:
-      '✅ 已送出儲值申請'
+
+  return interaction.editReply({
+    content: `✅ 已選擇付款方式：${method}`,
+    components: []
   });
 }
 async function submitSaveOrderNote(interaction) {
@@ -3965,6 +4025,10 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId.startsWith('submit_dispatch_players_')) {
       await submitDispatchPlayers(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('topup_payment_method_')) {
+      await handleTopupPaymentMethodSelect(interaction);
       return true;
     }
   }

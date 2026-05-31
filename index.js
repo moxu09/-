@@ -56,6 +56,7 @@ const claimedDrops = new Set();
 const dropCooldown = new Map();
 const orderPayments = new Map();
 const pendingTips = new Map();
+const pendingTopups = new Map();
 // ===== Panel Message =====
 async function getPanelMessage(panelName) {
   const { data, error } = await supabase
