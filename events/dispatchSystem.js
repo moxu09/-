@@ -2480,9 +2480,11 @@ async function handleStaffConfirmOrderPaid(interaction) {
   });
 }
 async function handleCustomerConfirmOrder(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
   const orderId =
     interaction.customId.replace('customer_confirm_order_', '');
@@ -2574,10 +2576,11 @@ async function handleCustomerConfirmOrder(interaction) {
   });
 }
 async function handleCustomerOrderWrong(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
-
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
   const orderId =
     interaction.customId.replace('customer_order_wrong_', '');
 
