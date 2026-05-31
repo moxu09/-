@@ -2075,20 +2075,20 @@ async function handleQuoteSelectCoupon(interaction) {
     .eq('id', coupon.id);
 
   // 寫入 used_coupons，如果沒有這張表會失敗但不影響主流程
-  await supabase
-    .from('used_coupons')
-    .insert({
-      user_id: interaction.user.id,
-      item_id: coupon.id,
-      item_name: coupon.item_name,
-      order_id: order.id,
-      discount_rate: discount.rate,
-      discount_amount: discountAmount
-    })
-    .catch(err => {
-      console.log('[優惠券使用紀錄失敗]', err.message);
-    });
-
+  const { error: usedCouponError } =
+    await supabase
+      .from('used_coupons')
+      .insert({
+        user_id: interaction.user.id,
+        item_id: coupon.id,
+        item_name: coupon.item_name,
+        order_id: order.id,
+        discount_rate: discount.rate,
+        discount_amount: discountAmount
+      });
+  if (usedCouponError) {
+    console.log('[優惠券使用紀錄失敗]', usedCouponError.message);
+  } 
   await interaction.channel.send({
     embeds: [
       new EmbedBuilder()
