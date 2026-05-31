@@ -2711,6 +2711,36 @@ client.on(Events.InteractionCreate, async interaction => {
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
+      // ===== 使用者按錯建立訂單 / 儲值頻道，自行關閉 =====
+      if (interaction.customId === 'owner_cancel_ticket') {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({ flags: 64 });
+        }
+        const topic =
+          interaction.channel?.topic || '';
+        const ownerId =
+          topic.startsWith('owner:')
+            ? topic.replace('owner:', '').trim()
+            : null;
+        const isStaff =
+          interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+          interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+        if (
+          interaction.user.id !== ownerId &&
+          !isStaff
+        ) {
+          return interaction.editReply({
+            content: '❌ 只有建立這個頻道的人或客服可以關閉。'
+          });
+        }
+        await interaction.editReply({
+          content: '🗑️ 已收到，這個臨時頻道將在 3 秒後刪除。'
+        });
+        setTimeout(async () => {
+          await interaction.channel.delete().catch(() => {});
+        }, 3000);
+        return;
+      }
       if (interaction.customId.startsWith('change_preferred_player_')) {
         if (!interaction.deferred && !interaction.replied) {
           await interaction.deferReply({ flags: 64 });
@@ -5260,10 +5290,17 @@ async function handleStringSelectInteraction(interaction) {
               .setCustomId('complete_order')
               .setLabel('✅ 完成訂單（由客服關）')
               .setStyle(ButtonStyle.Primary);
+          const cancelButton =
+            new ButtonBuilder()
+              .setCustomId('owner_cancel_ticket')
+              .setLabel('我按錯了，關閉頻道')
+              .setEmoji('🗑️')
+              .setStyle(ButtonStyle.Danger);
           const row2 =
             new ActionRowBuilder()
               .addComponents(
-                completeButton
+                completeButton,
+                cancelButton
               );
           const embed =
             new EmbedBuilder()
@@ -5304,7 +5341,12 @@ async function handleStringSelectInteraction(interaction) {
                   .setCustomId('open_topup_modal')
                   .setLabel('填寫儲值資料')
                   .setEmoji('💳')
-                  .setStyle(ButtonStyle.Primary)
+                  .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                  .setCustomId('owner_cancel_ticket')
+                  .setLabel('我按錯了，關閉頻道')
+                  .setEmoji('🗑️')
+                  .setStyle(ButtonStyle.Danger)
               );
           await orderChannel.send({
             content:
