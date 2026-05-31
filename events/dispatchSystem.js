@@ -3481,55 +3481,69 @@ async function acceptPlayOrder(interaction) {
           `你的可接項目：${allowedServices.join('、') || '未設定'}`
       });
     }
-    // ===== 實際接單陪陪名單 =====
-    // 如果客服有指定多位陪陪，就整組一起成為 assigned_player
-    // 如果沒有指定，才使用按接單的人
-    let assignedPlayerIds = [interaction.user.id];
-    if (order.preferred_player) {
-      const preferredPlayers =
-        String(order.preferred_player)
-          .split(',')
-          .map(id => id.trim())
-          .filter(Boolean);
-      if (preferredPlayers.length > 0) {
-        assignedPlayerIds = preferredPlayers;
-      }
+    // ===== 多人接單邏輯 =====
+    const needCount =
+      Number(order.player_count || 1) || 1;
+    let assignedPlayerIds =
+      String(order.assigned_player || '')
+        .split(',')
+        .map(id => id.trim())
+        .filter(Boolean);
+    // 避免同一個人重複接
+    if (assignedPlayerIds.includes(interaction.user.id)) {
+      return interaction.editReply({
+        content: '❌ 你已經接過這張訂單了'
+      });
+    }
+    // 加入這次按接單的人
+    assignedPlayerIds.push(interaction.user.id);
+    // 如果超過需求人數，擋掉
+    if (assignedPlayerIds.length > needCount) {
+      return interaction.editReply({
+        content:
+          `❌ 這張訂單需要 ${needCount} 位陪玩，目前名額已滿。`
+      });
     }
     const assignedPlayerValue =
       assignedPlayerIds.join(',');
+    const isFull =
+      assignedPlayerIds.length >= needCount;
+    const nextStatus =
+      isFull ? 'accepted' : 'pending';
+    const updatePayload = {
+      status: nextStatus,
+      assigned_player: assignedPlayerValue
+    };
+    if (isFull) {
+      updatePayload.accepted_at = new Date();
+    }
     const { data: updated, error: updateError } =
       await supabase
         .from('play_orders')
-        .update({
-          status: 'accepted',
-          assigned_player: assignedPlayerValue,
-          accepted_at: new Date()
-        })
+        .update(updatePayload)
         .eq('id', orderId)
-        .eq('status', 'pending')
+        .in('status', ['pending', 'accepted'])
         .select()
         .single();
-
     if (updateError) {
       console.log('[接單更新錯誤]', updateError);
-
       return interaction.editReply({
         content: '❌ 接單更新失敗，請查看 Railway Logs',
       });
     }
-
     if (!updated) {
       return interaction.editReply({
-        content: '❌ 這張訂單已被其他人接走',
+        content: '❌ 這張訂單目前無法接單，可能已被接滿或狀態已變更',
       });
-    }
-
-    for (const playerId of assignedPlayerIds) {
-      await supabase
-        .from('players')
-        .update({ status: 'busy' })
-        .eq('discord_id', playerId);
-    }
+    } 
+    if (isFull) {
+      for (const playerId of assignedPlayerIds) {
+        await supabase
+          .from('players')
+          .update({ status: 'busy' })
+          .eq('discord_id', playerId);
+      }
+    } 
     const orderChannel =
       await client.channels.fetch(
         order.channel_id
@@ -3551,23 +3565,27 @@ async function acceptPlayOrder(interaction) {
       .update({ channel_id: orderChannel.id })
       .eq('id', orderId);
     const embed = new EmbedBuilder()
-      .setColor('#00ff99')
-      .setTitle('✅ 陪玩訂單已接單')
+      .setColor(isFull ? '#00ff99' : '#ffd166')
+      .setTitle(
+        isFull
+          ? '✅ 陪玩訂單已接單'
+          : '⏳ 陪玩接單中'
+      )
       .setDescription(
         `訂單編號：${order.order_no}\n` +
         `客人：<@${order.customer_id}>\n` +
-        `陪玩：${assignedPlayerIds.map(id => `<@${id}>`).join('、')}\n` +
+        `目前陪玩：${assignedPlayerIds.map(id => `<@${id}>`).join('、')}\n` +
+        `需要人數：${needCount} 位\n` +
+        `目前人數：${assignedPlayerIds.length} 位\n` +
         `服務：${order.service}\n` +
         `商品金額（折前）：NT$${order.price}`
-      );
-
+    );
     await orderChannel.send({
-      content:
-        `<@${order.customer_id}> ` +
-        assignedPlayerIds.map(id => `<@${id}>`).join(' '),
+      content: isFull
+        ? `<@${order.customer_id}> ${assignedPlayerIds.map(id => `<@${id}>`).join(' ')}`
+        : `${assignedPlayerIds.map(id => `<@${id}>`).join(' ')} 已接單，目前還差 ${needCount - assignedPlayerIds.length} 位陪玩。`,
       embeds: [embed],
     });
-
     await sendPlayLog({
       title: '✅ 訂單已接取',
       description:

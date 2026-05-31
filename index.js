@@ -57,6 +57,428 @@ const dropCooldown = new Map();
 const orderPayments = new Map();
 const pendingTips = new Map();
 const pendingTopups = new Map();
+const TIP_GIFTS = [
+  {
+    key: 'tip_30',
+    name: '薯條',
+    price: 30,
+    description: '30 ASD'
+  },
+  {
+    key: 'tip_45',
+    name: '雞米花',
+    price: 45,
+    description: '45 ASD'
+  },
+  {
+    key: 'tip_50',
+    name: '洋蔥圈',
+    price: 50,
+    description: '50 ASD'
+  },
+  {
+    key: 'tip_100',
+    name: '雞排',
+    price: 100,
+    description: '100 ASD'
+  },
+  {
+    key: 'tip_250',
+    name: '天婦羅套餐',
+    price: 250,
+    description: '250 ASD'
+  },
+  {
+    key: 'tip_380',
+    name: '咬你一口蛋糕',
+    price: 380,
+    description: '380 ASD'
+  },
+  {
+    key: 'tip_520',
+    name: '黑森林蛋糕',
+    price: 520,
+    description: '520 ASD'
+  },
+  {
+    key: 'tip_666',
+    name: '漂白洗刷套餐',
+    price: 666,
+    description: '666 ASD'
+  },
+  {
+    key: 'tip_888',
+    name: '水蜜桃禮盒',
+    price: 888,
+    description: '888 ASD'
+  },
+  {
+    key: 'tip_1688',
+    name: '滿滿的愛',
+    price: 1688,
+    description: '1688 ASD｜可全體廣播'
+  },
+  {
+    key: 'tip_1999',
+    name: '明燈千里',
+    price: 1999,
+    description: '1999 ASD｜可全體廣播，冠名三天，陪陪專屬語音感謝'
+  },
+  {
+    key: 'tip_16888',
+    name: '明燈三千盞',
+    price: 16888,
+    description: '16888 ASD｜詳情請詢問客服'
+  }
+];
+
+function getTipGiftByKey(key) {
+  return TIP_GIFTS.find(gift => gift.key === key);
+}
+async function sendTipGiftSelect(channel, tipId) {
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`tip_gift_${tipId}`)
+      .setPlaceholder('請選擇要打賞的禮物')
+      .addOptions(
+        TIP_GIFTS.slice(0, 25).map(gift => ({
+          label: `${gift.name}｜${gift.price} ASD`.slice(0, 100),
+          description: gift.description.slice(0, 100),
+          value: gift.key
+        }))
+      );
+
+  const selectRow =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  const cancelRow =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('owner_cancel_ticket')
+          .setLabel('我按錯了，關閉頻道')
+          .setEmoji('🗑️')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await channel.send({
+    content:
+      `💝 請選擇要打賞的禮物：`,
+    components: [selectRow, cancelRow]
+  });
+}
+
+async function handleTipGiftSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const tipId =
+    interaction.customId.replace('tip_gift_', '');
+
+  const tipData =
+    pendingTips.get(tipId);
+
+  if (!tipData) {
+    return interaction.editReply({
+      content: '❌ 這筆打賞流程已過期，請重新建立打賞頻道。'
+    });
+  }
+
+  if (interaction.user.id !== tipData.createdBy) {
+    return interaction.editReply({
+      content: '❌ 只有建立這筆打賞的人可以操作。'
+    });
+  }
+
+  const gift =
+    getTipGiftByKey(interaction.values[0]);
+
+  if (!gift) {
+    return interaction.editReply({
+      content: '❌ 找不到這個打賞禮物。'
+    });
+  }
+
+  tipData.item = gift.name;
+  tipData.amount = gift.price;
+  pendingTips.set(tipId, tipData);
+
+  const { data: players, error } =
+    await supabase
+      .from('players')
+      .select('*')
+      .order('status', { ascending: true });
+
+  if (error) {
+    console.error('[打賞] 讀取陪陪失敗', error);
+    return interaction.editReply({
+      content: '❌ 讀取陪陪名單失敗'
+    });
+  }
+
+  const playerOptions =
+    (players || [])
+      .filter(player => player.discord_id)
+      .slice(0, 25)
+      .map(player => {
+        const statusText =
+          player.status === 'available'
+            ? '在線'
+            : '離線 / 未接單';
+
+        return {
+          label: `${player.name || player.discord_id}`.slice(0, 100),
+          description: `${statusText}｜都可以打賞`.slice(0, 100),
+          value: String(player.discord_id)
+        };
+      });
+
+  if (!playerOptions.length) {
+    return interaction.editReply({
+      content: '❌ 目前沒有可選擇的陪陪資料。'
+    });
+  }
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`tip_staff_${tipId}`)
+      .setPlaceholder('請選擇要打賞的陪陪')
+      .addOptions(playerOptions);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  await interaction.channel.send({
+    content:
+      `✅ 已選擇禮物：${gift.name}｜${gift.price} ASD\n\n` +
+      `請選擇要打賞的陪陪：`,
+    components: [row]
+  });
+
+  return interaction.editReply({
+    content: '✅ 已選擇打賞禮物'
+  });
+}
+
+async function handleTipStaffSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const tipId =
+    interaction.customId.replace('tip_staff_', '');
+
+  const tipData =
+    pendingTips.get(tipId);
+
+  if (!tipData) {
+    return interaction.editReply({
+      content: '❌ 這筆打賞流程已過期，請重新建立打賞頻道。'
+    });
+  }
+
+  if (interaction.user.id !== tipData.createdBy) {
+    return interaction.editReply({
+      content: '❌ 只有建立這筆打賞的人可以操作。'
+    });
+  }
+
+  const selectedStaffId =
+    interaction.values[0];
+
+  tipData.selectedStaffId = selectedStaffId;
+  pendingTips.set(tipId, tipData);
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`tip_payment_${tipId}`)
+      .setPlaceholder('請選擇付款方式')
+      .addOptions([
+        {
+          label: '匯款 / 轉帳',
+          description: '顯示銀行帳號，付款後上傳截圖',
+          value: '匯款'
+        },
+        {
+          label: '無卡',
+          description: '顯示無卡帳號，付款後上傳截圖',
+          value: '無卡'
+        },
+        {
+          label: '刷卡',
+          description: '顯示刷卡付款連結，付款後上傳截圖',
+          value: '刷卡'
+        },
+        {
+          label: '美金轉帳',
+          description: '請等待客服提供帳號',
+          value: '美金轉帳'
+        },
+        {
+          label: '加密貨幣',
+          description: '請等待客服提供錢包地址',
+          value: '加密貨幣'
+        }
+      ]);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  await interaction.channel.send({
+    content:
+      `✅ 已選擇受賞陪陪：<@${selectedStaffId}>\n\n` +
+      `請選擇付款方式：`,
+    components: [row]
+  });
+
+  return interaction.editReply({
+    content: '✅ 已選擇受賞陪陪'
+  });
+}
+
+async function handleTipPaymentSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const tipId =
+    interaction.customId.replace('tip_payment_', '');
+
+  const tipData =
+    pendingTips.get(tipId);
+
+  if (!tipData) {
+    return interaction.editReply({
+      content: '❌ 這筆打賞流程已過期，請重新建立打賞頻道。'
+    });
+  }
+
+  if (interaction.user.id !== tipData.createdBy) {
+    return interaction.editReply({
+      content: '❌ 只有建立這筆打賞的人可以操作。'
+    });
+  }
+
+  const paymentMethod =
+    interaction.values[0];
+
+  const {
+    tipperId,
+    selectedStaffId,
+    item,
+    amount
+  } = tipData;
+
+  if (!selectedStaffId || !item || !amount) {
+    return interaction.editReply({
+      content: '❌ 打賞資料不完整，請重新建立打賞流程。'
+    });
+  }
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#ff99cc')
+      .setTitle('💝 打賞需求')
+      .addFields(
+        {
+          name: '打賞人',
+          value: `<@${tipperId}>`,
+          inline: true
+        },
+        {
+          name: '受賞陪陪',
+          value: `<@${selectedStaffId}>`,
+          inline: true
+        },
+        {
+          name: '品項',
+          value: item,
+          inline: true
+        },
+        {
+          name: '金額',
+          value: `NT$${amount}`,
+          inline: true
+        },
+        {
+          name: '付款方式',
+          value: paymentMethod,
+          inline: true
+        },
+        {
+          name: '付款狀態',
+          value: '等待客服確認付款',
+          inline: false
+        }
+      )
+      .setTimestamp();
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(
+            `confirm_tip_paid_${tipperId}_${selectedStaffId}_${amount}`
+          )
+          .setLabel('✅ 確認打賞付款')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId(
+            `cancel_tip_${tipperId}_${selectedStaffId}_${amount}`
+          )
+          .setLabel('❌ 取消打賞')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await interaction.channel.send({
+    content:
+      `<@&${process.env.STAFF_ROLE}> 有新的打賞等待確認付款。`,
+    embeds: [embed],
+    components: [row]
+  });
+
+  if (isCardPayment(paymentMethod)) {
+    await sendCardPaymentInfo(interaction.channel);
+  } else if (isNoCardPayment(paymentMethod)) {
+    await sendNoCardPaymentInfo(interaction.channel);
+  } else if (isBankTransfer(paymentMethod)) {
+    await sendBankTransferInfo(interaction.channel);
+  } else if (
+    paymentMethod.includes('美金') ||
+    paymentMethod.includes('加密貨幣')
+  ) {
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#ffaa00')
+          .setTitle('💳 特殊付款方式')
+          .setDescription(
+            `<@${tipperId}> 你選擇了：${paymentMethod}\n\n` +
+            `請等待客服提供付款帳號 / 錢包地址。\n` +
+            `付款完成後請上傳付款截圖，等待客服確認。`
+          )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  pendingTips.delete(tipId);
+
+  return interaction.editReply({
+    content: `✅ 已建立打賞需求，付款方式：${paymentMethod}`
+  });
+}
 // ===== Panel Message =====
 async function getPanelMessage(panelName) {
   const { data, error } = await supabase
@@ -1755,6 +2177,11 @@ async function sendOrderSystem(client) {
           label: '💰 儲值',
           description: '建立儲值頻道',
           value: 'topup'
+        },
+        {
+          label: '💝 打賞',
+          description: '建立打賞頻道',
+          value: 'tip'
         }
       ]);
 
@@ -5168,6 +5595,18 @@ async function handleStringSelectInteraction(interaction) {
     }
     const customId = interaction.customId;
     const value = interaction.values[0];
+    if (customId.startsWith('tip_gift_')) {
+      await handleTipGiftSelect(interaction);
+      return;
+    }
+    if (customId.startsWith('tip_staff_')) {
+      await handleTipStaffSelect(interaction);
+      return;
+    }
+    if (customId.startsWith('tip_payment_')) {
+      await handleTipPaymentSelect(interaction);
+      return;
+    }
     if (!value) {
       return await safeEditReply(interaction, {
         content: '❌ 選擇無效',
@@ -5241,10 +5680,14 @@ async function handleStringSelectInteraction(interaction) {
           interaction.user.username
             .replace(/[^a-zA-Z0-9\u4e00-\u9fa5-_]/g, '')
             .slice(0, 10);
+        const channelPrefix =
+          value === 'topup'
+            ? '儲值'
+            : value === 'tip'
+              ? '打賞'
+              : '訂單';
         const channelName =
-          value === 'order'
-            ? `訂單-${safeName}-${ticketNumber}`
-            : `儲值-${safeName}-${ticketNumber}`;
+          `${channelPrefix}-${safeName}-${ticketNumber}`;
         const orderChannel =
           await interaction.guild.channels.create({
             name: channelName,
@@ -5323,6 +5766,24 @@ async function handleStringSelectInteraction(interaction) {
               `<@&${process.env.STAFF_ROLE}> ${interaction.user}\n🚀 客服人員正手刀衝刺過來啦！`,
             embeds: [embed],
             components: [row2]
+          });
+        }
+        if (value === 'tip') {
+          const tipId =
+            `${interaction.user.id}_${Date.now()}`;
+          pendingTips.set(tipId, {
+            createdBy: interaction.user.id,
+            tipperId: interaction.user.id,
+            channelId: orderChannel.id
+          });
+          setTimeout(() => {
+            pendingTips.delete(tipId);
+          }, 30 * 60 * 1000);
+          await sendTipGiftSelect(orderChannel, tipId);
+          return await interaction.editReply({
+            content:
+              `✅ 已建立打賞臨時頻道：<#${orderChannel.id}>\n` +
+              `請到頻道內選擇要打賞的禮物。`
           });
         }
         // ===== 儲值 =====
