@@ -2563,17 +2563,26 @@ client.on(Events.InteractionCreate, async interaction => {
     }
   } catch (err) {
     console.error('[InteractionCreate 錯誤]', err);
-
-    if (interaction.deferred || interaction.replied) {
-      await interaction.editReply({
-        content: '❌ 系統錯誤'
-      }).catch(() => {});
-    } else {
-      await interaction.reply({
-        content: '❌ 系統錯誤',
-        flags: 64
-      }).catch(() => {});
+    const payload = {
+      content: '❌ 系統錯誤，請稍後再試。',
+      components: []
+    };
+    if (!interaction.isRepliable()) {
+      return;
     }
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply(payload).catch(async () => {
+        await interaction.followUp({
+          ...payload,
+          flags: 64
+        }).catch(() => {});
+      });
+      return;
+    }
+    await interaction.reply({
+      ...payload,
+      flags: 64
+    }).catch(() => {});
   }
 });
 async function replySuccess(interaction, message) {
