@@ -804,6 +804,84 @@ function isNeedManualPaidPayment(text = '') {
     value.includes('加密貨幣')
   );
 }
+function isCardPayment(text = '') {
+  const value = String(text || '').toLowerCase();
+
+  return (
+    value.includes('刷卡') ||
+    value.includes('信用卡') ||
+    value.includes('信用卡付款') ||
+    value.includes('card')
+  );
+}
+
+function isNoCardPayment(text = '') {
+  const value = String(text || '');
+
+  return (
+    value.includes('無卡') ||
+    value.includes('無卡存款')
+  );
+}
+
+function isBankTransfer(text = '') {
+  const value = String(text || '');
+
+  return (
+    value.includes('匯款') ||
+    value.includes('轉帳')
+  );
+}
+
+async function sendNoCardPaymentInfo(channel) {
+  const embed = new EmbedBuilder()
+    .setColor('#ffd166')
+    .setTitle('🏧 無卡付款資訊')
+    .setDescription(
+      `請依照以下資訊完成無卡付款：\n\n` +
+      `銀行：中國信託\n` +
+      `銀行代碼：822\n` +
+      `帳號：901565426642\n` +
+      `戶名：許O星\n\n` +
+      `或是\n\n` +
+      `銀行：國泰世華\n` +
+      `銀行代碼：013\n` +
+      `帳號：134500100962\n` +
+      `戶名：許O星\n\n` +
+      `付款完成後，請在此頻道上傳存款明細，等待客服確認。`
+    )
+    .setFooter({
+      text: '請確認金額正確後再付款'
+    })
+    .setTimestamp();
+
+  await channel.send({
+    embeds: [embed]
+  });
+}
+
+async function sendCardPaymentInfo(channel) {
+  const embed = new EmbedBuilder()
+    .setColor('#9b5cff')
+    .setTitle('💳 刷卡付款資訊')
+    .setDescription(
+      `請點擊以下連結完成刷卡付款：\n\n` +
+      `🔗 付款連結：https://pcpay.tw/aCU67\n\n` +
+      `付款完成後，請在此頻道上傳付款成功截圖，等待客服確認。\n\n` +
+      `截圖請包含：\n` +
+      `1. 付款成功畫面\n` +
+      `2. 付款金額\n` +
+      `3. 交易時間或交易編號`
+    )
+    .setFooter({
+      text: '請確認金額正確後再付款'
+    })
+    .setTimestamp();
+
+  await channel.send({
+    embeds: [embed]
+  });
+}
 async function payOrderByWallet(order) {
   const userId = order.customer_id;
 
