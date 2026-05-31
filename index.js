@@ -513,6 +513,268 @@ async function payOrderByMonthly(order) {
     availableAmount: monthlyLimit - usedAmount - amount
   };
 }
+// ===== VIP 成長制度 =====
+function parseVipCouponReward(rewardCoupon = '') {
+  const text = String(rewardCoupon || '').trim();
+
+  if (!text) {
+    return [];
+  }
+
+  const match =
+    text.match(/(.+?)[*×xX]\s*(\d+)/);
+
+  if (!match) {
+    return [
+      {
+        name: text,
+        count: 1
+      }
+    ];
+  }
+
+  return [
+    {
+      name: match[1].trim(),
+      count: Number(match[2] || 1)
+    }
+  ];
+}
+
+async function giveVipRole(userId, roleId) {
+  if (!roleId) return;
+
+  const guild =
+    client.guilds.cache.first();
+
+  if (!guild) return;
+
+  const member =
+    await guild.members
+      .fetch(userId)
+      .catch(() => null);
+
+  if (!member) return;
+
+  await member.roles
+    .add(roleId)
+    .catch(err => {
+      console.log('[VIP 身分組發放失敗]', err.message);
+    });
+}
+
+async function grantVipLevelReward(userId, level, triggerType, triggerAmount) {
+  const rewardAsd =
+    Number(level.reward_asd || 0);
+
+  // ===== 發 ASD =====
+  if (rewardAsd > 0) {
+    const userData =
+      await getUser(userId);
+
+    const currentCoins =
+      Number(userData.coins || 0);
+
+    const finalCoins =
+      currentCoins + rewardAsd;
+
+    await updateCoins(userId, finalCoins);
+
+    await sendWalletLog(
+      userId,
+      'VIP升級獎勵',
+      rewardAsd,
+      finalCoins,
+      `升級 ${level.level_name}｜獲得 ${rewardAsd} ASD`
+    );
+  }
+
+  // ===== 發優惠券 =====
+  const coupons =
+    parseVipCouponReward(level.reward_coupon);
+
+  for (const coupon of coupons) {
+    for (let i = 0; i < coupon.count; i++) {
+      await addUserItem(
+        userId,
+        coupon.name,
+        'VIP',
+        `${level.level_name} 升級獎勵`,
+        'coupon'
+      );
+    }
+  }
+
+  // ===== 發 VIP 身分組，如果 vip_levels.role_id 有填才會發 =====
+  await giveVipRole(userId, level.role_id);
+
+  // ===== 寫入升級紀錄 =====
+  await supabase
+    .from('vip_upgrade_logs')
+    .insert({
+      user_id: userId,
+      old_level_key: null,
+      new_level_key: level.level_key,
+      trigger_type: triggerType,
+      trigger_amount: triggerAmount,
+      reward_asd: rewardAsd,
+      reward_coupon: level.reward_coupon,
+      reward_note: level.reward_note
+    });
+
+  // ===== 私訊通知 =====
+  const user =
+    await client.users
+      .fetch(userId)
+      .catch(() => null);
+
+  if (user) {
+    await user.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#ffd700')
+          .setTitle('✨ VIP 等級提升')
+          .setDescription(
+            `恭喜你升級為 **${level.level_name}**！\n\n` +
+            `🎁 ASD 獎勵：${rewardAsd || 0} ASD\n` +
+            `🎟️ 優惠券：${level.reward_coupon || '無'}\n` +
+            `💎 權益：${level.reward_note || '無'}`
+          )
+          .setTimestamp()
+      ]
+    }).catch(() => {});
+  }
+}
+
+async function checkAndUpgradeVip(userId, triggerType, amount) {
+  const triggerAmount =
+    Number(amount || 0);
+
+  if (!userId || !triggerAmount || triggerAmount <= 0) {
+    return null;
+  }
+
+  const { data: currentVip } =
+    await supabase
+      .from('user_vips')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+  const oldTotalSpent =
+    Number(currentVip?.total_spent || 0);
+
+  const oldHighestTopup =
+    Number(currentVip?.highest_single_topup || 0);
+
+  const newTotalSpent =
+    triggerType === 'spend'
+      ? oldTotalSpent + triggerAmount
+      : oldTotalSpent;
+
+  const newHighestTopup =
+    triggerType === 'topup'
+      ? Math.max(oldHighestTopup, triggerAmount)
+      : oldHighestTopup;
+
+  const { data: levels, error: levelError } =
+    await supabase
+      .from('vip_levels')
+      .select('*')
+      .order('sort_order', { ascending: true });
+
+  if (levelError || !levels?.length) {
+    console.log('[VIP] 讀取等級失敗', levelError);
+    return null;
+  }
+
+  const oldSortOrder =
+    currentVip?.level_key
+      ? Number(
+          levels.find(level => level.level_key === currentVip.level_key)
+            ?.sort_order || 0
+        )
+      : 0;
+
+  const availableLevels =
+    levels.filter(level => {
+      const spendRequired =
+        Number(level.total_spend_required || 0);
+
+      const topupRequired =
+        Number(level.single_topup_required || 0);
+
+      return (
+        newTotalSpent >= spendRequired ||
+        newHighestTopup >= topupRequired
+      );
+    });
+
+  if (!availableLevels.length) {
+    await supabase
+      .from('user_vips')
+      .upsert(
+        {
+          user_id: userId,
+          level_key: currentVip?.level_key || null,
+          level_name: currentVip?.level_name || null,
+          total_spent: newTotalSpent,
+          highest_single_topup: newHighestTopup,
+          updated_at: new Date().toISOString()
+        },
+        {
+          onConflict: 'user_id'
+        }
+      );
+
+    return null;
+  }
+
+  const newLevel =
+    availableLevels[availableLevels.length - 1];
+
+  const newSortOrder =
+    Number(newLevel.sort_order || 0);
+
+  await supabase
+    .from('user_vips')
+    .upsert(
+      {
+        user_id: userId,
+        level_key: newLevel.level_key,
+        level_name: newLevel.level_name,
+        total_spent: newTotalSpent,
+        highest_single_topup: newHighestTopup,
+        updated_at: new Date().toISOString()
+      },
+      {
+        onConflict: 'user_id'
+      }
+    );
+
+  // 沒升級就只更新累積資料，不發獎勵
+  if (newSortOrder <= oldSortOrder) {
+    return null;
+  }
+
+  // 如果一次跳很多級，會把中間每一級獎勵都發給他
+  const rewardLevels =
+    levels.filter(level =>
+      Number(level.sort_order || 0) > oldSortOrder &&
+      Number(level.sort_order || 0) <= newSortOrder
+    );
+
+  for (const level of rewardLevels) {
+    await grantVipLevelReward(
+      userId,
+      level,
+      triggerType,
+      triggerAmount
+    );
+  }
+
+  return newLevel;
+}
 // 更新簽到
 async function updateCheckin(userId, date) {
   const { error } = await supabase.from('users').update({ last_checkin: date }).eq('user_id', userId);
@@ -2263,6 +2525,17 @@ async function createMonthlyTransaction({
     availableAmount: Math.max(0, monthlyLimit - newUsedAmount)
   };
 }
+function isCardPayment(text = '') {
+  const value =
+    String(text || '').toLowerCase();
+
+  return (
+    value.includes('刷卡') ||
+    value.includes('信用卡') ||
+    value.includes('信用卡付款') ||
+    value.includes('card')
+  );
+}
 function isNoCardPayment(text = '') {
   return text.includes('無卡');
 }
@@ -2807,6 +3080,11 @@ async function handleSlashCommand(interaction) {
             amount,
             finalCoins,
             '💳 儲值成功'
+          );
+          await checkAndUpgradeVip(
+            target.id,
+            'topup',
+            amount
           );
           return interaction.editReply({
             content:
@@ -4355,11 +4633,15 @@ async function handleButtonInteraction(interaction) {
           completed_at: new Date().toISOString()
         })
         .eq('customer_id', tipperId)
-        .eq('assigned_player', staffId)
         .eq('final_price', Number(amount))
         .eq('note', '打賞')
         .order('created_at', { ascending: false })
         .limit(1);
+      await checkAndUpgradeVip(
+        tipperId,
+        'spend',
+        Number(amount)
+      );
       const oldEmbed = interaction.message.embeds[0];
 
       const embed =
@@ -4599,6 +4881,20 @@ async function handleButtonInteraction(interaction) {
             ephemeral: true
           });
         }
+        // ===== 標記訂單完成 =====
+        await supabase
+          .from('play_orders')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString()
+          })
+          .eq('id', order.id);
+        // ===== VIP 累積消費檢查 =====
+        await checkAndUpgradeVip(
+          order.customer_id,
+          'spend',
+          Number(order.final_price || order.price || 0)
+        );
         // ===== 多位陪陪薪資平分 =====
         const playerCount =
           assignedPlayers.length || 1;

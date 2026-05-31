@@ -2253,6 +2253,7 @@ async function handleQuotePaymentMethodSelect(interaction) {
             .setTimestamp()
         ]
       });
+    
     } catch (err) {
       return interaction.editReply({
         content: `❌ 儲值卡付款失敗：${err.message}`
