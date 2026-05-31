@@ -1797,10 +1797,11 @@ async function submitStaffQuotePrice(interaction) {
   });
 }
 async function handleQuoteNoCoupon(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
-
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
   const orderId =
     interaction.customId.replace('quote_no_coupon_', '');
 
@@ -1895,9 +1896,11 @@ function getCouponMaxDiscountPrice(itemName = '') {
   return null;
 }
 async function handleQuoteUseCoupon(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
   const orderId =
     interaction.customId.replace('quote_use_coupon_', '');
@@ -1976,9 +1979,11 @@ async function handleQuoteUseCoupon(interaction) {
   });
 }
 async function handleQuoteSelectCoupon(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
   const orderId =
     interaction.customId.replace('quote_select_coupon_', '');
@@ -2166,9 +2171,11 @@ async function sendPaymentMethodSelect(channel, order) {
   });
 }
 async function handleQuotePaymentMethodSelect(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
   const orderId =
     interaction.customId.replace('quote_payment_method_', '');
