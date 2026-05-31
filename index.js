@@ -38,7 +38,11 @@ const client = new Client({
 });
 // ===== 陪玩排單系統 =====
 const dispatchSystem = require('./events/dispatchSystem');
-dispatchSystem.setup(supabase, client);
+
+dispatchSystem.setup(supabase, client, {
+  payOrderByWallet,
+  payOrderByMonthly
+});
 // ===== 轉帳冷卻 =====
 const transferCooldown =
   new Map();

@@ -13,11 +13,14 @@ const {
 
 let supabase;
 let client;
+let paymentHelpers = {};
+
 const pendingNewOrders = new Map();
 
-function setup(supabaseInstance, clientInstance) {
+function setup(supabaseInstance, clientInstance, helpers = {}) {
   supabase = supabaseInstance;
   client = clientInstance;
+  paymentHelpers = helpers;
 }
 function isCardPayment(text = '') {
   return (
@@ -2201,11 +2204,30 @@ async function handleQuotePaymentMethodSelect(interaction) {
       content: '❌ 只有下單的闆闆可以選擇付款方式'
     });
   }
+  function isWalletPayment(text = '') {
+    const value = String(text || '');
+    return (
+      value.includes('儲值卡') ||
+      value.includes('錢包') ||
+      value.includes('餘額')
+    );
+  }
+  function isMonthlyPayment(text = '') {
+    const value = String(text || '');
+    return (
+      value.includes('月結') ||
+      value.includes('月結付款') ||
+      value.includes('月結會員')
+    );
+  }
   let paidNow = false;
   let paidAt = null;
   if (isWalletPayment(paymentMethod)) {
     try {
-      await payOrderByWallet(order);
+      if (!paymentHelpers.payOrderByWallet) {
+        throw new Error('錢包付款函式尚未接入 dispatchSystem');
+      }
+      const result = await paymentHelpers.payOrderByWallet(order);
       paidNow = true;
       paidAt = new Date().toISOString();
       await interaction.channel.send({
@@ -2215,7 +2237,8 @@ async function handleQuotePaymentMethodSelect(interaction) {
             .setTitle('💳 儲值卡 / 錢包付款完成')
             .setDescription(
               `<@${order.customer_id}> 已使用儲值卡 / 錢包付款。\n\n` +
-              `系統已自動扣除本筆訂單金額。`
+              `扣款金額：${result.amount} 星雨幣\n` +
+              `剩餘餘額：${result.finalCoins} 星雨幣`
             )
             .setTimestamp()
         ]
@@ -2228,7 +2251,10 @@ async function handleQuotePaymentMethodSelect(interaction) {
   }
   if (isMonthlyPayment(paymentMethod)) {
     try {
-      const result = await payOrderByMonthly(order);
+      if (!paymentHelpers.payOrderByMonthly) {
+        throw new Error('月結付款函式尚未接入 dispatchSystem');
+      }
+      const result = await paymentHelpers.payOrderByMonthly(order);
       paidNow = true;
       paidAt = new Date().toISOString();
       await interaction.channel.send({
@@ -2243,7 +2269,7 @@ async function handleQuotePaymentMethodSelect(interaction) {
               `剩餘月結額度：NT$${result.availableAmount}`
             )
             .setTimestamp()
-        ] 
+        ]
       });
     } catch (err) {
       return interaction.editReply({
