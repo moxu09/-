@@ -3396,16 +3396,27 @@ async function acceptPlayOrder(interaction) {
             .map(s => s.trim())
             .filter(Boolean);
 
+    const orderServiceKey =
+      `${order.game || ''}${order.order_item || ''}`
+        .replace(/\s+/g, '')
+        .replace(/｜/g, '')
+        .trim();
     const canAccept =
-      allowedServices.some(service =>
-        order.service.includes(service)
-      );
+      allowedServices.some(service => {
+        const serviceKey =
+          String(service || '')
+            .replace(/\s+/g, '')
+            .replace(/｜/g, '')
+            .trim();
+        return serviceKey === orderServiceKey;
+      });
 
     if (!canAccept) {
       return interaction.editReply({
         content:
           `❌ 你沒有權限接這個項目\n` +
           `此訂單服務：${order.service}\n` +
+          `比對用服務：${orderServiceKey}\n` +
           `你的可接項目：${allowedServices.join('、') || '未設定'}`
       });
     }
