@@ -1057,11 +1057,38 @@ async function giveVipRole(userId, roleId) {
 
   if (!member) return;
 
-  await member.roles
-    .add(roleId)
-    .catch(err => {
-      console.log('[VIP 身分組發放失敗]', err.message);
-    });
+  const vipRoleIds =
+    String(process.env.VIP_ROLE_IDS || '')
+      .split(',')
+      .map(id => id.trim())
+      .filter(Boolean);
+
+  // 先移除舊的 VIP / VV 身分組
+  for (const oldRoleId of vipRoleIds) {
+    if (
+      oldRoleId !== roleId &&
+      member.roles.cache.has(oldRoleId)
+    ) {
+      await member.roles
+        .remove(oldRoleId)
+        .catch(err => {
+          console.log(
+            '[VIP 舊身分組移除失敗]',
+            oldRoleId,
+            err.message
+          );
+        });
+    }
+  }
+
+  // 再發新的最高等級身分組
+  if (!member.roles.cache.has(roleId)) {
+    await member.roles
+      .add(roleId)
+      .catch(err => {
+        console.log('[VIP 身分組發放失敗]', err.message);
+      });
+  }
 }
 
 async function grantVipLevelReward(userId, level, triggerType, triggerAmount) {
