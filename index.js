@@ -5131,6 +5131,11 @@ ${content || '(無內容)'}
 // ===== 完整字符串選單交互處理 =====
 async function handleStringSelectInteraction(interaction) {
   try {
+    if (!interaction.deferred && !interaction.replied) {
+      await interaction.deferReply({
+        flags: 64
+      });
+    }
     const customId = interaction.customId;
     const value = interaction.values[0];
     if (!value) {
