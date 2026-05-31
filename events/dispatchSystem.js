@@ -1940,7 +1940,8 @@ async function handleQuoteUseCoupon(interaction) {
     return interaction.editReply({
       content:
         '❌ 你目前沒有可使用的優惠券。\n' +
-        '請改選「不使用優惠券」。'
+        '請改選「不使用優惠券」。',
+      components: []
     });
   }
 
