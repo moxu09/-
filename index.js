@@ -6225,7 +6225,7 @@ ${content || '(無內容)'}
         fs.unlinkSync(`./${fileName}`);
 
         await interaction.editReply({
-          content: '✅ 已儲存紀錄\n10 秒後刪fe除頻道'
+          content: '✅ 已儲存紀錄\n10 秒後刪除頻道'
         });
 
         setTimeout(async () => {
