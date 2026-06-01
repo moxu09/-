@@ -4769,9 +4769,76 @@ async function handleButtonInteraction(interaction) {
         ]
       });
     }
-      // ===== ATM 消費資訊 =====
+    // ===== ATM 消費資訊 =====
     if (customId === 'consume_info') {
       const userData = await getUser(interaction.user.id);
+      const now = new Date();
+      const taiwanNow =
+        new Date(now.getTime() + 8 * 60 * 60 * 1000);
+      const year =
+        taiwanNow.getUTCFullYear();
+      const month =
+        String(taiwanNow.getUTCMonth() + 1).padStart(2, '0');
+      const monthStart =
+        new Date(`${year}-${month}-01T00:00:00+08:00`);
+      const nextMonthStart =
+        new Date(monthStart);
+      nextMonthStart.setMonth(nextMonthStart.getMonth() + 1);
+      const { data: topupLogs, error: topupError } =
+        await supabase
+          .from('wallet_logs')
+          .select('amount, created_at')
+          .eq('user_id', interaction.user.id)
+          .eq('type', '儲值');
+      if (topupError) {
+        console.error('[ATM 消費資訊] 查詢儲值紀錄失敗', topupError);
+      }
+      const logs =
+        topupLogs || [];
+      const totalTopup =
+        logs.reduce(
+          (sum, log) => sum + Number(log.amount || 0),
+          0
+        );
+      const monthTopup =
+        logs
+          .filter(log => {
+            const createdAt =
+              new Date(log.created_at);
+            return (
+              createdAt >= monthStart &&
+              createdAt < nextMonthStart
+            );
+          })
+          .reduce(
+            (sum, log) => sum + Number(log.amount || 0),
+            0
+          );
+      const { data: monthSpendLogs, error: monthSpendError } =
+        await supabase
+          .from('wallet_logs')
+          .select('type, amount, created_at')
+          .eq('user_id', interaction.user.id)
+          .lt('amount', 0)
+          .gte('created_at', monthStart.toISOString())
+          .lt('created_at', nextMonthStart.toISOString());
+      if (monthSpendError) {
+        console.error('[ATM 消費資訊] 查詢月消費失敗', monthSpendError);
+      }
+      const monthSpent =
+        (monthSpendLogs || [])
+          .filter(log =>
+            [
+              '訂單扣款',
+              '商店購買',
+              '打賞消費',
+              '加時扣款'
+            ].includes(log.type)
+          )
+          .reduce(
+            (sum, log) => sum + Math.abs(Number(log.amount || 0)),
+            0
+          );
       const embed =
         new EmbedBuilder()
           .setColor('#00ffff')
@@ -4779,11 +4846,15 @@ async function handleButtonInteraction(interaction) {
           .setThumbnail(interaction.user.displayAvatarURL())
           .setDescription(
             `**錢包餘額**\n` +
-            `${userData.coins || 0} 元\n\n` +
+            `${Number(userData.coins || 0).toLocaleString('zh-TW')} ASD\n\n` +
             `**累積消費金額**\n` +
-            `${userData.total_spent || 0} 元\n\n` +
+            `${Number(userData.total_spent || 0).toLocaleString('zh-TW')} 元\n\n` +
             `**月累積消費金額**\n` +
-            `${userData.month_spent || 0} 元`
+            `${Number(monthSpent || 0).toLocaleString('zh-TW')} ASD\n\n` +            
+            `**累積儲值金額**\n` +
+            `${Number(totalTopup || 0).toLocaleString('zh-TW')} ASD\n\n` +
+            `**本月累積儲值金額**\n` +
+            `${Number(monthTopup || 0).toLocaleString('zh-TW')} ASD`
           );
       return await interaction.editReply({
         embeds: [embed]
