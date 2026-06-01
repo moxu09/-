@@ -222,52 +222,59 @@ async function handleTipGiftSelect(interaction) {
     });
   }
 
+  const seenPlayerIds = new Set();
   const playerOptions =
     (players || [])
       .filter(player => player.discord_id)
+      .filter(player => {
+        const id = String(player.discord_id).trim();
+        if (!id) return false;
+        if (seenPlayerIds.has(id)) {
+          return false;
+        }
+        seenPlayerIds.add(id);
+        return true;
+      })
       .map(player => {
         const statusText =
           player.status === 'available'
             ? '在線'
             : '離線 / 未接單';
-
         return {
           label: `${player.name || player.discord_id}`.slice(0, 100),
           description: `${statusText}｜都可以打賞`.slice(0, 100),
           value: String(player.discord_id)
         };
       });
-
   if (!playerOptions.length) {
     return interaction.editReply({
       content: '❌ 目前沒有可選擇的陪陪資料。'
     });
   }
   const rows = [];
-  const groups = [];
   for (let i = 0; i < playerOptions.length; i += 25) {
-    groups.push(playerOptions.slice(i, i + 25));
-  }
-  groups.slice(0, 5).forEach((group, index) => {
+    const page =
+      Math.floor(i / 25) + 1;
+    const group =
+      playerOptions.slice(i, i + 25);
     const menu =
       new StringSelectMenuBuilder()
-        .setCustomId(`tip_staff_${tipId}`)
-        .setPlaceholder(
-          groups.length === 1
-            ? '請選擇要打賞的陪陪'
-            : `請選擇要打賞的陪陪｜第 ${index + 1} 頁`
-        )
+        .setCustomId(`tip_staff_${tipId}_page_${page}`)
+        .setPlaceholder(`請選擇要打賞的陪陪｜第 ${page} 頁`)
         .addOptions(group);
     rows.push(
       new ActionRowBuilder()
         .addComponents(menu)
     );
-  });
+  }
   await interaction.channel.send({
     content:
       `✅ 已選擇禮物：${gift.name}｜${gift.price} ASD\n\n` +
       `請選擇要打賞的陪陪：`,
-    components: rows
+    components: rows.slice(0, 5)
+  });
+  return interaction.editReply({
+    content: '✅ 已選擇打賞禮物'
   });
 }
 async function handleTipStaffSelect(interaction) {
@@ -277,9 +284,12 @@ async function handleTipStaffSelect(interaction) {
     });
   }
 
-  const tipId =
+  const rawTipId =
     interaction.customId.replace('tip_staff_', '');
-
+  const tipId =
+    rawTipId.includes('_page_')
+      ? rawTipId.split('_page_')[0]
+      : rawTipId;
   const tipData =
     pendingTips.get(tipId);
 
