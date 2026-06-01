@@ -225,7 +225,6 @@ async function handleTipGiftSelect(interaction) {
   const playerOptions =
     (players || [])
       .filter(player => player.discord_id)
-      .slice(0, 25)
       .map(player => {
         const statusText =
           player.status === 'available'
@@ -244,29 +243,33 @@ async function handleTipGiftSelect(interaction) {
       content: '❌ 目前沒有可選擇的陪陪資料。'
     });
   }
-
-  const menu =
-    new StringSelectMenuBuilder()
-      .setCustomId(`tip_staff_${tipId}`)
-      .setPlaceholder('請選擇要打賞的陪陪')
-      .addOptions(playerOptions);
-
-  const row =
-    new ActionRowBuilder()
-      .addComponents(menu);
-
+  const rows = [];
+  const groups = [];
+  for (let i = 0; i < playerOptions.length; i += 25) {
+    groups.push(playerOptions.slice(i, i + 25));
+  }
+  groups.slice(0, 5).forEach((group, index) => {
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`tip_staff_${tipId}`)
+        .setPlaceholder(
+          groups.length === 1
+            ? '請選擇要打賞的陪陪'
+            : `請選擇要打賞的陪陪｜第 ${index + 1} 頁`
+        )
+        .addOptions(group);
+    rows.push(
+      new ActionRowBuilder()
+        .addComponents(menu)
+    );
+  });
   await interaction.channel.send({
     content:
       `✅ 已選擇禮物：${gift.name}｜${gift.price} ASD\n\n` +
       `請選擇要打賞的陪陪：`,
-    components: [row]
-  });
-
-  return interaction.editReply({
-    content: '✅ 已選擇打賞禮物'
+    components: rows
   });
 }
-
 async function handleTipStaffSelect(interaction) {
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({
