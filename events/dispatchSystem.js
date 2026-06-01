@@ -1490,7 +1490,7 @@ async function showDurationSelect(interaction, flowId, pending) {
       `🚻 性別偏好：${pending.gender}\n` +
       `🌟 指定陪陪：${playerText}\n\n` +
       (
-        isValorantTech
+        isValorantGameBased
           ? `請選擇需要的局數：`
           : `請選擇需要的時間段：`
       ),
@@ -1529,7 +1529,7 @@ async function handleNewOrderDurationSelect(interaction) {
   const isValorantGameBased =
     isValorantTech &&
     isValorantRankGameBased(pending.rank);
-  if (isValorantTech) {
+  if (isValorantGameBased) {
     if (value === 'game_custom') {
       pending.duration = '自訂局數';
       pending.durationMinutes = 0;
@@ -2301,14 +2301,17 @@ async function sendStaffQuotePanel(order) {
           .setLabel('客服填寫金額')
           .setEmoji('💰')
           .setStyle(ButtonStyle.Primary),
-
         new ButtonBuilder()
           .setCustomId(`dispatch_assign_players_${order.id}`)
           .setLabel('客服選擇陪陪')
           .setEmoji('🌟')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`staff_edit_order_${order.id}`)
+          .setLabel('修改訂單內容')
+          .setEmoji('🛠️')
           .setStyle(ButtonStyle.Secondary)
       );
-
   await channel.send({
     content:
       `<@&${process.env.STAFF_ROLE}> 有新的需求等待報價。\n` +
