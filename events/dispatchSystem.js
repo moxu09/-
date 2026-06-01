@@ -114,6 +114,67 @@ async function sendCardPaymentInfo(channel) {
     embeds: [embed]
   });
 }
+async function applyExtensionToPlayOrder(extension) {
+  const amount = Number(extension.amount || 0);
+
+  if (!amount || amount <= 0) {
+    throw new Error('加時金額錯誤');
+  }
+
+  const { data: order, error: orderError } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', extension.order_id)
+      .maybeSingle();
+
+  if (orderError || !order) {
+    console.error('[加時進薪資網] 找不到原訂單', orderError);
+    throw new Error('找不到原訂單');
+  }
+
+  const oldPrice =
+    Number(order.final_price || order.price || 0);
+
+  const newPrice =
+    oldPrice + amount;
+
+  const oldService =
+    order.service || order.order_item || '陪玩訂單';
+
+  const oldNote =
+    order.note || '';
+
+  const extensionText =
+    extension.extension_text || '加時';
+
+  const newNote =
+    `${oldNote}\n[加時] ${extensionText}｜+NT$${amount}`.trim();
+
+  const { error: updateOrderError } =
+    await supabase
+      .from('play_orders')
+      .update({
+        final_price: newPrice,
+        price: newPrice,
+        service: `${oldService}｜加時：${extensionText}`,
+        note: newNote,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', order.id);
+
+  if (updateOrderError) {
+    console.error('[加時進薪資網] 更新原訂單失敗', updateOrderError);
+    throw updateOrderError;
+  }
+
+  return {
+    order,
+    oldPrice,
+    newPrice,
+    amount
+  };
+}
 function formatAvailableTime(player) {
   const time = player.available_time || {};
 
@@ -3689,19 +3750,34 @@ async function handleExtensionPaymentMethodSelect(interaction) {
         paid_at: new Date().toISOString()
       })
       .eq('id', extension.id);
-
+    let salaryResult = null;
+    try {
+      salaryResult = await applyExtensionToPlayOrder(extension);
+    } catch (error) {
+      console.error('[加時] 寫入薪資網失敗', error);
+      await interaction.channel.send({
+        content:
+          `⚠️ 加時已付款，但寫入薪資網失敗。\n` +
+          `錯誤：${error.message || error}`
+      });
+    }
     await interaction.channel.send({
       embeds: [
         new EmbedBuilder()
           .setColor('#57F287')
           .setTitle('✅ 加時已付款')
           .setDescription(
-            `原訂單：${extension.order_no || extension.order_id}\n` +
-            `闆闆：<@${extension.customer_id}>\n` +
-            `加時內容：${extension.extension_text}\n` +
-            `加時金額：NT$${amount.toLocaleString('zh-TW')}\n` +
-            `付款方式：${paymentMethod}`
-          )
+              `原訂單：${extension.order_no || extension.order_id}\n` +
+              `闆闆：<@${extension.customer_id}>\n` +
+              `加時內容：${extension.extension_text}\n` +
+              `加時金額：NT$${amount.toLocaleString('zh-TW')}\n` +
+              `付款方式：${paymentMethod}\n` +
+              (
+                salaryResult
+                  ? `\n已更新薪資網金額：NT$${salaryResult.oldPrice.toLocaleString('zh-TW')} → NT$${salaryResult.newPrice.toLocaleString('zh-TW')}`
+                  : `\n⚠️ 薪資網尚未更新，請查看 Railway Logs`
+              )
+            )
           .setTimestamp()
       ]
     });
@@ -3818,7 +3894,17 @@ async function handleStaffConfirmExtensionPaid(interaction) {
         paid_at: new Date().toISOString()
       })
       .eq('id', extension.id);
-
+  let salaryResult = null;
+  try {
+    salaryResult = await applyExtensionToPlayOrder(extension);
+  } catch (error) {
+    console.error('[加時] 寫入薪資網失敗', error);
+    await interaction.channel.send({
+      content:
+        `⚠️ 加時已確認付款，但寫入薪資網失敗。\n` +
+        `錯誤：${error.message || error}`
+    });
+  }
   if (updateError) {
     console.error('[加時] 確認付款失敗', updateError);
     return interaction.editReply({
