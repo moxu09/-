@@ -2823,12 +2823,15 @@ async function sendCustomerFinalConfirm(channel, order) {
           .setLabel('確認正確')
           .setEmoji('✅')
           .setStyle(ButtonStyle.Success),
-
         new ButtonBuilder()
           .setCustomId(`customer_order_wrong_${order.id}`)
           .setLabel('內容有誤')
           .setEmoji('✏️')
-          .setStyle(ButtonStyle.Secondary)
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`extend_order_${order.id}`)
+          .setLabel('➕ 加時 / 續單')
+          .setStyle(ButtonStyle.Primary)
       );
 
   await channel.send({
@@ -3192,6 +3195,451 @@ async function submitStaffEditOrder(interaction) {
 
   return interaction.editReply({
     content: '✅ 已修改訂單，並重新送出給闆闆確認'
+  });
+}
+async function openExtendOrderModal(interaction) {
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.reply({
+      content: '❌ 只有客服可以建立加時',
+      flags: 64
+    });
+  }
+
+  const orderId =
+    interaction.customId.replace('extend_order_', '');
+
+  const modal =
+    new ModalBuilder()
+      .setCustomId(`submit_extend_order_${orderId}`)
+      .setTitle('建立加時 / 續單');
+
+  const textInput =
+    new TextInputBuilder()
+      .setCustomId('extension_text')
+      .setLabel('加時內容')
+      .setPlaceholder('例如：30分鐘、1局、3局、續聊1小時')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+  const amountInput =
+    new TextInputBuilder()
+      .setCustomId('amount')
+      .setLabel('加時金額')
+      .setPlaceholder('例如：150')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+  const noteInput =
+    new TextInputBuilder()
+      .setCustomId('note')
+      .setLabel('備註')
+      .setPlaceholder('例如：客人要求延長，陪陪同意')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(textInput),
+    new ActionRowBuilder().addComponents(amountInput),
+    new ActionRowBuilder().addComponents(noteInput)
+  );
+
+  return interaction.showModal(modal);
+}
+async function submitExtendOrder(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以建立加時'
+    });
+  }
+
+  const orderId =
+    interaction.customId.replace('submit_extend_order_', '');
+
+  const extensionText =
+    interaction.fields.getTextInputValue('extension_text');
+
+  const amountText =
+    interaction.fields.getTextInputValue('amount');
+
+  const note =
+    interaction.fields.getTextInputValue('note') || '';
+
+  const amount =
+    Number(amountText.replace(/[^\d]/g, ''));
+
+  if (!amount || amount <= 0) {
+    return interaction.editReply({
+      content: '❌ 加時金額格式錯誤，請輸入大於 0 的數字'
+    });
+  }
+
+  const { data: order, error: orderError } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+  if (orderError || !order) {
+    console.error('[加時] 找不到原訂單', orderError);
+    return interaction.editReply({
+      content: '❌ 找不到原訂單'
+    });
+  }
+
+  const { data: extension, error: insertError } =
+    await supabase
+      .from('order_extensions')
+      .insert({
+        order_id: order.id,
+        order_no: order.order_no || null,
+        customer_id: order.customer_id,
+        channel_id: order.channel_id || interaction.channel.id,
+        staff_id: interaction.user.id,
+        extension_text: extensionText,
+        amount,
+        payment_method: '未選擇',
+        paid: false,
+        status: 'pending',
+        note
+      })
+      .select()
+      .single();
+
+  if (insertError || !extension) {
+    console.error('[加時] 建立加時失敗', insertError);
+    return interaction.editReply({
+      content: '❌ 建立加時失敗，請確認 order_extensions 表是否已建立'
+    });
+  }
+
+  await sendExtensionPaymentMethodSelect(interaction.channel, extension);
+
+  return interaction.editReply({
+    content:
+      `✅ 已建立加時：${extensionText}\n` +
+      `金額：NT$${amount.toLocaleString('zh-TW')}`
+  });
+}async function sendExtensionPaymentMethodSelect(channel, extension) {
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`extension_payment_method_${extension.id}`)
+      .setPlaceholder('請選擇加時付款方式')
+      .addOptions([
+        {
+          label: '匯款 / 轉帳',
+          description: '顯示銀行帳號，付款後上傳截圖',
+          value: '匯款'
+        },
+        {
+          label: '無卡',
+          description: '顯示無卡帳號，付款後上傳截圖',
+          value: '無卡'
+        },
+        {
+          label: '刷卡',
+          description: '顯示刷卡付款連結，付款後上傳截圖',
+          value: '刷卡'
+        },
+        {
+          label: '儲值卡 / 錢包',
+          description: '立即由 ASD 餘額扣款',
+          value: '儲值卡'
+        },
+        {
+          label: '美金轉帳',
+          description: '請等待客服提供帳號',
+          value: '美金轉帳'
+        },
+        {
+          label: '加密貨幣',
+          description: '請等待客服提供錢包地址',
+          value: '加密貨幣'
+        }
+      ]);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('➕ 加時付款')
+        .setDescription(
+          `<@${extension.customer_id}> 請選擇加時付款方式。\n\n` +
+          `原訂單：${extension.order_no || extension.order_id}\n` +
+          `加時內容：${extension.extension_text}\n` +
+          `加時金額：NT$${Number(extension.amount || 0).toLocaleString('zh-TW')}`
+        )
+        .setTimestamp()
+    ],
+    components: [row]
+  });
+}
+async function handleExtensionPaymentMethodSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const extensionId =
+    interaction.customId.replace('extension_payment_method_', '');
+
+  const paymentMethod =
+    interaction.values[0];
+
+  const { data: extension, error } =
+    await supabase
+      .from('order_extensions')
+      .select('*')
+      .eq('id', extensionId)
+      .single();
+
+  if (error || !extension) {
+    return interaction.editReply({
+      content: '❌ 找不到加時資料'
+    });
+  }
+
+  if (extension.customer_id !== interaction.user.id) {
+    return interaction.editReply({
+      content: '❌ 只有這筆訂單的闆闆可以選擇付款方式'
+    });
+  }
+
+  const amount =
+    Number(extension.amount || 0);
+
+  // 儲值卡直接扣款
+  if (paymentMethod.includes('儲值卡')) {
+    const { data: userData, error: userError } =
+      await supabase
+        .from('users')
+        .select('*')
+        .eq('user_id', extension.customer_id)
+        .maybeSingle();
+
+    if (userError || !userData) {
+      return interaction.editReply({
+        content: '❌ 找不到錢包資料'
+      });
+    }
+
+    const currentCoins =
+      Number(userData.coins || 0);
+
+    if (currentCoins < amount) {
+      return interaction.editReply({
+        content:
+          `❌ ASD 餘額不足。\n` +
+          `目前餘額：${currentCoins} ASD\n` +
+          `需要金額：${amount} ASD`
+      });
+    }
+
+    const finalCoins =
+      currentCoins - amount;
+
+    const { error: coinError } =
+      await supabase
+        .from('users')
+        .update({
+          coins: finalCoins
+        })
+        .eq('user_id', extension.customer_id);
+
+    if (coinError) {
+      console.error('[加時] 錢包扣款失敗', coinError);
+      return interaction.editReply({
+        content: '❌ 錢包扣款失敗'
+      });
+    }
+
+    await paymentHelpers.sendWalletLog?.(
+      extension.customer_id,
+      '加時扣款',
+      -amount,
+      finalCoins,
+      `加時 ${extension.extension_text}｜原訂單 ${extension.order_no || extension.order_id}`
+    );
+
+    await supabase
+      .from('order_extensions')
+      .update({
+        payment_method: paymentMethod,
+        paid: true,
+        status: 'paid',
+        paid_at: new Date().toISOString()
+      })
+      .eq('id', extension.id);
+
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('✅ 加時已付款')
+          .setDescription(
+            `原訂單：${extension.order_no || extension.order_id}\n` +
+            `闆闆：<@${extension.customer_id}>\n` +
+            `加時內容：${extension.extension_text}\n` +
+            `加時金額：NT$${amount.toLocaleString('zh-TW')}\n` +
+            `付款方式：${paymentMethod}`
+          )
+          .setTimestamp()
+      ]
+    });
+
+    return interaction.editReply({
+      content: '✅ 加時已用儲值卡 / 錢包付款完成'
+    });
+  }
+
+  const { data: updatedExtension, error: updateError } =
+    await supabase
+      .from('order_extensions')
+      .update({
+        payment_method: paymentMethod,
+        status: 'waiting_payment'
+      })
+      .eq('id', extension.id)
+      .select()
+      .single();
+
+  if (updateError || !updatedExtension) {
+    console.error('[加時] 更新付款方式失敗', updateError);
+    return interaction.editReply({
+      content: '❌ 更新加時付款方式失敗'
+    });
+  }
+
+  if (isCardPayment(paymentMethod)) {
+    await sendCardPaymentInfo(interaction.channel);
+  } else if (isNoCardPayment(paymentMethod)) {
+    await sendNoCardPaymentInfo(interaction.channel);
+  } else if (isBankTransfer(paymentMethod)) {
+    await sendBankTransferInfo(interaction.channel);
+  } else if (
+    paymentMethod.includes('美金') ||
+    paymentMethod.includes('加密貨幣')
+  ) {
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#ffaa00')
+          .setTitle('💳 特殊付款方式')
+          .setDescription(
+            `<@${extension.customer_id}> 你選擇了：${paymentMethod}\n\n` +
+            `請等待客服提供付款帳號 / 錢包地址。\n` +
+            `付款完成後請上傳付款截圖，等待客服確認。`
+          )
+          .setTimestamp()
+      ]
+    });
+  }
+
+  await interaction.channel.send({
+    content:
+      `<@&${process.env.STAFF_ROLE}> 請客服確認這筆加時是否已付款`,
+    components: [
+      new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`staff_confirm_extension_paid_${extension.id}`)
+            .setLabel('客服確認加時已付款')
+            .setStyle(ButtonStyle.Success)
+        )
+    ]
+  });
+
+  return interaction.editReply({
+    content: `✅ 已選擇加時付款方式：${paymentMethod}`
+  });
+}
+async function handleStaffConfirmExtensionPaid(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以確認加時付款'
+    });
+  }
+
+  const extensionId =
+    interaction.customId.replace('staff_confirm_extension_paid_', '');
+
+  const { data: extension, error } =
+    await supabase
+      .from('order_extensions')
+      .select('*')
+      .eq('id', extensionId)
+      .single();
+
+  if (error || !extension) {
+    return interaction.editReply({
+      content: '❌ 找不到加時資料'
+    });
+  }
+
+  if (extension.paid) {
+    return interaction.editReply({
+      content: '⚠️ 這筆加時已經確認付款過了'
+    });
+  }
+
+  const { error: updateError } =
+    await supabase
+      .from('order_extensions')
+      .update({
+        paid: true,
+        status: 'paid',
+        paid_at: new Date().toISOString()
+      })
+      .eq('id', extension.id);
+
+  if (updateError) {
+    console.error('[加時] 確認付款失敗', updateError);
+    return interaction.editReply({
+      content: '❌ 確認加時付款失敗'
+    });
+  }
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('✅ 加時付款已確認')
+        .setDescription(
+          `原訂單：${extension.order_no || extension.order_id}\n` +
+          `闆闆：<@${extension.customer_id}>\n` +
+          `加時內容：${extension.extension_text}\n` +
+          `加時金額：NT$${Number(extension.amount || 0).toLocaleString('zh-TW')}\n` +
+          `確認客服：<@${interaction.user.id}>`
+        )
+        .setTimestamp()
+    ]
+  });
+
+  return interaction.editReply({
+    content: '✅ 已確認加時付款'
   });
 }
 async function startNewOrderFlow(channel, user) {
@@ -4667,6 +5115,14 @@ async function handleDispatchInteraction(interaction) {
       await handleNewOrderBack(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('extend_order_')) {
+      await openExtendOrderModal(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('staff_confirm_extension_paid_')) {
+      await handleStaffConfirmExtensionPaid(interaction);
+      return true;
+    }
     //  ==== 接單 =====
     if (interaction.customId.startsWith('accept_play_order_')) {
       await acceptPlayOrder(interaction);
@@ -4700,6 +5156,10 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId.startsWith('submit_save_order_note_')) {
       await submitSaveOrderNote(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('submit_extend_order_')) {
+      await submitExtendOrder(interaction);
       return true;
     }
   }
@@ -4742,6 +5202,10 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId.startsWith('topup_payment_method_')) {
       await handleTopupPaymentMethodSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('extension_payment_method_')) {
+      await handleExtensionPaymentMethodSelect(interaction);
       return true;
     }
   }

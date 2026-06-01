@@ -3260,7 +3260,9 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('change_order_price_') ||
         interaction.customId.startsWith('save_order_note_') ||
         interaction.customId.startsWith('staff_edit_order_') ||
-        interaction.customId.startsWith('new_order_back_')
+        interaction.customId.startsWith('new_order_back_') ||
+        interaction.customId.startsWith('extend_order_')
+
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
