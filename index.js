@@ -3148,6 +3148,9 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith('submit_staff_edit_order_')) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
       const handled =
         await dispatchSystem.handleDispatchInteraction(interaction);
 
@@ -3242,6 +3245,9 @@ client.on(Events.InteractionCreate, async interaction => {
         await confirmTopup(interaction);
         return true;
       }
+      if (interaction.customId.startsWith('staff_edit_order_')) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
       // Modal 類按鈕不能 defer
       if (
         interaction.customId === 'open_topup_modal' ||
@@ -3249,7 +3255,8 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('new_order_note_yes_') ||
         interaction.customId.startsWith('staff_quote_price_') ||
         interaction.customId.startsWith('change_order_price_') ||
-        interaction.customId.startsWith('save_order_note_')
+        interaction.customId.startsWith('save_order_note_') ||
+        interaction.customId.startsWith('staff_edit_order_')
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }

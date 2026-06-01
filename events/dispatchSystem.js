@@ -652,6 +652,15 @@ async function sendPlayerPanel(channel) {
   });
 
 }
+function buildOrderBackRow(flowId, target) {
+  return new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId(`new_order_back_${target}_${flowId}`)
+        .setLabel('⬅️ 上一步')
+        .setStyle(ButtonStyle.Secondary)
+    );
+}
 async function openPlayOrderModal(interaction) {
   const flowId = `${interaction.user.id}_${Date.now()}`;
 
@@ -876,7 +885,10 @@ async function handleNewOrderGameSelect(interaction) {
     content:
       `🎮 已選擇：${game}\n\n` +
       `請選擇你要的項目：`,
-    components: [row]
+    components: [
+      row,
+      buildOrderBackRow(flowId, 'game')
+    ] 
   });
 }
 async function handleNewOrderItemSelect(interaction) {
@@ -939,7 +951,10 @@ async function handleNewOrderItemSelect(interaction) {
       `🎮 遊戲：${pending.game}\n` +
       `📌 項目：${pending.item}\n\n` +
       `請選擇需要幾位陪陪：`,
-    components: [row]
+    components: [
+      row,
+      buildOrderBackRow(flowId, 'item')
+    ]
   });
 }
 async function handleNewOrderCountSelect(interaction) {
@@ -1007,7 +1022,10 @@ async function handleNewOrderCountSelect(interaction) {
       `📌 項目：${pending.item}\n` +
       `👥 人數：${pending.playerCount || '自訂'}\n\n` +
       `請選擇陪陪性別偏好：`,
-    components: [row]
+    components: [
+      row,
+      buildOrderBackRow(flowId, 'count')
+    ]
   });
 }
 async function handleNewOrderGenderSelect(interaction) {
@@ -1068,7 +1086,10 @@ async function handleNewOrderGenderSelect(interaction) {
       `請選擇陪陪：\n` +
       `🟢 在線：可直接安排\n` +
       `⚪ 不在線：可查看可接單時間並預約`,
-    components: [row]
+    components: [
+      row,
+      buildOrderBackRow(flowId, 'gender')
+    ]
   });
 }
 async function handleNewOrderPlayerSelect(interaction) {
@@ -1161,37 +1182,71 @@ async function handleNewOrderPlayerSelect(interaction) {
       }
     }
 async function showDurationSelect(interaction, flowId, pending) {
+  const isValorantTech =
+    pending.game === '特戰英豪' &&
+    pending.item === '技術陪玩';
+
+  const options =
+    isValorantTech
+      ? [
+          {
+            label: '1 局',
+            value: 'game_1',
+            description: '以局數計算'
+          },
+          {
+            label: '3 局',
+            value: 'game_3',
+            description: '以局數計算'
+          },
+          {
+            label: '5 局',
+            value: 'game_5',
+            description: '以局數計算'
+          },
+          {
+            label: '自訂局數',
+            value: 'game_custom',
+            description: '由客服協助確認局數'
+          }
+        ]
+      : [
+          {
+            label: '30 分鐘',
+            value: '30',
+            description: '半小時'
+          },
+          {
+            label: '60 分鐘',
+            value: '60',
+            description: '一小時'
+          },
+          {
+            label: '90 分鐘',
+            value: '90',
+            description: '一小時半'
+          },
+          {
+            label: '120 分鐘',
+            value: '120',
+            description: '兩小時'
+          },
+          {
+            label: '自訂',
+            value: 'custom',
+            description: '由客服協助確認時間'
+          }
+        ];
+
   const menu =
     new StringSelectMenuBuilder()
       .setCustomId(`new_order_duration_${flowId}`)
-      .setPlaceholder('請選擇時間段')
-      .addOptions([
-        {
-          label: '30 分鐘',
-          value: '30',
-          description: '半小時'
-        },
-        {
-          label: '60 分鐘',
-          value: '60',
-          description: '一小時'
-        },
-        {
-          label: '90 分鐘',
-          value: '90',
-          description: '一小時半'
-        },
-        {
-          label: '120 分鐘',
-          value: '120',
-          description: '兩小時'
-        },
-        {
-          label: '自訂',
-          value: 'custom',
-          description: '由客服協助確認時間'
-        }
-      ]);
+      .setPlaceholder(
+        isValorantTech
+          ? '請選擇局數'
+          : '請選擇時間段'
+      )
+      .addOptions(options);
 
   const row =
     new ActionRowBuilder()
@@ -1209,8 +1264,15 @@ async function showDurationSelect(interaction, flowId, pending) {
       `👥 人數：${pending.playerCount || '自訂'}\n` +
       `🚻 性別偏好：${pending.gender}\n` +
       `🌟 指定陪陪：${playerText}\n\n` +
-      `請選擇需要的時間段：`,
-    components: [row]
+      (
+        isValorantTech
+          ? `請選擇需要的局數：`
+          : `請選擇需要的時間段：`
+      ),
+    components: [
+      row,
+      buildOrderBackRow(flowId, 'player')
+    ]
   });
 }
 async function handleNewOrderDurationSelect(interaction) {
@@ -1236,17 +1298,32 @@ async function handleNewOrderDurationSelect(interaction) {
 
   const value =
     interaction.values[0];
-
-  if (value === 'custom') {
-    pending.duration = '自訂';
-    pending.durationMinutes = 0;
+  const isValorantTech =
+    pending.game === '特戰英豪' &&
+    pending.item === '技術陪玩';
+  if (isValorantTech) {
+    if (value === 'game_custom') {
+      pending.duration = '自訂局數';
+      pending.durationMinutes = 0;
+      pending.gameCount = 0;
+    } else {
+      const count =
+        Number(value.replace('game_', ''));
+      pending.duration = `${count} 局`;
+      pending.durationMinutes = 0;
+      pending.gameCount = count;
+    }
   } else {
-    pending.duration = `${value} 分鐘`;
-    pending.durationMinutes = Number(value);
+    if (value === 'custom') {
+      pending.duration = '自訂';
+      pending.durationMinutes = 0;
+    } else {
+      pending.duration = `${value} 分鐘`;
+      pending.durationMinutes = Number(value);
+    }
+    pending.gameCount = 0;
   }
-
   pendingNewOrders.set(flowId, pending);
-
   return await askNewOrderNoteChoice(interaction, flowId, pending);
 }
 async function submitNewOrderReserveTime(interaction) {
@@ -1288,10 +1365,13 @@ async function askNewOrderNoteChoice(interaction, flowId, pending) {
           .setCustomId(`new_order_note_yes_${flowId}`)
           .setLabel('我要填備註')
           .setStyle(ButtonStyle.Primary),
-
         new ButtonBuilder()
           .setCustomId(`new_order_note_no_${flowId}`)
           .setLabel('不填備註')
+          .setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(`new_order_back_duration_${flowId}`)
+          .setLabel('⬅️ 上一步')
           .setStyle(ButtonStyle.Secondary)
       );
 
@@ -1326,6 +1406,320 @@ async function askNewOrderNoteChoice(interaction, flowId, pending) {
   }
 
   return interaction.update(payload);
+}
+async function handleNewOrderBack(interaction) {
+  const raw =
+    interaction.customId.replace('new_order_back_', '');
+
+  const firstUnderscore =
+    raw.indexOf('_');
+
+  const target =
+    raw.slice(0, firstUnderscore);
+
+  const flowId =
+    raw.slice(firstUnderscore + 1);
+
+  const pending =
+    pendingNewOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.update({
+      content: '❌ 這筆下單流程已過期，請重新填寫。',
+      components: []
+    });
+  }
+
+  if (pending.userId !== interaction.user.id) {
+    return interaction.reply({
+      content: '❌ 只有下單者可以操作這個按鈕。',
+      flags: 64
+    });
+  }
+
+  if (target === 'game') {
+    pending.game = '';
+    pending.item = '';
+    pending.playerCount = 1;
+    pending.gender = '不指定';
+    pending.selectedPlayerType = 'none';
+    pending.selectedPlayerId = null;
+    pending.selectedPlayerIds = [];
+    pending.duration = '';
+    pending.durationMinutes = 0;
+    pending.reservedTime = '';
+    pending.note = '無';
+    pendingNewOrders.set(flowId, pending);
+
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`new_order_game_${flowId}`)
+        .setPlaceholder('請選擇遊戲 / 服務類型')
+        .addOptions([
+          {
+            label: '特戰英豪',
+            description: 'VALORANT 陪玩 / 技術單',
+            value: '特戰英豪'
+          },
+          {
+            label: '三角洲行動',
+            description: '三角洲護航 / 保底 / 娛樂',
+            value: '三角洲行動'
+          },
+          {
+            label: 'PUBG',
+            description: 'PUBG 陪玩',
+            value: 'PUBG'
+          },
+          {
+            label: 'STEAM',
+            description: 'Steam 遊戲陪玩',
+            value: 'STEAM'
+          },
+          {
+            label: '陪聊服務',
+            description: '聊天 / 陪伴 / 出氣',
+            value: '陪聊服務'
+          },
+          {
+            label: '打賞禮物',
+            description: '打賞 / 禮物單',
+            value: '打賞禮物'
+          }
+        ]);
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+
+    return interaction.update({
+      content: '🎮 請重新選擇你要下單的遊戲 / 服務：',
+      components: [row]
+    });
+  }
+
+  if (target === 'item') {
+    pending.item = '';
+    pending.playerCount = 1;
+    pending.gender = '不指定';
+    pending.selectedPlayerType = 'none';
+    pending.selectedPlayerId = null;
+    pending.selectedPlayerIds = [];
+    pending.duration = '';
+    pending.durationMinutes = 0;
+    pending.reservedTime = '';
+    pending.note = '無';
+    pendingNewOrders.set(flowId, pending);
+
+    const options =
+      getOrderItemOptions(pending.game)
+        .slice(0, 25)
+        .map(item => ({
+          label: item.label.slice(0, 100),
+          description: item.description.slice(0, 100),
+          value: item.value
+        }));
+
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`new_order_item_${flowId}`)
+        .setPlaceholder('請選擇項目')
+        .addOptions(options);
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+
+    return interaction.update({
+      content:
+        `🎮 遊戲：${pending.game}\n\n` +
+        `請重新選擇你要的項目：`,
+      components: [
+        row,
+        buildOrderBackRow(flowId, 'game')
+      ]
+    });
+  }
+
+  if (target === 'count') {
+    pending.playerCount = 1;
+    pending.gender = '不指定';
+    pending.selectedPlayerType = 'none';
+    pending.selectedPlayerId = null;
+    pending.selectedPlayerIds = [];
+    pending.duration = '';
+    pending.durationMinutes = 0;
+    pending.reservedTime = '';
+    pending.note = '無';
+    pendingNewOrders.set(flowId, pending);
+
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`new_order_count_${flowId}`)
+        .setPlaceholder('請選擇需要幾位陪陪')
+        .addOptions([
+          {
+            label: '1 位陪陪',
+            value: '1',
+            description: '單陪'
+          },
+          {
+            label: '2 位陪陪',
+            value: '2',
+            description: '雙陪'
+          },
+          {
+            label: '3 位陪陪',
+            value: '3',
+            description: '三陪'
+          },
+          {
+            label: '自訂',
+            value: 'custom',
+            description: '由客服協助確認人數'
+          }
+        ]);
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+
+    return interaction.update({
+      content:
+        `🎮 遊戲：${pending.game}\n` +
+        `📌 項目：${pending.item}\n\n` +
+        `請重新選擇需要幾位陪陪：`,
+      components: [
+        row,
+        buildOrderBackRow(flowId, 'item')
+      ]
+    });
+  }
+
+  if (target === 'gender') {
+    pending.gender = '不指定';
+    pending.selectedPlayerType = 'none';
+    pending.selectedPlayerId = null;
+    pending.selectedPlayerIds = [];
+    pending.duration = '';
+    pending.durationMinutes = 0;
+    pending.reservedTime = '';
+    pending.note = '無';
+    pendingNewOrders.set(flowId, pending);
+
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`new_order_gender_${flowId}`)
+        .setPlaceholder('請選擇陪陪性別偏好')
+        .addOptions([
+          {
+            label: '男陪',
+            value: '男陪',
+            description: '只看男陪'
+          },
+          {
+            label: '女陪',
+            value: '女陪',
+            description: '只看女陪'
+          },
+          {
+            label: '男女皆可',
+            value: '男女皆可',
+            description: '男陪女陪都可以'
+          },
+          {
+            label: '不指定',
+            value: '不指定',
+            description: '不限制性別'
+          }
+        ]);
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+
+    return interaction.update({
+      content:
+        `🎮 遊戲：${pending.game}\n` +
+        `📌 項目：${pending.item}\n` +
+        `👥 人數：${pending.playerCount || '自訂'}\n\n` +
+        `請重新選擇陪陪性別偏好：`,
+      components: [
+        row,
+        buildOrderBackRow(flowId, 'count')
+      ]
+    });
+  }
+
+  if (target === 'player') {
+    pending.selectedPlayerType = 'none';
+    pending.selectedPlayerId = null;
+    pending.selectedPlayerIds = [];
+    pending.duration = '';
+    pending.durationMinutes = 0;
+    pending.reservedTime = '';
+    pending.note = '無';
+    pendingNewOrders.set(flowId, pending);
+
+    const playerOptions =
+      await getQualifiedPlayerOptions(pending);
+
+    if (!playerOptions.length) {
+      return interaction.update({
+        content:
+          `🎮 遊戲：${pending.game}\n` +
+          `📌 項目：${pending.item}\n` +
+          `👥 人數：${pending.playerCount || '自訂'}\n` +
+          `🚻 性別偏好：${pending.gender}\n\n` +
+          `❌ 目前沒有符合資格的陪陪，請聯繫客服協助安排。`,
+        components: [
+          buildOrderBackRow(flowId, 'gender')
+        ]
+      });
+    }
+
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`new_order_player_${flowId}`)
+        .setPlaceholder('請選擇陪陪，或選擇不指定')
+        .addOptions(playerOptions);
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+
+    return interaction.update({
+      content:
+        `🎮 遊戲：${pending.game}\n` +
+        `📌 項目：${pending.item}\n` +
+        `👥 人數：${pending.playerCount || '自訂'}\n` +
+        `🚻 性別偏好：${pending.gender}\n\n` +
+        `請重新選擇陪陪：`,
+      components: [
+        row,
+        buildOrderBackRow(flowId, 'gender')
+      ]
+    });
+  }
+
+  if (target === 'duration') {
+    pending.duration = '';
+    pending.durationMinutes = 0;
+    pending.reservedTime = '';
+    pending.note = '無';
+    pendingNewOrders.set(flowId, pending);
+
+    return await showDurationSelect(
+      interaction,
+      flowId,
+      pending
+    );
+  }
+
+  return interaction.reply({
+    content: '❌ 找不到上一個步驟',
+    flags: 64
+  });
 }
 async function openNewOrderNoteModal(interaction) {
   const flowId =
@@ -2623,14 +3017,181 @@ async function handleCustomerOrderWrong(interaction) {
     })
     .eq('id', order.id);
 
+  const staffFixRow =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`staff_edit_order_${order.id}`)
+          .setLabel('客服修改訂單內容')
+          .setEmoji('🛠️')
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId(`change_order_price_${order.id}`)
+          .setLabel('修改金額')
+          .setEmoji('💰')
+          .setStyle(ButtonStyle.Secondary)
+      );
   await interaction.channel.send({
     content:
       `<@&${process.env.STAFF_ROLE}> 闆闆回報訂單內容有誤，請客服協助修改。\n` +
-      `訂單編號：${order.order_no || order.id}`
+      `訂單編號：${order.order_no || order.id}`,
+    components: [staffFixRow]
+  });
+  return interaction.editReply({
+    content: '✅ 已通知客服協助修改訂單內容'
+  });
+}
+async function openStaffEditOrderModal(interaction) {
+  const orderId =
+    interaction.customId.replace('staff_edit_order_', '');
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.reply({
+      content: '❌ 只有客服可以修改訂單',
+      flags: 64
+    });
+  }
+
+  const modal =
+    new ModalBuilder()
+      .setCustomId(`submit_staff_edit_order_${orderId}`)
+      .setTitle('客服修改訂單內容');
+
+  const serviceInput =
+    new TextInputBuilder()
+      .setCustomId('service')
+      .setLabel('服務項目')
+      .setPlaceholder('例如：特戰英豪 技術陪玩')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false);
+
+  const timeInput =
+    new TextInputBuilder()
+      .setCustomId('time')
+      .setLabel('時間 / 局數')
+      .setPlaceholder('例如：3局、60分鐘、今晚22:00')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false);
+
+  const noteInput =
+    new TextInputBuilder()
+      .setCustomId('note')
+      .setLabel('備註 / 需求')
+      .setPlaceholder('要修改的備註內容')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(serviceInput),
+    new ActionRowBuilder().addComponents(timeInput),
+    new ActionRowBuilder().addComponents(noteInput)
+  );
+
+  return interaction.showModal(modal);
+}
+async function submitStaffEditOrder(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const orderId =
+    interaction.customId.replace('submit_staff_edit_order_', '');
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以修改訂單'
+    });
+  }
+
+  const service =
+    interaction.fields.getTextInputValue('service') || '';
+
+  const time =
+    interaction.fields.getTextInputValue('time') || '';
+
+  const note =
+    interaction.fields.getTextInputValue('note') || '';
+
+  const updateData = {
+    quote_status: 'fixed',
+    status: 'quoted',
+    updated_at: new Date().toISOString()
+  };
+
+  if (service.trim()) {
+    updateData.service = service.trim();
+  }
+
+  if (time.trim()) {
+    updateData.play_time = time.trim();
+    updateData.reserved_time = time.trim();
+  }
+
+  if (note.trim()) {
+    updateData.note = note.trim();
+  }
+
+  const { data: updatedOrder, error } =
+    await supabase
+      .from('play_orders')
+      .update(updateData)
+      .eq('id', orderId)
+      .select()
+      .single();
+
+  if (error || !updatedOrder) {
+    console.error('[客服修改訂單失敗]', error);
+    return interaction.editReply({
+      content: '❌ 修改訂單失敗，請查看後台 Logs'
+    });
+  }
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`customer_confirm_order_${updatedOrder.id}`)
+          .setLabel('確認訂單')
+          .setEmoji('✅')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId(`customer_order_wrong_${updatedOrder.id}`)
+          .setLabel('內容有誤')
+          .setEmoji('⚠️')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('🛠️ 訂單內容已由客服修改')
+        .setDescription(
+          `訂單編號：${updatedOrder.order_no || updatedOrder.id}\n` +
+          `闆闆：<@${updatedOrder.customer_id}>\n\n` +
+          `🎮 服務：${updatedOrder.service || '未填寫'}\n` +
+          `🕒 時間 / 局數：${updatedOrder.reserved_time || updatedOrder.play_time || updatedOrder.time || '未填寫'}\n` +
+          `💰 金額：NT$${updatedOrder.final_price || updatedOrder.price || 0}\n` +
+          `💳 付款方式：${updatedOrder.payment_method || '未選擇'}\n` +
+          `📝 備註：${updatedOrder.note || '無'}\n\n` +
+          `請闆闆重新確認訂單內容。`
+        )
+        .setTimestamp()
+    ],
+    components: [row]
   });
 
   return interaction.editReply({
-    content: '✅ 已通知客服協助修改訂單內容'
+    content: '✅ 已修改訂單，並重新送出給闆闆確認'
   });
 }
 async function startNewOrderFlow(channel, user) {
@@ -4062,6 +4623,10 @@ async function handleDispatchInteraction(interaction) {
       await openNewOrderNoteModal(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('new_order_back_')) {
+      await handleNewOrderBack(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('new_order_note_no_')) {
       await handleNewOrderNoNote(interaction);
       return true;
@@ -4094,13 +4659,25 @@ async function handleDispatchInteraction(interaction) {
       await handleCustomerOrderWrong(interaction);
       return true;
     }
-    // ===== 接單 =====
+    if (interaction.customId.startsWith('staff_edit_order_')) {
+      await openStaffEditOrderModal(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('new_order_back_')) {
+      await handleNewOrderBack(interaction);
+      return true;
+    }
+    //  ==== 接單 =====
     if (interaction.customId.startsWith('accept_play_order_')) {
       await acceptPlayOrder(interaction);
       return true;
     }
    }
   if (interaction.isModalSubmit()) {
+    if (interaction.customId.startsWith('submit_staff_edit_order_')) {
+      await submitStaffEditOrder(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('submit_staff_quote_price_')) {
       await submitStaffQuotePrice(interaction);
       return true;
