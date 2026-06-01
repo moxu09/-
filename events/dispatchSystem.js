@@ -961,9 +961,9 @@ async function handleNewOrderGameSelect(interaction) {
 function getValorantRankOptions() {
   return [
     {
-      label: '金牌',
-      value: '金牌',
-      description: 'Gold'
+      label: '金牌含以下',
+      value: '金牌含以下',
+      description: 'Gold and below'
     },
     {
       label: '白金',
@@ -996,6 +996,17 @@ function getValorantRankOptions() {
       description: '由客服協助確認'
     }
   ];
+}
+function isValorantRankGameBased(rank) {
+  const value = String(rank || '');
+
+  return (
+    value.includes('白金') ||
+    value.includes('鑽石') ||
+    value.includes('超凡') ||
+    value.includes('神話') ||
+    value.includes('輻能')
+  );
 }
 async function handleNewOrderItemSelect(interaction) {
   const flowId =
@@ -1392,9 +1403,11 @@ async function showDurationSelect(interaction, flowId, pending) {
   const isValorantTech =
     pending.game === '特戰英豪' &&
     pending.item === '技術陪玩';
-
+  const isValorantGameBased =
+    isValorantTech &&
+    isValorantRankGameBased(pending.rank);
   const options =
-    isValorantTech
+    isValorantGameBased
       ? [
           {
             label: '1 局',
@@ -1449,7 +1462,7 @@ async function showDurationSelect(interaction, flowId, pending) {
     new StringSelectMenuBuilder()
       .setCustomId(`new_order_duration_${flowId}`)
       .setPlaceholder(
-        isValorantTech
+        isValorantGameBased
           ? '請選擇局數'
           : '請選擇時間段'
       )
@@ -1513,6 +1526,9 @@ async function handleNewOrderDurationSelect(interaction) {
   const isValorantTech =
     pending.game === '特戰英豪' &&
     pending.item === '技術陪玩';
+  const isValorantGameBased =
+    isValorantTech &&
+    isValorantRankGameBased(pending.rank);
   if (isValorantTech) {
     if (value === 'game_custom') {
       pending.duration = '自訂局數';
