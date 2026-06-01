@@ -332,6 +332,11 @@ async function handleTipStaffSelect(interaction) {
           value: '刷卡'
         },
         {
+          label: '儲值卡 / 錢包',
+          description: '直接使用 ASD 餘額扣款',
+          value: '儲值卡'
+        },
+        {
           label: '美金轉帳',
           description: '請等待客服提供帳號',
           value: '美金轉帳'
@@ -399,7 +404,84 @@ async function handleTipPaymentSelect(interaction) {
       content: '❌ 打賞資料不完整，請重新建立打賞流程。'
     });
   }
-
+  const walletPayment =
+    paymentMethod.includes('儲值卡') ||
+    paymentMethod.includes('儲值') ||
+    paymentMethod.includes('錢包') ||
+    paymentMethod.includes('餘額');
+  if (walletPayment) {
+    const userData =
+      await getUser(tipperId);
+    const currentCoins =
+      Number(userData.coins || 0);
+    if (currentCoins < amount) {
+      return interaction.editReply({
+        content:
+          `❌ ASD 餘額不足。\n` +
+          `目前餘額：${currentCoins} ASD\n` +
+          `需要金額：${amount} ASD`
+      });
+    }
+    const finalCoins =
+      currentCoins - amount;
+    await updateCoins(tipperId, finalCoins);
+    await sendWalletLog(
+      tipperId,
+      '打賞消費',
+      -amount,
+      finalCoins,
+      `💝 打賞給 <@${selectedStaffId}>｜${item}`
+    );
+    await checkAndUpgradeVip?.(
+      tipperId,
+      'spend',
+      amount
+    );
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('✅ 打賞已使用儲值卡付款')
+          .addFields(
+            {
+              name: '打賞人',
+              value: `<@${tipperId}>`,
+              inline: true
+            },
+            {
+              name: '受賞陪陪',
+              value: `<@${selectedStaffId}>`,
+              inline: true
+            },
+            {
+              name: '品項',
+              value: item,
+              inline: true
+            },
+            {
+              name: '金額',
+              value: `NT$${amount}`,
+              inline: true
+            },
+            {
+              name: '付款方式',
+              value: paymentMethod,
+              inline: true
+            },
+            {
+              name: '扣款後餘額',
+              value: `${finalCoins} ASD`,
+              inline: true
+            }
+          )
+          .setTimestamp()
+      ]
+    });
+    pendingTips.delete(tipId);
+    return interaction.editReply({
+      content: '✅ 已使用儲值卡 / 錢包完成打賞付款'
+    });
+  }
   const embed =
     new EmbedBuilder()
       .setColor('#ff99cc')
