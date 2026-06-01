@@ -805,7 +805,6 @@ async function safeReply(interaction, options) {
     );
   }
 }
-
 async function safeEditReply(interaction, options) {
   try {
     const opts = { ...options };
@@ -828,6 +827,33 @@ function isAdmin(interaction) {
     interaction.guild.ownerId === interaction.user.id ||
     interaction.member.permissions.has(PermissionFlagsBits.Administrator)
   );
+}
+async function findOrderForExtend({ orderNo, channelId }) {
+  // 1. 有訂單編號就先用訂單編號找
+  if (orderNo) {
+    const { data, error } = await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('order_no', orderNo)
+      .maybeSingle();
+
+    if (!error && data) return data;
+  }
+
+  // 2. 找不到訂單編號，就用目前頻道 ID 找
+  if (channelId) {
+    const { data, error } = await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('channel_id', channelId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (!error && data) return data;
+  }
+
+  return null;
 }
 // 讀取玩家資料
 async function getUser(userId) {
@@ -1197,6 +1223,9 @@ async function handleSlashExtendOrder(interaction) {
   const orderId =
     interaction.options.getInteger('訂單id');
 
+  const orderNo =
+    interaction.options.getString('訂單編號') || '';
+
   const extensionText =
     interaction.options.getString('內容');
 
@@ -1212,20 +1241,37 @@ async function handleSlashExtendOrder(interaction) {
     });
   }
 
-  const { data: order, error: orderError } =
-    await supabase
-      .from('play_orders')
-      .select('*')
-      .eq('id', orderId)
-      .single();
-
-  if (orderError || !order) {
-    console.error('[加時指令] 找不到原訂單', orderError);
-    return interaction.editReply({
-      content: '❌ 找不到這筆訂單，請確認訂單 ID 是否正確'
+  let order = null;
+  let orderError = null;
+  // 1. 如果有填訂單 ID，先用訂單 ID 找
+  if (orderId) {
+    const result =
+      await supabase
+        .from('play_orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
+    order = result.data;
+    orderError = result.error;
+  }
+  // 2. 訂單 ID 找不到，就用訂單編號 / 頻道 ID 找
+  if (!order) {
+    order = await findOrderForExtend({
+      orderNo,
+      channelId: interaction.channel.id
     });
   }
-
+  if (!order) {
+    console.error('[加時指令] 找不到原訂單', orderError);
+    return interaction.editReply({
+      content:
+        '❌ 找不到這筆訂單。\n' +
+        '你可以：\n' +
+        '1. 在訂單臨時頻道直接使用加時指令\n' +
+        '2. 或手動輸入訂單 ID\n' +
+        '3. 或手動輸入訂單編號'
+    });
+  }
   const { data: extension, error: insertError } =
     await supabase
       .from('order_extensions')
@@ -2906,8 +2952,14 @@ const commands = [
     .addIntegerOption(option =>
       option
         .setName('訂單id')
-        .setDescription('play_orders 的訂單 ID')
-        .setRequired(true)
+        .setDescription('訂單資料庫 ID，可空白，空白時會用目前頻道尋找')
+        .setRequired(false)
+    )
+    .addStringOption(option =>
+      option
+        .setName('訂單編號')
+        .setDescription('訂單編號，可空白')
+        .setRequired(false)
     )
     .addStringOption(option =>
       option
