@@ -477,9 +477,35 @@ async function handleTipPaymentSelect(interaction) {
           .setTimestamp()
       ]
     });
+    try {
+      await saveTipToPlayOrders({
+        tipperId,
+        staffId: selectedStaffId,
+        item,
+        amount: Number(amount),
+        channelId: interaction.channel.id,
+        paid: true
+      });
+      await interaction.channel.send({
+        content:
+          `✅ 儲值卡打賞已完成，並已寫入薪資網\n` +
+          `打賞人：<@${tipperId}>\n` +
+          `受賞陪陪：<@${selectedStaffId}>\n` +
+          `品項：${item}\n` +
+          `金額：NT$${amount}`
+      });
+    } catch (error) {
+      console.error('[儲值卡打賞寫入薪資網失敗]', error);
+      await interaction.channel.send({
+        content:
+          `⚠️ 儲值卡已扣款，但寫入薪資網失敗。\n` +
+          `錯誤：${error.message || error}`
+      });
+    }
+    await sendTipCloseButtons(interaction.channel);
     pendingTips.delete(tipId);
     return interaction.editReply({
-      content: '✅ 已使用儲值卡 / 錢包完成打賞付款'
+      content: '✅ 已使用儲值卡 / 錢包完成打賞付款，並已送出關閉頻道按鈕'
     });
   }
   const embed =
@@ -2949,6 +2975,18 @@ const commands = [
   new SlashCommandBuilder()
     .setName('加時')
     .setDescription('替訂單建立加時 / 續單付款')
+    .addStringOption(option =>
+      option
+        .setName('時長')
+        .setDescription('例如：30分鐘、1局、續聊1小時')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('金額')
+        .setDescription('加時金額')
+        .setRequired(true)
+    )
     .addIntegerOption(option =>
       option
         .setName('訂單id')
@@ -2960,18 +2998,6 @@ const commands = [
         .setName('訂單編號')
         .setDescription('訂單編號，可空白')
         .setRequired(false)
-    )
-    .addStringOption(option =>
-      option
-        .setName('內容')
-        .setDescription('例如：30分鐘、1局、續聊1小時')
-        .setRequired(true)
-    )
-    .addIntegerOption(option =>
-      option
-        .setName('金額')
-        .setDescription('加時金額')
-        .setRequired(true)
     )
     .addStringOption(option =>
       option
