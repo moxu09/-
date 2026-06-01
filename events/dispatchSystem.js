@@ -899,22 +899,6 @@ function getOrderItemOptions(game) {
       }
     ];
   }
-
-  if (game === '打賞禮物') {
-    return [
-      {
-        label: '一般打賞',
-        value: '一般打賞',
-        description: '一般打賞禮物'
-      },
-      {
-        label: '特殊打賞',
-        value: '特殊打賞',
-        description: '特殊打賞 / 明燈系列'
-      }
-    ];
-  }
-
   return [
     {
       label: '一般項目',
@@ -949,7 +933,25 @@ async function handleNewOrderGameSelect(interaction) {
 
   pending.game = game;
   pendingNewOrders.set(flowId, pending);
-
+  if (game === '打賞禮物') {
+    pendingNewOrders.delete(flowId);
+    if (!paymentHelpers.startTipFlowInChannel) {
+      return interaction.update({
+        content:
+          '❌ 打賞流程尚未接入，請確認 index.js 的 dispatchSystem.setup 有傳 startTipFlowInChannel。',
+        components: []
+      });
+    }
+    await paymentHelpers.startTipFlowInChannel(
+      interaction.channel,
+      interaction.user
+    );
+    return interaction.update({
+      content:
+        '💝 已切換為打賞流程，請在下方選擇要打賞的禮物。',
+      components: []
+    });
+  }
   const options =
     getOrderItemOptions(game)
       .slice(0, 25)

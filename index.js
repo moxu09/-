@@ -44,7 +44,8 @@ dispatchSystem.setup(supabase, client, {
   payOrderByMonthly,
   sendWalletLog,
   checkAndUpgradeVip,
-  changeCoins
+  changeCoins,
+  startTipFlowInChannel
 });
 // ===== 轉帳冷卻 =====
 const transferCooldown =
@@ -171,7 +172,24 @@ async function sendTipGiftSelect(channel, tipId) {
     components: [selectRow, cancelRow]
   });
 }
+async function startTipFlowInChannel(channel, user) {
+  const tipId =
+    `${user.id}_${Date.now()}`;
 
+  pendingTips.set(tipId, {
+    createdBy: user.id,
+    tipperId: user.id,
+    channelId: channel.id
+  });
+
+  setTimeout(() => {
+    pendingTips.delete(tipId);
+  }, 30 * 60 * 1000);
+
+  await sendTipGiftSelect(channel, tipId);
+
+  return tipId;
+}
 async function handleTipGiftSelect(interaction) {
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({
@@ -5353,39 +5371,64 @@ async function handleButtonInteraction(interaction) {
           content: '🎒 你的背包目前是空的'
         });
       }
+      function groupItems(list) {
+        const map = new Map();
+        for (const item of list) {
+          const key = [
+            item.item_name || '',
+            item.rarity || '',
+            item.description || '',
+            item.item_type || ''
+          ].join('||');
+          if (!map.has(key)) {
+            const newItem =
+              Object.assign({}, item, {
+                count: 1
+              });
+            map.set(key, newItem);
+          } else {
+            const old =
+              map.get(key);
+            old.count =
+              Number(old.count || 1) + 1;
+            map.set(key, old);
+          }
+        }
+        return Array.from(map.values());
+      }
+      const groupedItems =
+        groupItems(items);
       const rarityOrder =
         ['SSR', 'SR', 'R'];
       let text = '';
       for (const rarity of rarityOrder) {
         const filtered =
-          items.filter(item => item.rarity === rarity);
+          groupedItems.filter(item => item.rarity === rarity);
         if (!filtered.length) continue;
         text += `\n${getRarityEmoji(rarity)} ${rarity}\n`;
         for (const item of filtered) {
-          text += `• ${item.item_name}\n`;
+          text += `• ${item.item_name}`;
+          if (item.count > 1) {
+            text += ` × ${item.count}`;
+          }
+          text += `\n`;
           if (item.description) {
             text += `└ 📦 ${item.description}\n`;
           }
           if (item.item_type) {
             text += `└ 🏷️ 類型：${item.item_type}\n`;
           }
-          if (item.created_at) {
-            const date =
-              new Date(item.created_at)
-                .toLocaleString('zh-TW');
-            text += `└ 🕒 ${date}\n`;
-          }
           text += '\n';
         }
       }
       const couponItems =
-        items.filter(item =>
+        groupedItems.filter(item =>
           item.item_type === 'coupon' ||
           String(item.item_name || '').includes('折券') ||
           String(item.item_name || '').includes('優惠券')
         );
       const normalItems =
-        items.filter(item =>
+        groupedItems.filter(item =>
           !item.rarity &&
           item.item_type !== 'coupon' &&
           !String(item.item_name || '').includes('折券') &&
@@ -5394,15 +5437,13 @@ async function handleButtonInteraction(interaction) {
       if (couponItems.length > 0) {
         text += `\n🎟️ 優惠券\n`;
         for (const item of couponItems) {
-          text += `• ${item.item_name}\n`;
+          text += `• ${item.item_name}`;
+          if (item.count > 1) {
+            text += ` × ${item.count}`;
+          }
+          text += `\n`;
           if (item.description) {
             text += `└ 📦 ${item.description}\n`;
-          }
-          if (item.created_at) {
-            const date =
-              new Date(item.created_at)
-                .toLocaleString('zh-TW');
-            text += `└ 🕒 ${date}\n`;
           }
           text += '\n';
         }
@@ -5410,18 +5451,16 @@ async function handleButtonInteraction(interaction) {
       if (normalItems.length > 0) {
         text += `\n🛒 一般商品\n`;
         for (const item of normalItems) {
-          text += `• ${item.item_name}\n`;
+          text += `• ${item.item_name}`;
+          if (item.count > 1) {
+            text += ` × ${item.count}`;
+          }
+          text += `\n`;
           if (item.description) {
             text += `└ 📦 ${item.description}\n`;
           }
           if (item.item_type) {
             text += `└ 🏷️ 類型：${item.item_type}\n`;
-          }
-          if (item.created_at) {
-            const date =
-              new Date(item.created_at)
-                .toLocaleString('zh-TW');
-            text += `└ 🕒 ${date}\n`;
           }
           text += '\n';
         }
