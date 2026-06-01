@@ -4909,28 +4909,38 @@ async function acceptPlayOrder(interaction) {
             .map(s => s.trim())
             .filter(Boolean);
 
-    const orderServiceKey =
-      `${order.game || ''}${order.order_item || ''}`
+    function cleanServiceKey(text = '') {
+      return String(text || '')
         .replace(/\s+/g, '')
-        .replace(/｜/g, '')
+        .replace(/[｜|]/g, '')
+        .replace(/　/g, '')
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
         .trim();
+    }
+    const orderServiceKey =
+      cleanServiceKey(
+        order.service ||
+        `${order.game || ''}${order.order_item || ''}`
+      );
     const canAccept =
       allowedServices.some(service => {
         const serviceKey =
-          String(service || '')
-            .replace(/\s+/g, '')
-            .replace(/｜/g, '')
-            .trim();
-        return serviceKey === orderServiceKey;
+          cleanServiceKey(service);
+        return (
+          serviceKey === orderServiceKey ||
+          serviceKey.includes(orderServiceKey) ||
+          orderServiceKey.includes(serviceKey)
+        );
       });
 
     if (!canAccept) {
       return interaction.editReply({
         content:
           `❌ 你沒有權限接這個項目\n` +
-          `此訂單服務：${order.service}\n` +
+          `此訂單服務：${order.service || '未填寫'}\n` +
           `比對用服務：${orderServiceKey}\n` +
-          `你的可接項目：${allowedServices.join('、') || '未設定'}`
+          `你的可接項目：${allowedServices.join('、') || '未設定'}\n\n` +
+          `如果畫面看起來一樣，通常是服務名稱內有隱藏空白或客服修改後欄位沒有同步。`
       });
     }
     // ===== 多人接單邏輯 =====
