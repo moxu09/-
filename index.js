@@ -43,7 +43,8 @@ dispatchSystem.setup(supabase, client, {
   payOrderByWallet,
   payOrderByMonthly,
   sendWalletLog,
-  checkAndUpgradeVip
+  checkAndUpgradeVip,
+  changeCoins
 });
 // ===== 轉帳冷卻 =====
 const transferCooldown =
@@ -423,8 +424,7 @@ async function handleTipPaymentSelect(interaction) {
       });
     }
     const finalCoins =
-      currentCoins - amount;
-    await updateCoins(tipperId, finalCoins);
+      await changeCoins(tipperId, -amount);
     await sendWalletLog(
       tipperId,
       '打賞消費',
@@ -920,6 +920,22 @@ async function updateCoins(userId, coins) {
     throw new Error('無法更新金額');
   }
 }
+async function changeCoins(userId, amount) {
+  const { data, error } = await supabase.rpc(
+    'change_user_coins',
+    {
+      p_user_id: userId,
+      p_amount: amount
+    }
+  );
+
+  if (error) {
+    console.error('[DB] 原子更新金額失敗:', error);
+    throw new Error('無法更新金額');
+  }
+
+  return Number(data || 0);
+}
 async function sendWalletLog(
   userId,
   type,
@@ -1124,9 +1140,7 @@ async function payOrderByWallet(order) {
   }
 
   const finalCoins =
-    currentCoins - amount;
-
-  await updateCoins(userId, finalCoins);
+    await changeCoins(userId, -amount);
 
   await sendWalletLog(
     userId,
@@ -1486,16 +1500,8 @@ async function grantVipLevelReward(userId, level, triggerType, triggerAmount) {
 
   // ===== 發 ASD =====
   if (rewardAsd > 0) {
-    const userData =
-      await getUser(userId);
-
-    const currentCoins =
-      Number(userData.coins || 0);
-
     const finalCoins =
-      currentCoins + rewardAsd;
-
-    await updateCoins(userId, finalCoins);
+      await changeCoins(userId, rewardAsd);
 
     await sendWalletLog(
       userId,
@@ -2834,6 +2840,10 @@ const commands = [
     .setDescription('查看自己的排名'),
 
   new SlashCommandBuilder()
+    .setName('餘額')
+    .setDescription('公開查看自己的 ASD 餘額'),  
+  
+  new SlashCommandBuilder()
     .setName('交易紀錄')
     .setDescription('查看最近交易'),
 
@@ -3583,7 +3593,11 @@ client.on(Events.InteractionCreate, async interaction => {
     // ===== Slash =====
     if (interaction.isChatInputCommand()) {
       if (!interaction.deferred && !interaction.replied) {
-        await interaction.deferReply({ flags: 64 });
+        if (interaction.commandName === '餘額') {
+          await interaction.deferReply(); // 公開，頻道都看得到
+        } else {
+          await interaction.deferReply({ flags: 64 }); // 其他指令維持只有自己看得到
+        }
       }
       const handled =
         await dispatchSystem.handleDispatchInteraction(interaction);
@@ -3667,8 +3681,7 @@ client.on(Events.InteractionCreate, async interaction => {
         return;
       }
       if (interaction.customId.startsWith('confirm_topup_')) {
-        await confirmTopup(interaction);
-        return true;
+        return await dispatchSystem.handleDispatchInteraction(interaction);
       }
       if (interaction.customId.startsWith('staff_edit_order_')) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
@@ -3914,6 +3927,25 @@ async function handleSlashCommand(interaction) {
   if (interaction.commandName === 'ping') {
     return interaction.editReply('Pong!');
   }
+  if (interaction.commandName === '餘額') {
+    const userData =
+      await getUser(interaction.user.id);
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('💰 ASD 餘額查詢')
+          .setDescription(
+            `<@${interaction.user.id}> 目前餘額：\n\n` +
+            `**${Number(userData.coins || 0).toLocaleString('zh-TW')} ASD**`
+          )
+          .setFooter({
+            text: '深夜不關燈｜公開餘額查詢'
+          })
+          .setTimestamp()
+      ]
+    });
+  }
   if (interaction.commandName === '發紅包') {
     const totalAmount =
       interaction.options.getInteger('金額');
@@ -4095,13 +4127,9 @@ async function handleSlashCommand(interaction) {
           if (isNaN(amount) || amount <= 0) {
             return replyError(interaction, '金額錯誤');
           }
-          const targetData = await getUser(target.id);
-          await updateCoins(
-            target.id,
-            targetData.coins + amount
-          );
+        
           const finalCoins =
-            targetData.coins + amount;
+            await changeCoins(target.id, amount);
           await sendWalletLog(
             target.id,
             '儲值',
@@ -4131,14 +4159,18 @@ async function handleSlashCommand(interaction) {
           if (isNaN(amount) || amount <= 0) {
             return replyError(interaction, '金額錯誤');
           }
-          const targetData = await getUser(target.id);
-          await updateCoins(
+          const finalCoins =
+            await changeCoins(target.id, -amount);
+          await sendWalletLog(
             target.id,
-            Math.max(0, targetData.coins - amount)
+            '扣款',
+            -amount,
+            finalCoins,
+            '後台扣款'
           );
           return interaction.editReply({
             content:
-              `❌ 已扣除 <@${target.id}> ${amount} 星雨幣`,
+              `❌ 已扣除 <@${target.id}> ${amount} 星雨幣，目前餘額 ${finalCoins} 星雨幣`,
           });
         }
         if (interaction.commandName === '設定月結') {
@@ -4283,11 +4315,8 @@ async function handleSlashCommand(interaction) {
             .in('status', ['billed', 'unbilled']);
           // ===== 發放回饋 =====
           if (cashbackAmount > 0) {
-            const userData =
-              await getUser(target.id);
             const finalCoins =
-              Number(userData.coins || 0) + cashbackAmount;
-            await updateCoins(target.id, finalCoins);
+              await changeCoins(target.id, cashbackAmount);
             await sendWalletLog(
               target.id,
               '月結回饋',
@@ -4656,9 +4685,8 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
     });
   }
 
-  const finalCoins = (senderData.coins || 0) - totalAmount;
-
-  await updateCoins(interaction.user.id, finalCoins);
+  const finalCoins =
+    await changeCoins(interaction.user.id, -totalAmount);
 
   await sendWalletLog(
     interaction.user.id,
@@ -4689,7 +4717,7 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
   if (error || !packet) {
     console.error('[紅包建立失敗]', error);
 
-    await updateCoins(interaction.user.id, senderData.coins || 0);
+    await changeCoins(interaction.user.id, totalAmount);
 
     return interaction.editReply({
       content: '❌ 紅包建立失敗，已退回星雨幣'
@@ -4834,10 +4862,8 @@ async function claimRedPacket(interaction) {
     });
   }
 
-  const userData = await getUser(interaction.user.id);
-  const finalCoins = (userData.coins || 0) + claimAmount;
-
-  await updateCoins(interaction.user.id, finalCoins);
+  const finalCoins =
+    await changeCoins(interaction.user.id, claimAmount);
 
   await sendWalletLog(
     interaction.user.id,
@@ -4992,16 +5018,14 @@ async function handleButtonInteraction(interaction) {
 
       const reward = 10;
 
-      await updateCoins(
-        interaction.user.id,
-        userData.coins + reward
-      );
+      const finalCoins =
+        await changeCoins(interaction.user.id, reward);
 
       await sendWalletLog(
         interaction.user.id,
         '每日簽到',
         reward,
-        userData.coins + reward,
+        finalCoins,
         '☔ 每日簽到獎勵'
       );
 
@@ -5315,16 +5339,14 @@ async function handleButtonInteraction(interaction) {
 
       const userData = await getUser(interaction.user.id);
 
-      await updateCoins(
-        interaction.user.id,
-        userData.coins + reward
-      );
+      const finalCoins =
+        await changeCoins(interaction.user.id, reward);
 
       await sendWalletLog(
         interaction.user.id,
         '聊天掉落',
         reward,
-        userData.coins + reward,
+        finalCoins,
         '☔ 領取聊天掉落獎勵'
       );
 
@@ -5596,15 +5618,7 @@ async function handleButtonInteraction(interaction) {
           });
         }
         const finalCoins =
-          (userData.coins || 0) - amount;
-        await supabase
-          .from("users")
-          .update({
-            coins: finalCoins,
-            total_spent: (userData.total_spent || 0) + amount,
-            month_spent: (userData.month_spent || 0) + amount,
-          })
-          .eq("user_id", tipperId);
+          await changeCoins(tipperId, -amount);
         await sendWalletLog(
           tipperId,
           "打賞消費",
@@ -6573,10 +6587,11 @@ async function handleStringSelectInteraction(interaction) {
           item.description,
           itemType
         );
+        const finalCoins =
+          await changeCoins(interaction.user.id, -item.price);
         await supabase
           .from('users')
           .update({
-            coins: userData.coins - item.price,
             total_spent: (userData.total_spent || 0) + item.price,
             month_spent: (userData.month_spent || 0) + item.price
           })
@@ -6590,7 +6605,7 @@ async function handleStringSelectInteraction(interaction) {
           interaction.user.id,
           '商店購買',
           -item.price,
-          userData.coins - item.price,
+          finalCoins,
           `🛒 購買商品：${item.item_name}`
         );
         await refreshShop(client);

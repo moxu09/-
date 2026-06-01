@@ -121,6 +121,27 @@ async function applyExtensionToPlayOrder(extension) {
     throw new Error('加時金額錯誤');
   }
 
+  const { data: lockedExtension, error: lockError } =
+    await supabase
+      .from('order_extensions')
+      .update({
+        applied_to_salary: true,
+        applied_at: new Date().toISOString()
+      })
+      .eq('id', extension.id)
+      .eq('applied_to_salary', false)
+      .select()
+      .maybeSingle();
+
+  if (lockError) {
+    console.error('[加時進薪資網] 鎖定加時失敗', lockError);
+    throw lockError;
+  }
+
+  if (!lockedExtension) {
+    throw new Error('這筆加時已經寫入過薪資網，已阻止重複加錢');
+  }
+
   const { data: order, error: orderError } =
     await supabase
       .from('play_orders')
@@ -3742,21 +3763,21 @@ async function handleExtensionPaymentMethodSelect(interaction) {
       });
     }
 
-    const finalCoins =
-      currentCoins - amount;
-
-    const { error: coinError } =
-      await supabase
-        .from('users')
-        .update({
-          coins: finalCoins
-        })
-        .eq('user_id', extension.customer_id);
-
-    if (coinError) {
-      console.error('[加時] 錢包扣款失敗', coinError);
+    if (!paymentHelpers.changeCoins) {
       return interaction.editReply({
-        content: '❌ 錢包扣款失敗'
+        content: '❌ changeCoins 尚未接入，請確認 index.js 的 dispatchSystem.setup'
+      });
+    }
+    let finalCoins = 0;
+    try {
+      finalCoins = await paymentHelpers.changeCoins(
+        extension.customer_id,
+        -amount
+      );
+    } catch (error) {
+      console.error('[加時] 扣款失敗', error);
+      return interaction.editReply({
+        content: '❌ 扣款失敗，請查看 Railway Logs'
       });
     }
 
@@ -4476,33 +4497,20 @@ async function confirmTopup(interaction) {
     });
   }
 
-  const currentCoins =
-    Number(userData?.coins || 0);
-
-  const finalCoins =
-    currentCoins + amount;
-
-  const { error: upsertError } =
-    await supabase
-      .from('users')
-      .upsert(
-        {
-          user_id: userId,
-          coins: finalCoins
-        },
-        {
-          onConflict: 'user_id'
-        }
-      );
-
-  if (upsertError) {
-    console.error('[確認儲值] 更新餘額失敗', upsertError);
-
+  if (!paymentHelpers.changeCoins) {
+    return interaction.editReply({
+      content: '❌ changeCoins 尚未接入，請確認 index.js 的 dispatchSystem.setup'
+    });
+  }
+  let finalCoins = 0;
+  try {
+    finalCoins = await paymentHelpers.changeCoins(userId, amount);
+  } catch (error) {
+    console.error('[確認儲值] 更新餘額失敗', error);
     return interaction.editReply({
       content: '❌ 儲值失敗，請查看後台 Logs'
     });
   }
-
   await paymentHelpers.sendWalletLog(
     userId,
     '儲值',
@@ -5170,151 +5178,6 @@ async function checkGrowthVip(client, guildId, userId, singleTopup = 0) {
     content:
       `🎉 恭喜你已升級為 ${levelName[newLevel]}！`
   }).catch(() => {});
-}
-async function confirmTopup(interaction) {
-  if (!interaction.deferred && !interaction.replied) {
-    await interaction.deferReply({ flags: 64 });
-  }
-  const [, , userId, amountText] =
-    interaction.customId.split('_');
-  const amount =
-    Number(amountText);
-  const bonus =
-    getTopupBonus(amount);
-  const finalAmount =
-    amount + bonus;
-  // ===== 讀玩家 =====
-
-  const { data: user } =
-    await supabase
-      .from('users')
-      .select('*')
-      .eq('user_id', userId)
-      .maybeSingle();
-
-  // ===== 新玩家 =====
-
-  if (!user) {
-
-    await supabase
-      .from('users')
-      .insert({
-
-        user_id:
-          userId,
-
-        coins:
-          finalAmount,
-
-        total_topup:
-          amount,
-
-        total_spent:
-          0,
-
-        vip_level:
-          'none',
-
-        growth_vip:
-          'none'
-
-      });
-
-  }
-
-  // ===== 舊玩家 =====
-
-  else {
-
-    await supabase
-      .from('users')
-      .update({
-
-        coins:
-          (user.coins || 0) + finalAmount,
-
-        total_topup:
-          (user.total_topup || 0) + amount
-
-      })
-      .eq('user_id', userId);
-
-  }
-
-  // ===== VIP 檢查 =====
-
-  await checkGrowthVip(
-    client,
-    interaction.guild.id,
-    userId,
-    amount
-  );
-  // ===== 儲值通知 =====
-  const newBalance =
-    !user
-      ? finalAmount
-      : (user.coins || 0) + finalAmount;
-  const targetUser =
-    await client.users
-      .fetch(userId)
-      .catch(() => null);
-  if (targetUser) {
-    const embed =
-      new EmbedBuilder()
-        .setColor('#57F287')
-        .setTitle('💰 儲值成功')
-        .setDescription(
-          `已成功儲值 NT$${amount}\n` +
-          (
-            bonus > 0
-              ? `🎁 儲值贈送：${bonus} 星雨幣\n\n` 
-              : '\n'
-          ) +
-          `💳 目前餘額：${newBalance} 星雨幣\n\n` +
-          `星雨幣已發放至你的帳戶 ✨`
-        )
-        .setTimestamp();
-    await targetUser.send({
-      embeds: [embed]
-    }).catch(() => {});
-  }
-  // ===== 發送儲值結果到臨時頻道 =====
-  const resultEmbed =
-    new EmbedBuilder()
-      .setColor('#57F287')
-      .setTitle('✅ 儲值完成')
-      .setDescription(
-        `👤 會員：<@${userId}>\n\n` +
-        `💰 儲值金額：NT$${amount}\n` +
-        (
-          bonus > 0
-            ? `🎁 儲值贈送：${bonus} 星雨幣\n`
-            : ''
-        ) +
-        `💳 實際入帳：${finalAmount} 星雨幣\n` +
-        `🏦 目前餘額：${newBalance} 星雨幣`
-      )
-      .setTimestamp();
-  await interaction.channel.send({
-    embeds: [resultEmbed]
-  });
-  const closeRow =
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('close_ticket')
-          .setLabel('關閉單子')
-          .setEmoji('🗑️')
-          .setStyle(ButtonStyle.Danger)
-      );
-  await interaction.message.edit({
-    components: [closeRow]
-  }).catch(() => {});
-  await interaction.editReply({
-    content:
-      `✅ 已完成儲值 NT$${amount}`
-  });
-
 }
 async function handleDispatchInteraction(interaction) {
   if (interaction.isChatInputCommand()) {
