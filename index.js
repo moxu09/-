@@ -41,7 +41,9 @@ const dispatchSystem = require('./events/dispatchSystem');
 
 dispatchSystem.setup(supabase, client, {
   payOrderByWallet,
-  payOrderByMonthly
+  payOrderByMonthly,
+  sendWalletLog,
+  checkAndUpgradeVip
 });
 // ===== 轉帳冷卻 =====
 const transferCooldown =
@@ -1191,20 +1193,22 @@ async function checkAndUpgradeVip(userId, triggerType, amount) {
 
   const oldTotalSpent =
     Number(currentVip?.total_spent || 0);
-
+  const oldTotalTopup =
+    Number(currentVip?.total_topup || 0);
   const oldHighestTopup =
     Number(currentVip?.highest_single_topup || 0);
-
   const newTotalSpent =
     triggerType === 'spend'
       ? oldTotalSpent + triggerAmount
       : oldTotalSpent;
-
+  const newTotalTopup =
+    triggerType === 'topup'
+      ? oldTotalTopup + triggerAmount
+      : oldTotalTopup;
   const newHighestTopup =
     triggerType === 'topup'
       ? Math.max(oldHighestTopup, triggerAmount)
       : oldHighestTopup;
-
   const { data: levels, error: levelError } =
     await supabase
       .from('vip_levels')
@@ -1234,6 +1238,7 @@ async function checkAndUpgradeVip(userId, triggerType, amount) {
 
       return (
         newTotalSpent >= spendRequired ||
+        newTotalTopup >= topupRequired ||
         newHighestTopup >= topupRequired
       );
     });
@@ -1247,6 +1252,7 @@ async function checkAndUpgradeVip(userId, triggerType, amount) {
           level_key: currentVip?.level_key || null,
           level_name: currentVip?.level_name || null,
           total_spent: newTotalSpent,
+          total_topup: newTotalTopup,
           highest_single_topup: newHighestTopup,
           updated_at: new Date().toISOString()
         },
@@ -1254,7 +1260,6 @@ async function checkAndUpgradeVip(userId, triggerType, amount) {
           onConflict: 'user_id'
         }
       );
-
     return null;
   }
 
@@ -1272,6 +1277,7 @@ async function checkAndUpgradeVip(userId, triggerType, amount) {
         level_key: newLevel.level_key,
         level_name: newLevel.level_name,
         total_spent: newTotalSpent,
+        total_topup: newTotalTopup,
         highest_single_topup: newHighestTopup,
         updated_at: new Date().toISOString()
       },
@@ -3231,6 +3237,10 @@ client.on(Events.InteractionCreate, async interaction => {
           await interaction.channel.delete().catch(() => {});
         }, 3000);
         return;
+      }
+      if (interaction.customId.startsWith('confirm_topup_')) {
+        await confirmTopup(interaction);
+        return true;
       }
       // Modal 類按鈕不能 defer
       if (

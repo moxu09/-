@@ -3092,6 +3092,124 @@ async function handleTopupPaymentMethodSelect(interaction) {
     components: []
   });
 }
+async function confirmTopup(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以確認儲值'
+    });
+  }
+
+  const parts =
+    interaction.customId.split('_');
+
+  // confirm_topup_userId_amount
+  const userId =
+    parts[2];
+
+  const amount =
+    Number(parts[3]);
+
+  if (!userId || !amount || amount <= 0) {
+    return interaction.editReply({
+      content: '❌ 儲值資料錯誤'
+    });
+  }
+
+  if (
+    !paymentHelpers.sendWalletLog ||
+    !paymentHelpers.checkAndUpgradeVip
+  ) {
+    return interaction.editReply({
+      content:
+        '❌ 儲值函式尚未完整接入，請確認 index.js 的 dispatchSystem.setup 有傳 sendWalletLog 和 checkAndUpgradeVip'
+    });
+  }
+
+  const { data: userData, error: userError } =
+    await supabase
+      .from('users')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+  if (userError) {
+    console.error('[確認儲值] 讀取使用者失敗', userError);
+
+    return interaction.editReply({
+      content: '❌ 讀取會員資料失敗'
+    });
+  }
+
+  const currentCoins =
+    Number(userData?.coins || 0);
+
+  const finalCoins =
+    currentCoins + amount;
+
+  const { error: upsertError } =
+    await supabase
+      .from('users')
+      .upsert(
+        {
+          user_id: userId,
+          coins: finalCoins
+        },
+        {
+          onConflict: 'user_id'
+        }
+      );
+
+  if (upsertError) {
+    console.error('[確認儲值] 更新餘額失敗', upsertError);
+
+    return interaction.editReply({
+      content: '❌ 儲值失敗，請查看後台 Logs'
+    });
+  }
+
+  await paymentHelpers.sendWalletLog(
+    userId,
+    '儲值',
+    amount,
+    finalCoins,
+    '💳 自動儲值成功'
+  );
+
+  await paymentHelpers.checkAndUpgradeVip(
+    userId,
+    'topup',
+    amount
+  );
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('✅ 儲值已完成')
+        .setDescription(
+          `<@${userId}> 已成功儲值。\n\n` +
+          `儲值金額：${amount} ASD\n` +
+          `目前餘額：${finalCoins} ASD\n` +
+          `確認客服：<@${interaction.user.id}>`
+        )
+        .setTimestamp()
+    ]
+  });
+
+  return interaction.editReply({
+    content: `✅ 已幫 <@${userId}> 儲值 ${amount} ASD`
+  });
+}
 async function submitSaveOrderNote(interaction) {
   await interaction.deferReply({
     flags: 64
