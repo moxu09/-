@@ -3125,8 +3125,7 @@ async function submitStaffEditOrder(interaction) {
 
   const updateData = {
     quote_status: 'fixed',
-    status: 'quoted',
-    updated_at: new Date().toISOString()
+    status: 'quoted'
   };
 
   if (service.trim()) {
