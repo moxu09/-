@@ -715,6 +715,71 @@ async function giveMonthlyVip(
       expires_at: expiresAt.toISOString()
     });
 }
+async function saveTipToPlayOrders({
+  tipperId,
+  staffId,
+  item,
+  amount,
+  channelId,
+  paid = true
+}) {
+  const { data, error } = await supabase
+    .from('play_orders')
+    .insert({
+      customer_id: tipperId,
+      customer_name: `<@${tipperId}>`,
+
+      assigned_player: staffId,
+
+      order_type: '打賞',
+      order_item: item,
+
+      game: '打賞',
+      service: item,
+
+      price: amount,
+      final_price: amount,
+
+      paid,
+      paid_at: paid ? new Date().toISOString() : null,
+      salary_paid: false,
+
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+
+      source_channel_id: channelId
+    })
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[打賞寫入薪資網失敗]', error);
+    throw error;
+  }
+
+  return data;
+}
+
+async function sendTipCloseButtons(channel) {
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('save_order_log')
+        .setLabel('📁 儲存紀錄')
+        .setStyle(ButtonStyle.Success),
+
+      new ButtonBuilder()
+        .setCustomId('delete_order_now')
+        .setLabel('🗑️ 直接刪除')
+        .setStyle(ButtonStyle.Danger)
+    );
+
+  await channel.send({
+    content:
+      `<@&${process.env.STAFF_ROLE}> 打賞已完成，請選擇是否儲存紀錄或關閉頻道。`,
+    components: [row]
+  });
+}
 // ===== 安全回覆封裝 =====
 async function safeReply(interaction, options) {
   try {
@@ -5513,6 +5578,34 @@ async function handleButtonInteraction(interaction) {
         await sendCardPaymentInfo(interaction.channel);
       }
       pendingTips.delete(tipConfirmId);
+      if (isWalletPayment(paymentMethod)) {
+        try {
+          await saveTipToPlayOrders({
+            tipperId,
+            staffId: selectedStaffId,
+            item,
+            amount: Number(amount),
+            channelId: interaction.channel.id,
+            paid: true
+          });
+          await interaction.channel.send({
+            content:
+              `✅ 儲值卡打賞已完成，並已寫入薪資網\n` +
+              `打賞人：<@${tipperId}>\n` +
+              `受賞陪陪：<@${selectedStaffId}>\n` +
+              `品項：${item}\n` +
+              `金額：NT$${amount}`
+          });
+          await sendTipCloseButtons(interaction.channel);
+        } catch (error) {
+          console.error('[儲值卡打賞寫入薪資網失敗]', error);
+          await interaction.channel.send({
+            content:
+              `⚠️ 儲值卡已扣款，但寫入薪資網失敗。\n` +
+              `錯誤：${error.message || error}`
+          });
+        }
+      }
       return await interaction.editReply({
         content: isWalletPayment
           ? "✅ 已確認打賞，並已完成餘額扣款"
@@ -5602,9 +5695,35 @@ async function handleButtonInteraction(interaction) {
         embeds: [embed],
         components: []
       });
-
+      // ===== 寫入薪資網 / play_orders =====
+      try {
+        await saveTipToPlayOrders({
+          tipperId,
+          staffId,
+          item: '打賞',
+          amount: Number(amount),
+          channelId: interaction.channel.id,
+          paid: true
+        });
+        await interaction.channel.send({
+          content:
+            `打賞人：<@${tipperId}>\n` +
+            `受賞陪陪：<@${staffId}>\n` +
+            `金額：NT$${amount}`
+        });
+      } catch (error) {
+        console.error('[打賞薪資寫入失敗]', error);
+        await interaction.channel.send({
+          content:
+            `⚠️ 打賞已確認付款，但寫入薪資網失敗。\n` +
+            `請管理員查看 Railway Logs。\n` +
+            `錯誤：${error.message || error}`
+        });
+      }
+      // ===== 送出關閉頻道 / 儲存紀錄按鈕 =====
+      await sendTipCloseButtons(interaction.channel);
       return await interaction.editReply({
-        content: '✅ 已確認打賞付款'
+        content: '✅ 已確認打賞付款，並已送出關閉頻道選項'
       });
     }
 
