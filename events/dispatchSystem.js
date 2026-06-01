@@ -3131,8 +3131,8 @@ async function submitStaffEditOrder(interaction) {
   }
 
   if (time.trim()) {
-    updateData.play_time = time.trim();
     updateData.reserved_time = time.trim();
+    updateData.duration_text = time.trim();
   }
 
   if (note.trim()) {
@@ -3179,7 +3179,7 @@ async function submitStaffEditOrder(interaction) {
           `訂單編號：${updatedOrder.order_no || updatedOrder.id}\n` +
           `闆闆：<@${updatedOrder.customer_id}>\n\n` +
           `🎮 服務：${updatedOrder.service || '未填寫'}\n` +
-          `🕒 時間 / 局數：${updatedOrder.reserved_time || updatedOrder.play_time || updatedOrder.time || '未填寫'}\n` +
+          `🕒 時間 / 局數：${updatedOrder.reserved_time || updatedOrder.duration_text || '未填寫'}\n` +
           `💰 金額：NT$${updatedOrder.final_price || updatedOrder.price || 0}\n` +
           `💳 付款方式：${updatedOrder.payment_method || '未選擇'}\n` +
           `📝 備註：${updatedOrder.note || '無'}\n\n` +
