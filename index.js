@@ -1323,14 +1323,19 @@ async function handleSlashExtendOrder(interaction) {
       .single();
 
   if (insertError || !extension) {
-    console.error('[加時指令] 建立加時失敗', insertError);
+    console.error(
+      '[加時指令] 建立加時失敗完整錯誤',
+      JSON.stringify(insertError, null, 2)
+    );
     return interaction.editReply({
       content:
-        '❌ 建立加時失敗，請確認 order_extensions 表是否已建立。\n' +
-        `錯誤：${insertError?.message || '未知錯誤'}`
+        '❌ 建立加時失敗\n' +
+        `錯誤訊息：${insertError?.message || '未知錯誤'}\n` +
+        `錯誤代碼：${insertError?.code || '無'}\n` +
+        `詳細資訊：${insertError?.details || '無'}\n` +
+        `提示：${insertError?.hint || '無'}`
     });
   }
-
   const menu =
     new StringSelectMenuBuilder()
       .setCustomId(`extension_payment_method_${extension.id}`)
