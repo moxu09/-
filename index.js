@@ -2251,8 +2251,12 @@ async function performGacha(userId, guildId, amount, poolId = null) {
 
     totalRewardCoins += rewardCoins;
 
+    const rewardName =
+      String(selected.reward_name || '');
     const itemType =
-      selected.reward_name.includes('優惠券')
+      rewardName.includes('優惠券') ||
+      rewardName.includes('折券') ||
+      rewardName.includes('券')
         ? 'coupon'
         : 'gacha';
 
@@ -2513,6 +2517,11 @@ async function sendAtmPanel(client) {
       .setCustomId('monthly_info')
       .setLabel('🌙 查詢月結')
       .setStyle(ButtonStyle.Secondary);
+  const bagButton =
+    new ButtonBuilder()
+      .setCustomId('my_bag')
+      .setLabel('🎒 我的背包')
+      .setStyle(ButtonStyle.Secondary);
   const row =
     new ActionRowBuilder()
       .addComponents(
@@ -2525,7 +2534,8 @@ async function sendAtmPanel(client) {
   const row2 =
     new ActionRowBuilder()
       .addComponents(
-        monthlyInfoButton
+        monthlyInfoButton,
+        bagButton
       );
   const embed =
     new EmbedBuilder()
@@ -5317,6 +5327,114 @@ async function handleButtonInteraction(interaction) {
               `每月 25 日結帳，繳款期限為次月 16 日。\n` +
               `月結額度僅限平台指定服務使用，不可提領、不可轉讓、不可兌現。`
             )
+            .setTimestamp()
+        ]
+      });
+    }
+    if (customId === 'my_bag') {
+      const rawItems =
+        await getUserItems(interaction.user.id);
+      const items =
+        rawItems.filter(item => {
+          const name =
+            String(item.item_name || '');
+          const desc =
+            String(item.description || '');
+          return !(
+            name.includes('星雨幣') ||
+            name.includes('金幣') ||
+            name.includes('幣') ||
+            desc.includes('星雨幣') ||
+            desc.includes('金幣')
+          );
+        });
+      if (!items.length) {
+        return await interaction.editReply({
+          content: '🎒 你的背包目前是空的'
+        });
+      }
+      const rarityOrder =
+        ['SSR', 'SR', 'R'];
+      let text = '';
+      for (const rarity of rarityOrder) {
+        const filtered =
+          items.filter(item => item.rarity === rarity);
+        if (!filtered.length) continue;
+        text += `\n${getRarityEmoji(rarity)} ${rarity}\n`;
+        for (const item of filtered) {
+          text += `• ${item.item_name}\n`;
+          if (item.description) {
+            text += `└ 📦 ${item.description}\n`;
+          }
+          if (item.item_type) {
+            text += `└ 🏷️ 類型：${item.item_type}\n`;
+          }
+          if (item.created_at) {
+            const date =
+              new Date(item.created_at)
+                .toLocaleString('zh-TW');
+            text += `└ 🕒 ${date}\n`;
+          }
+          text += '\n';
+        }
+      }
+      const couponItems =
+        items.filter(item =>
+          item.item_type === 'coupon' ||
+          String(item.item_name || '').includes('折券') ||
+          String(item.item_name || '').includes('優惠券')
+        );
+      const normalItems =
+        items.filter(item =>
+          !item.rarity &&
+          item.item_type !== 'coupon' &&
+          !String(item.item_name || '').includes('折券') &&
+          !String(item.item_name || '').includes('優惠券')
+        );
+      if (couponItems.length > 0) {
+        text += `\n🎟️ 優惠券\n`;
+        for (const item of couponItems) {
+          text += `• ${item.item_name}\n`;
+          if (item.description) {
+            text += `└ 📦 ${item.description}\n`;
+          }
+          if (item.created_at) {
+            const date =
+              new Date(item.created_at)
+                .toLocaleString('zh-TW');
+            text += `└ 🕒 ${date}\n`;
+          }
+          text += '\n';
+        }
+      }
+      if (normalItems.length > 0) {
+        text += `\n🛒 一般商品\n`;
+        for (const item of normalItems) {
+          text += `• ${item.item_name}\n`;
+          if (item.description) {
+            text += `└ 📦 ${item.description}\n`;
+          }
+          if (item.item_type) {
+            text += `└ 🏷️ 類型：${item.item_type}\n`;
+          }
+          if (item.created_at) {
+            const date =
+              new Date(item.created_at)
+                .toLocaleString('zh-TW');
+            text += `└ 🕒 ${date}\n`;
+          }
+          text += '\n';
+        }
+      }
+      return await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#ff66cc')
+            .setTitle('🎒 我的背包')
+            .setDescription(text.slice(0, 3800))
+            .setFooter({
+              text: '深夜不關燈｜背包查詢'
+            })
             .setTimestamp()
         ]
       });

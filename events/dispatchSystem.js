@@ -2643,7 +2643,9 @@ async function handleQuoteUseCoupon(interaction) {
       .from('user_items')
       .select('*')
       .eq('user_id', interaction.user.id)
-      .eq('item_type', 'coupon')
+      .or(
+        'item_type.eq.coupon,item_name.ilike.%折券%,item_name.ilike.%優惠券%'
+      )
       .order('created_at', { ascending: false });
 
   if (couponError) {
