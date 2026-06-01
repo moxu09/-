@@ -556,8 +556,13 @@ async function sendOrderToStaffChannel(order) {
           inline: false
         },
         {
+          name: '🏅 段位',
+          value: order.rank_preference || '不指定',
+          inline: true
+        },
+        {
           name: '🕒 預約時間',
-          value: order.reserved_time || order.play_time || order.time || '未填寫',
+          value: order.reserved_time || order.duration_text || '未填寫',
           inline: true
         },
         {
@@ -669,6 +674,7 @@ async function openPlayOrderModal(interaction) {
     channelId: interaction.channel.id,
     game: '',
     item: '',
+    rank: '',
     playerCount: 1,
     gender: '不指定',
     selectedPlayerType: 'none',
@@ -891,6 +897,45 @@ async function handleNewOrderGameSelect(interaction) {
     ] 
   });
 }
+function getValorantRankOptions() {
+  return [
+    {
+      label: '金牌',
+      value: '金牌',
+      description: 'Gold'
+    },
+    {
+      label: '白金',
+      value: '白金',
+      description: 'Platinum'
+    },
+    {
+      label: '鑽石',
+      value: '鑽石',
+      description: 'Diamond'
+    },
+    {
+      label: '超凡入聖',
+      value: '超凡入聖',
+      description: 'Ascendant'
+    },
+    {
+      label: '神話',
+      value: '神話',
+      description: 'Immortal'
+    },
+    {
+      label: '輻能戰魂',
+      value: '輻能戰魂',
+      description: 'Radiant'
+    },
+    {
+      label: '不指定 / 尚未確認',
+      value: '不指定',
+      description: '由客服協助確認'
+    }
+  ];
+}
 async function handleNewOrderItemSelect(interaction) {
   const flowId =
     interaction.customId.replace('new_order_item_', '');
@@ -914,7 +959,26 @@ async function handleNewOrderItemSelect(interaction) {
 
   pending.item = interaction.values[0];
   pendingNewOrders.set(flowId, pending);
-
+  if (pending.game === '特戰英豪') {
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`new_order_rank_${flowId}`)
+        .setPlaceholder('請選擇要打的段位')
+        .addOptions(getValorantRankOptions());
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+    return interaction.update({
+      content:
+        `🎮 遊戲：${pending.game}\n` +
+        `📌 項目：${pending.item}\n\n` +
+        `請選擇這次要打的段位：`,
+      components: [
+        row,
+        buildOrderBackRow(flowId, 'item')
+      ]
+    });
+  }
   const menu =
     new StringSelectMenuBuilder()
       .setCustomId(`new_order_count_${flowId}`)
@@ -954,6 +1018,73 @@ async function handleNewOrderItemSelect(interaction) {
     components: [
       row,
       buildOrderBackRow(flowId, 'item')
+    ]
+  });
+}
+async function handleNewOrderRankSelect(interaction) {
+  const flowId =
+    interaction.customId.replace('new_order_rank_', '');
+
+  const pending =
+    pendingNewOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.update({
+      content: '❌ 這筆下單流程已過期，請重新填寫。',
+      components: []
+    });
+  }
+
+  if (pending.userId !== interaction.user.id) {
+    return interaction.reply({
+      content: '❌ 只有下單者可以操作這個選單。',
+      flags: 64
+    });
+  }
+
+  pending.rank = interaction.values[0];
+  pendingNewOrders.set(flowId, pending);
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`new_order_count_${flowId}`)
+      .setPlaceholder('請選擇需要幾位陪陪')
+      .addOptions([
+        {
+          label: '1 位陪陪',
+          value: '1',
+          description: '單陪'
+        },
+        {
+          label: '2 位陪陪',
+          value: '2',
+          description: '雙陪'
+        },
+        {
+          label: '3 位陪陪',
+          value: '3',
+          description: '三陪'
+        },
+        {
+          label: '自訂',
+          value: 'custom',
+          description: '由客服協助確認人數'
+        }
+      ]);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  return interaction.update({
+    content:
+      `🎮 遊戲：${pending.game}\n` +
+      `📌 項目：${pending.item}\n` +
+      `🏅 段位：${pending.rank || '未填寫'}\n\n` +
+      `請選擇需要幾位陪陪：`,
+    components: [
+      row,
+      buildOrderBackRow(flowId, 'rank')
     ]
   });
 }
@@ -1020,6 +1151,11 @@ async function handleNewOrderCountSelect(interaction) {
     content:
       `🎮 遊戲：${pending.game}\n` +
       `📌 項目：${pending.item}\n` +
+      (
+        pending.game === '特戰英豪'
+          ? `🏅 段位：${pending.rank || '未填寫'}\n`
+          : ''
+      ) +
       `👥 人數：${pending.playerCount || '自訂'}\n\n` +
       `請選擇陪陪性別偏好：`,
     components: [
@@ -1060,6 +1196,11 @@ async function handleNewOrderGenderSelect(interaction) {
       content:
         `🎮 遊戲：${pending.game}\n` +
         `📌 項目：${pending.item}\n` +
+        (
+          pending.game === '特戰英豪'
+            ? `🏅 段位：${pending.rank || '未填寫'}\n`
+            : ''
+        ) +
         `👥 人數：${pending.playerCount || '自訂'}\n` +
         `🚻 性別偏好：${pending.gender}\n\n` +
         `❌ 目前沒有符合資格的陪陪，請聯繫客服協助安排。`,
@@ -1080,7 +1221,12 @@ async function handleNewOrderGenderSelect(interaction) {
   return interaction.update({
     content:
       `🎮 遊戲：${pending.game}\n` +
-      `📌 項目：${pending.item}\n` +
+       `📌 項目：${pending.item}\n` +
+        (
+          pending.game === '特戰英豪'
+            ? `🏅 段位：${pending.rank || '未填寫'}\n`
+            : ''
+        ) +
       `👥 人數：${pending.playerCount || '自訂'}\n` +
       `🚻 性別偏好：${pending.gender}\n\n` +
       `請選擇陪陪：\n` +
@@ -1260,7 +1406,12 @@ async function showDurationSelect(interaction, flowId, pending) {
   return interaction.update({
     content:
       `🎮 遊戲：${pending.game}\n` +
-      `📌 項目：${pending.item}\n` +
+       `📌 項目：${pending.item}\n` +
+        (
+          pending.game === '特戰英豪'
+            ? `🏅 段位：${pending.rank || '未填寫'}\n`
+            : ''
+        ) +
       `👥 人數：${pending.playerCount || '自訂'}\n` +
       `🚻 性別偏好：${pending.gender}\n` +
       `🌟 指定陪陪：${playerText}\n\n` +
@@ -1389,7 +1540,12 @@ async function askNewOrderNoteChoice(interaction, flowId, pending) {
     content:
       `📝 需求即將送出，是否要填寫備註？\n\n` +
       `🎮 遊戲：${pending.game}\n` +
-      `📌 項目：${pending.item}\n` +
+       `📌 項目：${pending.item}\n` +
+        (
+          pending.game === '特戰英豪'
+            ? `🏅 段位：${pending.rank || '未填寫'}\n`
+            : ''
+        ) +
       `👥 人數：${pending.playerCount || '自訂'}\n` +
       `🚻 性別偏好：${pending.gender}\n` +
       `🌟 指定陪陪：${playerText}\n` +
@@ -1540,7 +1696,37 @@ async function handleNewOrderBack(interaction) {
       ]
     });
   }
-
+  if (target === 'rank') {
+    pending.rank = '';
+    pending.playerCount = 1;
+    pending.gender = '不指定';
+    pending.selectedPlayerType = 'none';
+    pending.selectedPlayerId = null;
+    pending.selectedPlayerIds = [];
+    pending.duration = '';
+    pending.durationMinutes = 0;
+    pending.reservedTime = '';
+    pending.note = '無';
+    pendingNewOrders.set(flowId, pending);
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`new_order_rank_${flowId}`)
+        .setPlaceholder('請選擇要打的段位')
+        .addOptions(getValorantRankOptions());
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+    return interaction.update({
+      content:
+        `🎮 遊戲：${pending.game}\n` +
+        `📌 項目：${pending.item}\n\n` +
+        `請重新選擇這次要打的段位：`,
+      components: [
+        row,
+        buildOrderBackRow(flowId, 'item')
+      ]
+    });
+  }
   if (target === 'count') {
     pending.playerCount = 1;
     pending.gender = '不指定';
@@ -1587,11 +1773,19 @@ async function handleNewOrderBack(interaction) {
     return interaction.update({
       content:
         `🎮 遊戲：${pending.game}\n` +
-        `📌 項目：${pending.item}\n\n` +
+        `📌 項目：${pending.item}\n` +
+        (
+          pending.game === '特戰英豪'
+            ? `🏅 段位：${pending.rank || '未填寫'}\n`
+            : ''
+        ) +
         `請重新選擇需要幾位陪陪：`,
       components: [
         row,
-        buildOrderBackRow(flowId, 'item')
+        buildOrderBackRow(
+          flowId,
+          pending.game === '特戰英豪' ? 'rank' : 'item'
+        )
       ]
     });
   }
@@ -1848,6 +2042,7 @@ async function createWaitingQuoteOrder(interaction, flowId, pending) {
 
         game: pending.game,
         order_item: pending.item,
+        rank_preference: pending.rank || null,
         player_count: pending.playerCount || 0,
         gender_preference: pending.gender,
         preferred_player_type: pending.selectedPlayerType,
@@ -1931,6 +2126,11 @@ async function createWaitingQuoteOrder(interaction, flowId, pending) {
         {
           name: '📦 項目',
           value: pending.item,
+          inline: true
+        },
+        {
+          name: '🏅 段位',
+          value: pending.rank || '不指定',
           inline: true
         },
         {
@@ -2055,6 +2255,11 @@ async function sendStaffQuotePanel(order) {
             name: '🎮 服務',
             value: order.service || '未填寫',
             inline: false
+          },
+          {
+            name: '🏅 段位',
+            value: order.rank_preference || '不指定',
+            inline: true
           },
           {
             name: '👥 人數',
@@ -5177,6 +5382,10 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId.startsWith('new_order_item_')) {
       await handleNewOrderItemSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('new_order_rank_')) {
+      await handleNewOrderRankSelect(interaction);
       return true;
     }
     if (interaction.customId.startsWith('new_order_count_')) {
