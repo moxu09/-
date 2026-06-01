@@ -1016,6 +1016,151 @@ async function payOrderByMonthly(order) {
     availableAmount: monthlyLimit - usedAmount - amount
   };
 }
+async function handleSlashExtendOrder(interaction) {
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.reply({
+      content: '❌ 只有客服可以使用加時指令',
+      flags: 64
+    });
+  }
+
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const orderId =
+    interaction.options.getInteger('訂單id');
+
+  const extensionText =
+    interaction.options.getString('內容');
+
+  const amount =
+    interaction.options.getInteger('金額');
+
+  const note =
+    interaction.options.getString('備註') || '';
+
+  if (!amount || amount <= 0) {
+    return interaction.editReply({
+      content: '❌ 加時金額必須大於 0'
+    });
+  }
+
+  const { data: order, error: orderError } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .single();
+
+  if (orderError || !order) {
+    console.error('[加時指令] 找不到原訂單', orderError);
+    return interaction.editReply({
+      content: '❌ 找不到這筆訂單，請確認訂單 ID 是否正確'
+    });
+  }
+
+  const { data: extension, error: insertError } =
+    await supabase
+      .from('order_extensions')
+      .insert({
+        order_id: order.id,
+        order_no: order.order_no || null,
+        customer_id: order.customer_id,
+        channel_id: interaction.channel.id,
+        staff_id: interaction.user.id,
+        extension_text: extensionText,
+        amount,
+        payment_method: '未選擇',
+        paid: false,
+        status: 'pending',
+        note
+      })
+      .select()
+      .single();
+
+  if (insertError || !extension) {
+    console.error('[加時指令] 建立加時失敗', insertError);
+    return interaction.editReply({
+      content:
+        '❌ 建立加時失敗，請確認 order_extensions 表是否已建立。\n' +
+        `錯誤：${insertError?.message || '未知錯誤'}`
+    });
+  }
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`extension_payment_method_${extension.id}`)
+      .setPlaceholder('請選擇加時付款方式')
+      .addOptions([
+        {
+          label: '匯款 / 轉帳',
+          description: '顯示銀行帳號，付款後上傳截圖',
+          value: '匯款'
+        },
+        {
+          label: '無卡',
+          description: '顯示無卡帳號，付款後上傳截圖',
+          value: '無卡'
+        },
+        {
+          label: '刷卡',
+          description: '顯示刷卡付款連結，付款後上傳截圖',
+          value: '刷卡'
+        },
+        {
+          label: '儲值卡 / 錢包',
+          description: '立即由 ASD 餘額扣款',
+          value: '儲值卡'
+        },
+        {
+          label: '美金轉帳',
+          description: '請等待客服提供帳號',
+          value: '美金轉帳'
+        },
+        {
+          label: '加密貨幣',
+          description: '請等待客服提供錢包地址',
+          value: '加密貨幣'
+        }
+      ]);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('➕ 加時付款')
+        .setDescription(
+          `<@${order.customer_id}> 請選擇加時付款方式。\n\n` +
+          `原訂單：${order.order_no || order.id}\n` +
+          `加時內容：${extensionText}\n` +
+          `加時金額：NT$${amount.toLocaleString('zh-TW')}\n` +
+          `建立客服：<@${interaction.user.id}>\n` +
+          `備註：${note || '無'}`
+        )
+        .setTimestamp()
+    ],
+    components: [row]
+  });
+
+  return interaction.editReply({
+    content:
+      `✅ 已建立加時付款\n` +
+      `原訂單：${order.order_no || order.id}\n` +
+      `內容：${extensionText}\n` +
+      `金額：NT$${amount.toLocaleString('zh-TW')}`
+  });
+}
 // ===== VIP 成長制度 =====
 function parseVipCouponReward(rewardCoupon = '') {
   const text = String(rewardCoupon || '').trim();
@@ -2596,6 +2741,33 @@ const commands = [
         .setRequired(true)
     ),
   new SlashCommandBuilder()
+    .setName('加時')
+    .setDescription('替訂單建立加時 / 續單付款')
+    .addIntegerOption(option =>
+      option
+        .setName('訂單id')
+        .setDescription('play_orders 的訂單 ID')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('內容')
+        .setDescription('例如：30分鐘、1局、續聊1小時')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('金額')
+        .setDescription('加時金額')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('備註')
+        .setDescription('可不填，例如：客人要求延長，陪陪同意')
+        .setRequired(false)
+    ),
+  new SlashCommandBuilder()
     .setName('設定月結')
     .setDescription('設定會員月結保證金與額度')
     .addUserOption(option =>
@@ -3169,10 +3341,15 @@ client.on(Events.InteractionCreate, async interaction => {
         await dispatchSystem.handleDispatchInteraction(interaction);
 
       if (handled) return;
-
+      if (interaction.commandName === '加時') {
+        await handleSlashExtendOrder(interaction);
+        return;
+      }
       await handleSlashCommand(interaction);
       return;
+
     }
+  
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
@@ -3355,7 +3532,8 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('new_order_duration_') ||
         interaction.customId.startsWith('quote_select_coupon_') ||
         interaction.customId.startsWith('quote_payment_method_') ||
-        interaction.customId.startsWith('submit_dispatch_players_')
+        interaction.customId.startsWith('submit_dispatch_players_') ||
+        interaction.customId.startsWith('extension_payment_method_')
       ) {
 
         return await dispatchSystem.handleDispatchInteraction(interaction);
