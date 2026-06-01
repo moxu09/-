@@ -754,6 +754,7 @@ async function saveTipToPlayOrders({
     .insert({
       customer_id: tipperId,
       customer_name: `<@${tipperId}>`,
+      customer_username: `<@${tipperId}>`,
 
       assigned_player: staffId,
 
@@ -761,19 +762,23 @@ async function saveTipToPlayOrders({
       order_item: item,
 
       game: '打賞',
-      service: item,
+      service: `打賞：${item}`,
+      note: '打賞',
 
-      price: amount,
-      final_price: amount,
+      channel_id: channelId,
+      source_channel_id: channelId,
+
+      price: Number(amount),
+      final_price: Number(amount),
 
       paid,
       paid_at: paid ? new Date().toISOString() : null,
       salary_paid: false,
+      salary_paid_at: null,
 
       status: 'completed',
       completed_at: new Date().toISOString(),
-
-      source_channel_id: channelId
+      accepted_at: new Date().toISOString()
     })
     .select()
     .single();
@@ -3729,6 +3734,22 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     // ===== String Select =====
     if (interaction.isStringSelectMenu()) {
+      // ===== 新版下單流程：不能先 defer，因為 dispatchSystem 會用 interaction.update() =====
+      if (
+        interaction.customId.startsWith('new_order_game_') ||
+        interaction.customId.startsWith('new_order_item_') ||
+        interaction.customId.startsWith('new_order_rank_') ||
+        interaction.customId.startsWith('new_order_count_') ||
+        interaction.customId.startsWith('new_order_gender_') ||
+        interaction.customId.startsWith('new_order_player_') ||
+        interaction.customId.startsWith('new_order_duration_') ||
+        interaction.customId.startsWith('quote_select_coupon_') ||
+        interaction.customId.startsWith('quote_payment_method_') ||
+        interaction.customId.startsWith('topup_payment_method_') ||
+        interaction.customId.startsWith('extension_payment_method_')
+      ) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
       // ===== 選擇受賞員工後，跳出打賞表單 =====
       if (interaction.customId === "select_tip_staff") {
         const selectedStaffId = interaction.values[0];
