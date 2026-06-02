@@ -3727,9 +3727,11 @@ async function submitExtendOrder(interaction) {
   });
 }
 async function handleExtensionPaymentMethodSelect(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
   const extensionId =
     interaction.customId.replace('extension_payment_method_', '');
@@ -3920,9 +3922,11 @@ async function handleExtensionPaymentMethodSelect(interaction) {
   });
 }
 async function handleStaffConfirmExtensionPaid(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
   const isStaff =
     interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
