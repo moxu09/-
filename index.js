@@ -4800,128 +4800,50 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
     content: `✅ 已發出紅包：${totalAmount} 星雨幣 / ${totalCount} 份`
   });
 }
-
 async function claimRedPacket(interaction) {
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({
       flags: 64
     });
   }
+
   const packetId =
     interaction.customId.replace(
       'claim_red_packet_',
       ''
     );
 
-  const { data: packet, error: packetError } =
-    await supabase
-      .from('red_packets')
-      .select('*')
-      .eq('id', packetId)
-      .single();
+  const { data, error } =
+    await supabase.rpc(
+      'claim_red_packet_safe',
+      {
+        p_packet_id: Number(packetId),
+        p_user_id: interaction.user.id
+      }
+    );
 
-  if (packetError || !packet) {
+  if (error) {
+    console.error('[安全搶紅包失敗]', error);
+
     return interaction.editReply({
-      content: '❌ 找不到這包紅包'
+      content:
+        '❌ 搶紅包失敗，請稍後再試。\n' +
+        `錯誤：${error.message || '未知錯誤'}`
     });
   }
 
-  if (packet.status !== 'active') {
+  const result =
+    Array.isArray(data)
+      ? data[0]
+      : data;
+
+  if (!result || !result.success) {
     return interaction.editReply({
-      content: '❌ 這包紅包已經結束'
+      content: `❌ ${result?.message || '搶紅包失敗'}`
     });
   }
 
-  if (packet.remaining_count <= 0 || packet.remaining_amount <= 0) {
-    return interaction.editReply({
-      content: '❌ 紅包已經被搶完了'
-    });
-  }
-
-  const { data: oldClaim } =
-    await supabase
-      .from('red_packet_claims')
-      .select('*')
-      .eq('packet_id', packet.id)
-      .eq('user_id', interaction.user.id)
-      .maybeSingle();
-
-  if (oldClaim) {
-    return interaction.editReply({
-      content: `❌ 你已經搶過了，獲得 ${oldClaim.amount} 星雨幣`
-    });
-  }
-
-  let claimAmount = 1;
-
-  if (packet.remaining_count === 1) {
-    claimAmount = packet.remaining_amount;
-  } else {
-    const max =
-      packet.remaining_amount - packet.remaining_count + 1;
-
-    claimAmount =
-      Math.max(
-        1,
-        Math.floor(Math.random() * max) + 1
-      );
-  }
-
-  const newRemainingAmount =
-    packet.remaining_amount - claimAmount;
-
-  const newRemainingCount =
-    packet.remaining_count - 1;
-
-  const newStatus =
-    newRemainingCount <= 0 ||
-    newRemainingAmount <= 0
-      ? 'finished'
-      : 'active';
-
-  const { error: claimError } =
-    await supabase
-      .from('red_packet_claims')
-      .insert({
-        packet_id: packet.id,
-        user_id: interaction.user.id,
-        amount: claimAmount
-      });
-
-  if (claimError) {
-    if (claimError.code === '23505') {
-      return interaction.editReply({
-        content: '❌ 你已經搶過這包紅包了'
-      });
-    }
-
-    console.error('[紅包領取失敗]', claimError);
-    return interaction.editReply({
-      content: '❌ 搶紅包失敗'
-    });
-  }
-
-  const finalCoins =
-    await changeCoins(interaction.user.id, claimAmount);
-
-  await sendWalletLog(
-    interaction.user.id,
-    '搶紅包',
-    claimAmount,
-    finalCoins,
-    `🧧 搶到 <@${packet.sender_id}> 的紅包`
-  );
-
-  await supabase
-    .from('red_packets')
-    .update({
-      remaining_amount: newRemainingAmount,
-      remaining_count: newRemainingCount,
-      status: newStatus
-    })
-    .eq('id', packet.id);
-
-  if (newStatus === 'finished') {
+  if (result.left_count <= 0 || result.left_amount <= 0) {
     const finishedEmbed =
       EmbedBuilder.from(interaction.message.embeds[0])
         .setColor('#999999')
@@ -4950,10 +4872,12 @@ async function claimRedPacket(interaction) {
 
   return interaction.editReply({
     content:
-      `🧧 恭喜你搶到 ${claimAmount} 星雨幣！\n` +
-      `剩餘：${newRemainingCount} 份`
+      `🧧 恭喜你搶到 ${Number(result.claim_amount || 0).toLocaleString('zh-TW')} 星雨幣！\n` +
+      `💰 目前餘額：${Number(result.new_balance || 0).toLocaleString('zh-TW')} 星雨幣\n` +
+      `📦 紅包剩餘：${Number(result.left_amount || 0).toLocaleString('zh-TW')} 星雨幣 / ${Number(result.left_count || 0).toLocaleString('zh-TW')} 份`
   });
 }
+
 async function createPrivateRoom(interaction) {
   const safeName =
     interaction.user.username
