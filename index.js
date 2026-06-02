@@ -3873,6 +3873,12 @@ client.on(Events.InteractionCreate, async interaction => {
     }
     // ===== User Select =====
     if (interaction.isUserSelectMenu()) {
+      // ===== ATM 玩家轉帳選人 =====
+      // 這個後面要 showModal，所以不能先 deferReply
+      if (interaction.customId === 'transfer_user_select') {
+        return await handleUserSelectSubmit(interaction);
+      }
+      // ===== 私人房間邀請成員 =====
       if (interaction.customId.startsWith('private_room_invite_')) {
         if (!interaction.deferred && !interaction.replied) {
           await interaction.deferReply({ flags: 64 });
@@ -7009,14 +7015,10 @@ async function handleUserSelectSubmit(interaction) {
       // ⚠️ UserSelect 不要 reply
       // 因為等等要 showModal
 
-      if (
-        targetId ===
-        interaction.user.id
-      ) {
-
-        return await interaction.update({
+      if (targetId === interaction.user.id) {
+        return await interaction.reply({
           content: '❌ 不能轉給自己',
-          components: []
+          flags: 64
         });
       }
 
@@ -7179,6 +7181,7 @@ async function handleModalSubmit(interaction) {
       });
     }
     if (interaction.customId.startsWith('transfer_modal_')) {
+      await interaction.deferReply({ flags: 64 });
       const targetId =
         interaction.customId.replace(
           'transfer_modal_',
