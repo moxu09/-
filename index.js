@@ -4802,6 +4802,11 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
 }
 
 async function claimRedPacket(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
   const packetId =
     interaction.customId.replace(
       'claim_red_packet_',
