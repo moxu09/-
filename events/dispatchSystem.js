@@ -4215,6 +4215,12 @@ async function openDispatchPlayerMenu(interaction) {
 }
 
 async function submitDispatchPlayers(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
   const orderId =
     interaction.customId.replace(
       'submit_dispatch_players_',
