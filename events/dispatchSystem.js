@@ -343,6 +343,18 @@ async function getAvailablePlayerOptions(service) {
     return [];
   }
 
+  function cleanServiceKey(text = '') {
+    return String(text || '')
+      .replace(/\s+/g, '')
+      .replace(/[｜|]/g, '')
+      .replace(/　/g, '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .trim();
+  }
+
+  const targetService =
+    cleanServiceKey(service);
+
   return (players || [])
     .filter(player => {
       const allowedServices =
@@ -353,11 +365,18 @@ async function getAvailablePlayerOptions(service) {
               .map(s => s.trim())
               .filter(Boolean);
 
-      if (!allowedServices.length) return true;
+      if (!allowedServices.length) return false;
 
-      return allowedServices.some(s =>
-        service.includes(s)
-      );
+      return allowedServices.some(s => {
+        const serviceKey =
+          cleanServiceKey(s);
+
+        return (
+          serviceKey === targetService ||
+          serviceKey.includes(targetService) ||
+          targetService.includes(serviceKey)
+        );
+      });
     })
     .slice(0, 24)
     .map(player => ({
