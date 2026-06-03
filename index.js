@@ -3709,7 +3709,7 @@ client.on(Events.InteractionCreate, async interaction => {
           await supabase
             .from('order_reviews')
             .insert({
-              order_id: order.id,
+              order_id: String(order.id),
               order_no: order.order_no || null,
               customer_id: interaction.user.id,
               staff_ids: assignedPlayers.join(','),
