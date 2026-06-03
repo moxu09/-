@@ -5993,9 +5993,12 @@ async function handleButtonInteraction(interaction) {
           content: '❌ 找不到此訂單頻道的客人'
         });
       }
-      if (interaction.user.id !== customerId) {
-        return await interaction.editReply({
-          content: '❌ 只有建立此訂單的客人可以確認關閉'
+      const CUSTOMER_SERVICE_ROLE_ID = process.env.CUSTOMER_SERVICE_ROLE_ID;
+      const isCustomer = interaction.user.id === order.customer_id;
+      const isStaff = interaction.member.roles.cache.has(CUSTOMER_SERVICE_ROLE_ID);
+      if (!isCustomer && !isStaff) {
+        return interaction.editReply({
+          content: "❌ 只有建立此訂單的客人或客服可以確認關閉",
         });
       }
       await interaction.message.edit({
