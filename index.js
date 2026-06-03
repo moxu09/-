@@ -829,6 +829,63 @@ async function sendTipCloseButtons(channel) {
     components: [row]
   });
 }
+async function sendOrderReviewPanel(channel, order, assignedPlayers = []) {
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`order_review_5_${order.id}`)
+          .setLabel('🌟🌟🌟🌟🌟 超級滿意')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId(`order_review_4_${order.id}`)
+          .setLabel('🌟🌟🌟🌟 很滿意')
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId(`order_review_3_${order.id}`)
+          .setLabel('🌟🌟🌟 普通')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+  const row2 =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`order_review_2_${order.id}`)
+          .setLabel('🌟🌟 不太滿意')
+          .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+          .setCustomId(`order_review_1_${order.id}`)
+          .setLabel('🌟 很不滿意')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ffd166')
+        .setTitle('💬 訂單評價')
+        .setDescription(
+          `<@${order.customer_id}> 感謝你的下單！\n\n` +
+          `請幫這次服務留下一個評價，讓我們知道這次體驗如何。\n\n` +
+          `訂單編號：${order.order_no || order.id}\n` +
+          `陪陪：${
+            assignedPlayers.length
+              ? assignedPlayers.map(id => `<@${id}>`).join('、')
+              : '未指定'
+          }`
+        )
+        .setFooter({
+          text: '評價送出後，會提供填寫文字心得的選項'
+        })
+        .setTimestamp()
+    ],
+    components: [row, row2]
+  });
+}
 // ===== 安全回覆封裝 =====
 async function safeReply(interaction, options) {
   try {
@@ -3606,6 +3663,89 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
+      if (interaction.isModalSubmit() && interaction.customId.startsWith('submit_order_review_')) {
+        const parts = interaction.customId.split('_');
+        const rating = Number(parts[3]);
+        const orderId = parts[4];
+        const comment =
+          interaction.fields.getTextInputValue('comment') || '';
+        const { data: order, error } =
+          await supabase
+            .from('play_orders')
+            .select('*')
+            .eq('id', orderId)
+            .maybeSingle();
+        if (error || !order) {
+          return await interaction.reply({
+            content: '❌ 找不到這張訂單',
+            flags: 64
+          });
+        }
+        if (interaction.user.id !== order.customer_id) {
+          return await interaction.reply({
+            content: '❌ 只有下單的闆闆可以送出評價',
+            flags: 64
+          });
+        }
+        const assignedPlayers =
+          String(order.assigned_player || '')
+            .split(',')
+            .map(id => id.trim())
+            .filter(Boolean);
+        const { data: oldReview } =
+          await supabase
+            .from('order_reviews')
+            .select('*')
+            .eq('order_id', order.id)
+            .eq('customer_id', interaction.user.id)
+            .maybeSingle();
+        if (oldReview) {
+          return await interaction.reply({
+            content: '❌ 這張訂單已經評價過了',
+            flags: 64
+          });
+        }
+        const { error: insertError } =
+          await supabase
+            .from('order_reviews')
+            .insert({
+              order_id: order.id,
+              order_no: order.order_no || null,
+              customer_id: interaction.user.id,
+              staff_ids: assignedPlayers.join(','),
+              rating,
+              comment,
+              channel_id: interaction.channel.id
+            });
+        if (insertError) {
+          console.error('[訂單評價寫入失敗]', insertError);
+          return await interaction.reply({
+            content: '❌ 評價送出失敗，請稍後再試',
+            flags: 64
+          });
+        }
+        await interaction.reply({
+          content:
+            `✅ 感謝你的評價！\n` +
+            `你給了 ${'🌟'.repeat(rating)}${rating < 5 ? `（${rating} 星）` : ''}`,
+          flags: 64
+        });
+        await interaction.channel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#ffd166')
+              .setTitle('💬 已收到訂單評價')
+              .setDescription(
+                `訂單編號：${order.order_no || order.id}\n` +
+                `闆闆：<@${interaction.user.id}>\n` +
+                `評分：${'🌟'.repeat(rating)} ${rating}/5\n` +
+                `心得：${comment || '未填寫'}`
+              )
+            .setTimestamp()
+          ]
+        });
+        return;
+      }
       if (interaction.customId.startsWith('submit_staff_edit_order_')) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
@@ -5652,6 +5792,57 @@ async function handleButtonInteraction(interaction) {
           '✅ 已公開通知：不使用優惠券'
       });
     }
+    if (customId.startsWith('order_review_')) {
+      const parts = customId.split('_');
+      const rating = Number(parts[2]);
+      const orderId = parts[3];
+      const { data: order, error } =
+        await supabase
+          .from('play_orders')
+          .select('*')
+          .eq('id', orderId)
+          .maybeSingle();
+      if (error || !order) {
+        return await interaction.reply({
+          content: '❌ 找不到這張訂單',
+          flags: 64
+        });
+      }
+      if (interaction.user.id !== order.customer_id) {
+        return await interaction.reply({
+          content: '❌ 只有下單的闆闆可以給予評價',
+          flags: 64
+        });
+      }
+      const { data: oldReview } =
+        await supabase
+          .from('order_reviews')
+          .select('*')
+          .eq('order_id', order.id)
+          .eq('customer_id', interaction.user.id)
+          .maybeSingle();
+      if (oldReview) {
+        return await interaction.reply({
+          content: '❌ 這張訂單已經評價過了，不能重複評價',
+          flags: 64
+        });
+      }
+      const modal =
+        new ModalBuilder()
+          .setCustomId(`submit_order_review_${rating}_${order.id}`)
+          .setTitle('填寫訂單評價');
+      const commentInput =
+        new TextInputBuilder()
+          .setCustomId('comment')
+          .setLabel('想給這次服務什麼回饋？')
+          .setPlaceholder('例如：陪陪很親切、體驗很好、希望下次可以...')
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(false);
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(commentInput)
+      );
+      return await interaction.showModal(modal);
+    }
     // ===== 客人確認送出打賞 =====
     if (customId.startsWith('confirm_tip_submit_')) {
       const tipConfirmId = customId.replace('confirm_tip_submit_', '');
@@ -6230,6 +6421,11 @@ async function handleButtonInteraction(interaction) {
             .setTimestamp()
         ]
       });
+      await sendOrderReviewPanel(
+        interaction.channel,
+        order,
+        assignedPlayers
+      );
       // ===== 完成訂單後，先詢問客人是否關閉 =====
       const confirmCloseButton =
         new ButtonBuilder()
