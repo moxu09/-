@@ -5383,6 +5383,10 @@ async function handleDispatchInteraction(interaction) {
       await openStaffEditOrderModal(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('change_order_price_')) {
+      await openChangeOrderPriceModal(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('new_order_back_')) {
       await handleNewOrderBack(interaction);
       return true;
