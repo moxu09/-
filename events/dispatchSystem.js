@@ -4160,7 +4160,16 @@ async function openTopupModal(interaction) {
 
   await interaction.showModal(modal);
 }
-
+function canEditOrderPrice(interaction) {
+  return (
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE) ||
+    (
+      process.env.CUSTOMER_SERVICE_ROLE_ID &&
+      interaction.member.roles.cache.has(process.env.CUSTOMER_SERVICE_ROLE_ID)
+    )
+  );
+}
 // ===== 開啟更改訂單金額視窗 =====
 async function openChangeOrderPriceModal(interaction) {
   if (!canEditOrderPrice(interaction)) {
