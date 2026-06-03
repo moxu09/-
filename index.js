@@ -5979,26 +5979,38 @@ async function handleButtonInteraction(interaction) {
 
     // ===== 客人確認關閉訂單 =====
     if (customId === 'customer_confirm_close_order') {
-      const ownerOverwrite =
-        interaction.channel.permissionOverwrites.cache.find(p =>
-          p.id !== interaction.guild.id &&
-          p.id !== process.env.STAFF_ROLE &&
-          p.id !== client.user.id &&
-          !interaction.guild.roles.cache.has(p.id) &&
-          p.allow.has(PermissionFlagsBits.ViewChannel)
-        );
-      const customerId = ownerOverwrite?.id;
-      if (!customerId) {
+      const { data: order, error: orderError } =
+        await supabase
+          .from('play_orders')
+          .select('*')
+          .eq('channel_id', interaction.channel.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+      if (orderError || !order) {
+        console.error('[確認關閉訂單] 找不到訂單', orderError);
         return await interaction.editReply({
-          content: '❌ 找不到此訂單頻道的客人'
+          content: '❌ 找不到此頻道對應的訂單'
         });
       }
-      const CUSTOMER_SERVICE_ROLE_ID = process.env.CUSTOMER_SERVICE_ROLE_ID;
-      const isCustomer = interaction.user.id === order.customer_id;
-      const isStaff = interaction.member.roles.cache.has(CUSTOMER_SERVICE_ROLE_ID);
+      const customerId = String(order.customer_id || '').trim();
+      if (!customerId) {
+        return await interaction.editReply({
+          content: '❌ 找不到此訂單的客人'
+        });
+      }
+      const isCustomer =
+        interaction.user.id === customerId;
+      const isStaff =
+        interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+        interaction.member.roles.cache.has(process.env.STAFF_ROLE) ||
+        (
+          process.env.CUSTOMER_SERVICE_ROLE_ID &&
+          interaction.member.roles.cache.has(process.env.CUSTOMER_SERVICE_ROLE_ID)
+        );
       if (!isCustomer && !isStaff) {
-        return interaction.editReply({
-          content: "❌ 只有建立此訂單的客人或客服可以確認關閉",
+        return await interaction.editReply({
+          content: '❌ 只有建立此訂單的客人或客服可以確認關閉'
         });
       }
       await interaction.message.edit({
@@ -6017,10 +6029,7 @@ async function handleButtonInteraction(interaction) {
           .setStyle(ButtonStyle.Danger);
       const row =
         new ActionRowBuilder()
-          .addComponents(
-            saveButton,
-            deleteButton
-          );
+          .addComponents(saveButton, deleteButton);
       await interaction.channel.send({
         content:
           `<@&${process.env.STAFF_ROLE}> 客人已確認關閉訂單，請選擇是否儲存紀錄。`,
@@ -6032,23 +6041,38 @@ async function handleButtonInteraction(interaction) {
     }
     // ===== 客人暫不關閉訂單 =====
     if (customId === 'customer_cancel_close_order') {
-      const ownerOverwrite =
-        interaction.channel.permissionOverwrites.cache.find(p =>
-          p.id !== interaction.guild.id &&
-          p.id !== process.env.STAFF_ROLE &&
-          p.id !== client.user.id &&
-          !interaction.guild.roles.cache.has(p.id) &&
-          p.allow.has(PermissionFlagsBits.ViewChannel)
-        );
-      const customerId = ownerOverwrite?.id;
-      if (!customerId) {
+      const { data: order, error: orderError } =
+        await supabase
+          .from('play_orders')
+          .select('*')
+          .eq('channel_id', interaction.channel.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+      if (orderError || !order) {
+        console.error('[暫不關閉訂單] 找不到訂單', orderError);
         return await interaction.editReply({
-          content: '❌ 找不到此訂單頻道的客人'
+          content: '❌ 找不到此頻道對應的訂單'
         });
       }
-      if (interaction.user.id !== customerId) {
+      const customerId = String(order.customer_id || '').trim();
+      if (!customerId) {
         return await interaction.editReply({
-          content: '❌ 只有建立此訂單的客人可以操作'
+          content: '❌ 找不到此訂單的客人'
+        });
+      }
+      const isCustomer =
+        interaction.user.id === customerId;
+      const isStaff =
+        interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+        interaction.member.roles.cache.has(process.env.STAFF_ROLE) ||
+        (
+          process.env.CUSTOMER_SERVICE_ROLE_ID &&
+          interaction.member.roles.cache.has(process.env.CUSTOMER_SERVICE_ROLE_ID)
+        );
+      if (!isCustomer && !isStaff) {
+        return await interaction.editReply({
+          content: '❌ 只有建立此訂單的客人或客服可以操作'
         });
       }
       await interaction.message.edit({
