@@ -3669,6 +3669,106 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
+      // ===== 月結繳費金額輸入 =====
+      if (interaction.customId === 'submit_monthly_bill_pay_amount') {
+        await interaction.deferReply({
+          flags: 64
+        });
+        const amountText =
+          interaction.fields.getTextInputValue('amount');
+        const payAmount =
+          Number(String(amountText || '').replace(/[^\d]/g, ''));
+        if (!payAmount || payAmount <= 0) {
+          return await interaction.editReply({
+            content: '❌ 金額格式錯誤，請輸入大於 0 的數字'
+          });
+        }
+        const { data: account, error: accountError } =
+          await supabase
+            .from('member_monthly_accounts')
+            .select('*')
+            .eq('user_id', interaction.user.id)
+            .maybeSingle();
+        if (accountError || !account) {
+          return await interaction.editReply({
+            content: '❌ 找不到你的月結帳戶'
+          });
+        }
+        const usedAmount =
+          Number(account.used_amount || 0);
+        if (usedAmount <= 0) {
+          return await interaction.editReply({
+            content: '✅ 目前沒有需要繳費的月結金額'
+          });
+        }
+        if (payAmount > usedAmount) {
+          return await interaction.editReply({
+            content:
+              `❌ 繳費金額不能超過目前應繳金額。\n` +
+              `目前應繳：NT$${usedAmount.toLocaleString('zh-TW')}`
+          });
+        }
+        const billingMonth =
+          getBillingMonth();
+        const cashbackAmount =
+          Math.floor(payAmount * 0.03);
+        const { data: bill, error: billError } =
+          await supabase
+            .from('member_monthly_bills')
+            .insert({
+              user_id: interaction.user.id,
+              billing_month: billingMonth,
+              total_amount: payAmount,
+              cashback_amount: cashbackAmount,
+              status: 'unpaid',
+              due_date: getNextMonthDueDate()
+            })
+            .select()
+            .single();
+        if (billError || !bill) {
+          console.error('[月結繳費] 建立自訂金額帳單失敗', billError);
+          return await interaction.editReply({
+            content:
+              `❌ 建立月結繳費單失敗\n` +
+              `錯誤：${billError?.message || '未知錯誤'}`
+          });
+        }
+        const menu =
+          new StringSelectMenuBuilder()
+            .setCustomId(`monthly_bill_payment_method_${bill.id}`)
+            .setPlaceholder('請選擇月結繳費方式')
+            .addOptions([
+              {
+                label: '儲值卡 / 錢包',
+                description: '直接扣 ASD 餘額並恢復月結額度',
+                value: 'wallet'
+              },
+              {
+                label: '其他繳費方式',
+                description: '建立臨時頻道後再選匯款 / 刷卡 / 無卡 / 虛擬貨幣',
+                value: 'manual'
+              } 
+            ]);
+        const row =
+          new ActionRowBuilder()
+            .addComponents(menu);
+        return await interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#ffd166')
+              .setTitle('🌙 月結繳費')
+              .setDescription(
+                `<@${interaction.user.id}> 請選擇本次月結繳費方式。\n\n` +
+                `目前應繳：NT$${usedAmount.toLocaleString('zh-TW')}\n` +
+                `本次繳費：NT$${payAmount.toLocaleString('zh-TW')}\n` +
+                `繳後剩餘應繳：NT$${Math.max(0, usedAmount - payAmount).toLocaleString('zh-TW')}\n` +
+                `本次回饋：${cashbackAmount.toLocaleString('zh-TW')} ASD`
+              )
+              .setTimestamp()
+          ],
+          components: [row]
+        });
+      }
       if (interaction.isModalSubmit() && interaction.customId.startsWith('submit_order_review_')) {
         const parts = interaction.customId.split('_');
         const rating = Number(parts[3]);
@@ -3789,6 +3889,16 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
+      // ===== 訂單評價按鈕：會開 Modal，不能先 defer =====
+      if (customId.startsWith('order_review_')) {
+        await handleButtonInteraction(interaction);
+        return;
+      }
+      // ===== ATM 月結繳費：會開 Modal，不能先 defer =====
+      if (customId === 'monthly_bill_pay') {
+        await handleButtonInteraction(interaction);
+        return;
+      }
       // ===== 填寫打賞需求 =====
       if (interaction.customId === "fill_tip_need") {
         try {
@@ -5629,58 +5739,47 @@ async function handleButtonInteraction(interaction) {
         ]
       });
     }
-    // ===== ATM 月結繳費 =====
+    
+    // ===== ATM 月結繳費：先輸入金額 =====
     if (customId === 'monthly_bill_pay') {
-      let bill;
-      try {
-        bill =
-          await getOrCreateMonthlyPayableBill(interaction.user.id);
-      } catch (err) {
+      const { data: account, error: accountError } =
+        await supabase
+          .from('member_monthly_accounts')
+          .select('*')
+          .eq('user_id', interaction.user.id)
+          .maybeSingle();
+      if (accountError || !account) {
         return await interaction.editReply({
-          content: `❌ ${err.message || err}`
+          content: '❌ 你目前尚未開通月結會員'
         });
       }
-      if (!bill) {
+      if (!account.enabled) {
         return await interaction.editReply({
-          content: '✅ 目前沒有未繳的月結帳單。'
+          content: '❌ 你的月結會員目前已停用'
         });
       }
-      const menu =
-        new StringSelectMenuBuilder()
-          .setCustomId(`monthly_bill_payment_method_${bill.id}`)
-          .setPlaceholder('請選擇月結繳費方式')
-          .addOptions([
-            {
-              label: '儲值卡 / 錢包',
-              description: '直接扣 ASD 餘額並恢復月結額度',
-              value: 'wallet'
-            },
-            {
-              label: '其他繳費方式',
-              description: '建立臨時頻道，選擇匯款 / 刷卡 / 無卡 / 虛擬貨幣',
-              value: 'manual'
-            }
-          ]);
-      const row =
-        new ActionRowBuilder()
-          .addComponents(menu);
-      return await interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#ffd166')
-            .setTitle('🌙 月結繳費')
-            .setDescription(
-              `<@${interaction.user.id}> 目前有一張未繳月結帳單。\n\n` +
-              `結帳月份：${bill.billing_month}\n` +
-              `帳單金額：NT$${Number(bill.total_amount || 0).toLocaleString('zh-TW')}\n` +
-              `待發回饋：${Number(bill.cashback_amount || 0).toLocaleString('zh-TW')} ASD\n` +
-              `狀態：${bill.status || 'unpaid'}\n\n` +
-              `請選擇繳費方式。`
-            )
-            .setTimestamp()
-        ],
-        components: [row]
-      });
+      const usedAmount =
+        Number(account.used_amount || 0);
+      if (usedAmount <= 0) {
+        return await interaction.editReply({
+          content: '✅ 目前沒有需要繳費的月結金額。'
+        });
+      }
+      const modal =
+        new ModalBuilder()
+          .setCustomId('submit_monthly_bill_pay_amount')
+          .setTitle('月結繳費金額');
+      const amountInput =
+        new TextInputBuilder()
+          .setCustomId('amount')
+          .setLabel(`請輸入繳費金額，目前應繳 NT$${usedAmount}`)
+          .setPlaceholder(`最多可輸入 ${usedAmount}`)
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true);
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(amountInput)
+      );
+      return await interaction.showModal(modal);
     }
     // ===== 月結儲值卡繳費確認 =====
     if (customId.startsWith('monthly_bill_wallet_confirm_')) {
