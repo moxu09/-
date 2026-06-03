@@ -2582,6 +2582,11 @@ async function sendAtmPanel(client) {
       .setCustomId('transfer_records')
       .setLabel('📜 交易紀錄')
       .setStyle(ButtonStyle.Secondary);
+  const bagButton =
+    new ButtonBuilder()
+      .setCustomId('my_bag')
+      .setLabel('🎒 我的背包')
+      .setStyle(ButtonStyle.Secondary);
   const switchBenefitButton =
     new ButtonBuilder()
       .setCustomId('switch_benefit')
@@ -2592,11 +2597,11 @@ async function sendAtmPanel(client) {
       .setCustomId('monthly_info')
       .setLabel('🌙 查詢月結')
       .setStyle(ButtonStyle.Secondary);
-  const bagButton =
+  const monthlyPayButton =
     new ButtonBuilder()
-      .setCustomId('my_bag')
-      .setLabel('🎒 我的背包')
-      .setStyle(ButtonStyle.Secondary);
+      .setCustomId('monthly_bill_pay')
+      .setLabel('🌙 月結繳費')
+      .setStyle(ButtonStyle.Success);
   const row =
     new ActionRowBuilder()
       .addComponents(
@@ -2604,13 +2609,14 @@ async function sendAtmPanel(client) {
         transferButton,
         consumeButton,
         transferRecordButton,
-        switchBenefitButton
+        bagButton
       );
   const row2 =
     new ActionRowBuilder()
       .addComponents(
+        switchBenefitButton,
         monthlyInfoButton,
-        bagButton
+        monthlyPayButton
       );
   const embed =
     new EmbedBuilder()
@@ -5104,6 +5110,346 @@ async function createPrivateRoom(interaction) {
     content: `✅ 已建立私人頻道：<#${roomChannel.id}>`
   });
 }
+async function getLatestUnpaidMonthlyBill(userId) {
+  const { data: bills, error } =
+    await supabase
+      .from('member_monthly_bills')
+      .select('*')
+      .eq('user_id', userId)
+      .order('billing_month', { ascending: false });
+
+  if (error) {
+    console.error('[月結繳費] 查詢帳單失敗', error);
+    throw new Error('查詢月結帳單失敗');
+  }
+
+  const bill =
+    (bills || []).find(item =>
+      !['paid', 'deducted'].includes(String(item.status || ''))
+    );
+
+  return bill || null;
+}
+
+async function markMonthlyBillPaidByBillId({
+  billId,
+  paidBy,
+  method = '客服確認'
+}) {
+  const { data: bill, error: billError } =
+    await supabase
+      .from('member_monthly_bills')
+      .select('*')
+      .eq('id', billId)
+      .maybeSingle();
+
+  if (billError || !bill) {
+    console.error('[月結繳費] 找不到帳單', billError);
+    throw new Error('找不到月結帳單');
+  }
+
+  if (bill.status === 'paid') {
+    throw new Error('這張帳單已經是已繳狀態');
+  }
+
+  if (bill.status === 'deducted') {
+    throw new Error('這張帳單已由保證金抵扣，不能再標記已繳');
+  }
+
+  const { data: account, error: accountError } =
+    await supabase
+      .from('member_monthly_accounts')
+      .select('*')
+      .eq('user_id', bill.user_id)
+      .maybeSingle();
+
+  if (accountError || !account) {
+    console.error('[月結繳費] 找不到月結帳戶', accountError);
+    throw new Error('找不到會員月結帳戶');
+  }
+
+  const totalAmount =
+    Number(bill.total_amount || 0);
+
+  const cashbackAmount =
+    Number(bill.cashback_amount || 0);
+
+  const oldUsedAmount =
+    Number(account.used_amount || 0);
+
+  const newUsedAmount =
+    Math.max(0, oldUsedAmount - totalAmount);
+
+  const { error: updateBillError } =
+    await supabase
+      .from('member_monthly_bills')
+      .update({
+        status: 'paid',
+        paid_at: new Date().toISOString()
+      })
+      .eq('id', bill.id);
+
+  if (updateBillError) {
+    console.error('[月結繳費] 更新帳單失敗', updateBillError);
+    throw new Error('更新帳單失敗');
+  }
+
+  const { error: updateAccountError } =
+    await supabase
+      .from('member_monthly_accounts')
+      .update({
+        used_amount: newUsedAmount,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', bill.user_id);
+
+  if (updateAccountError) {
+    console.error('[月結繳費] 更新額度失敗', updateAccountError);
+    throw new Error('帳單已標記，但更新額度失敗');
+  }
+
+  await supabase
+    .from('member_monthly_transactions')
+    .update({
+      status: 'paid'
+    })
+    .eq('user_id', bill.user_id)
+    .eq('billing_month', bill.billing_month)
+    .in('status', ['billed', 'unbilled']);
+
+  if (cashbackAmount > 0) {
+    const finalCoins =
+      await changeCoins(bill.user_id, cashbackAmount);
+
+    await sendWalletLog(
+      bill.user_id,
+      '月結回饋',
+      cashbackAmount,
+      finalCoins,
+      `🌙 ${bill.billing_month} 月結帳單已繳清，發放 3% 回饋`
+    );
+  }
+
+  const targetUser =
+    await client.users
+      .fetch(bill.user_id)
+      .catch(() => null);
+
+  if (targetUser) {
+    await targetUser.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('✅ 月結帳單已確認繳款')
+          .setDescription(
+            `結帳月份：${bill.billing_month}\n` +
+            `已繳金額：NT$${totalAmount.toLocaleString('zh-TW')}\n` +
+            `付款方式：${method}\n` +
+            `發放回饋：${cashbackAmount.toLocaleString('zh-TW')} ASD\n\n` +
+            `你的月結可用額度已恢復。`
+          )
+          .setTimestamp()
+      ]
+    }).catch(() => {});
+  }
+
+  return {
+    bill,
+    totalAmount,
+    cashbackAmount,
+    oldUsedAmount,
+    newUsedAmount,
+    paidBy,
+    method
+  };
+}
+
+async function payMonthlyBillByWallet(interaction, billId) {
+  const { data: bill, error: billError } =
+    await supabase
+      .from('member_monthly_bills')
+      .select('*')
+      .eq('id', billId)
+      .maybeSingle();
+
+  if (billError || !bill) {
+    throw new Error('找不到月結帳單');
+  }
+
+  if (bill.user_id !== interaction.user.id) {
+    throw new Error('只有帳單本人可以繳費');
+  }
+
+  if (bill.status === 'paid') {
+    throw new Error('這張帳單已經繳清');
+  }
+
+  if (bill.status === 'deducted') {
+    throw new Error('這張帳單已由保證金抵扣');
+  }
+
+  const amount =
+    Number(bill.total_amount || 0);
+
+  if (!amount || amount <= 0) {
+    throw new Error('帳單金額錯誤');
+  }
+
+  const userData =
+    await getUser(interaction.user.id);
+
+  const currentCoins =
+    Number(userData.coins || 0);
+
+  if (currentCoins < amount) {
+    throw new Error(
+      `ASD 餘額不足，目前餘額 ${currentCoins} ASD，需要 ${amount} ASD`
+    );
+  }
+
+  const finalCoins =
+    await changeCoins(interaction.user.id, -amount);
+
+  await sendWalletLog(
+    interaction.user.id,
+    '月結繳費',
+    -amount,
+    finalCoins,
+    `🌙 ${bill.billing_month} 月結帳單繳費`
+  );
+
+  const result =
+    await markMonthlyBillPaidByBillId({
+      billId: bill.id,
+      paidBy: interaction.user.id,
+      method: '儲值卡 / 錢包'
+    });
+
+  return {
+    ...result,
+    finalCoins
+  };
+}
+
+async function createMonthlyBillPaymentChannel(interaction, bill) {
+  const ticketNumber = Date.now();
+
+  const safeName =
+    interaction.user.username
+      .replace(/[^a-zA-Z0-9\u4e00-\u9fa5-_]/g, '')
+      .slice(0, 10);
+
+  const channelName =
+    `月結繳費-${safeName}-${ticketNumber}`;
+
+  const payChannel =
+    await interaction.guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parent: process.env.ORDER_CATEGORY,
+      topic: `monthly_bill:${bill.id};owner:${interaction.user.id}`,
+      permissionOverwrites: [
+        {
+          id: interaction.guild.roles.everyone,
+          deny: [PermissionFlagsBits.ViewChannel]
+        },
+        {
+          id: interaction.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks
+          ]
+        },
+        {
+          id: process.env.STAFF_ROLE,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks
+          ]
+        },
+        {
+          id: client.user.id,
+          allow: [
+            PermissionFlagsBits.ViewChannel,
+            PermissionFlagsBits.SendMessages,
+            PermissionFlagsBits.ReadMessageHistory,
+            PermissionFlagsBits.ManageChannels,
+            PermissionFlagsBits.AttachFiles,
+            PermissionFlagsBits.EmbedLinks
+          ]
+        }
+      ]
+    });
+
+  const methodMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`monthly_bill_manual_method_${bill.id}`)
+      .setPlaceholder('請選擇月結繳費方式')
+      .addOptions([
+        {
+          label: '匯款 / 轉帳',
+          description: '顯示銀行帳號，付款後上傳明細',
+          value: '匯款'
+        },
+        {
+          label: '刷卡',
+          description: '顯示刷卡連結，付款後上傳截圖',
+          value: '刷卡'
+        },
+        {
+          label: '無卡',
+          description: '顯示無卡帳號，付款後上傳明細',
+          value: '無卡'
+        },
+        {
+          label: '虛擬貨幣',
+          description: '請等待客服提供錢包地址',
+          value: '虛擬貨幣'
+        }
+      ]);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(methodMenu);
+
+  const closeRow =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('owner_cancel_ticket')
+          .setLabel('我按錯了，關閉頻道')
+          .setEmoji('🗑️')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await payChannel.send({
+    content:
+      `<@&${process.env.STAFF_ROLE}> <@${interaction.user.id}> 建立了月結繳費頻道。`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ffd166')
+        .setTitle('🌙 月結繳費')
+        .setDescription(
+          `請選擇付款方式，付款完成後請上傳明細，等待客服確認。\n\n` +
+          `會員：<@${bill.user_id}>\n` +
+          `結帳月份：${bill.billing_month}\n` +
+          `帳單金額：NT$${Number(bill.total_amount || 0).toLocaleString('zh-TW')}\n` +
+          `待發回饋：${Number(bill.cashback_amount || 0).toLocaleString('zh-TW')} ASD\n` +
+          `帳單狀態：${bill.status || 'unpaid'}`
+        )
+        .setTimestamp()
+    ],
+    components: [row, closeRow]
+  });
+
+  return payChannel;
+}
 // ===== 完整按鈕交互處理 =====
 async function handleButtonInteraction(interaction) {
   const customId = interaction.customId;
@@ -5215,6 +5561,150 @@ async function handleButtonInteraction(interaction) {
             .setDescription(`目前餘額：${userData.coins} 星雨幣`)
         ]
       });
+    }
+    // ===== ATM 月結繳費 =====
+    if (customId === 'monthly_bill_pay') {
+      const bill =
+        await getLatestUnpaidMonthlyBill(interaction.user.id);
+      if (!bill) {
+        return await interaction.editReply({
+          content: '✅ 目前沒有未繳的月結帳單。'
+        });
+      }
+      const menu =
+        new StringSelectMenuBuilder()
+          .setCustomId(`monthly_bill_payment_method_${bill.id}`)
+          .setPlaceholder('請選擇月結繳費方式')
+          .addOptions([
+            {
+              label: '儲值卡 / 錢包',
+              description: '直接扣 ASD 餘額並恢復月結額度',
+              value: 'wallet'
+            },
+            {
+              label: '其他繳費方式',
+              description: '建立臨時頻道，選擇匯款 / 刷卡 / 無卡 / 虛擬貨幣',
+              value: 'manual'
+            }
+          ]);
+      const row =
+        new ActionRowBuilder()
+          .addComponents(menu);
+      return await interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#ffd166')
+            .setTitle('🌙 月結繳費')
+            .setDescription(
+              `<@${interaction.user.id}> 目前有一張未繳月結帳單。\n\n` +
+              `結帳月份：${bill.billing_month}\n` +
+              `帳單金額：NT$${Number(bill.total_amount || 0).toLocaleString('zh-TW')}\n` +
+              `待發回饋：${Number(bill.cashback_amount || 0).toLocaleString('zh-TW')} ASD\n` +
+              `狀態：${bill.status || 'unpaid'}\n\n` +
+              `請選擇繳費方式。`
+            )
+            .setTimestamp()
+        ],
+        components: [row]
+      });
+    }
+    // ===== 月結儲值卡繳費確認 =====
+    if (customId.startsWith('monthly_bill_wallet_confirm_')) {
+      const billId =
+        customId.replace('monthly_bill_wallet_confirm_', '');
+      try {
+        const result =
+          await payMonthlyBillByWallet(interaction, billId);
+        return await interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#57F287')
+              .setTitle('✅ 月結繳費完成')
+              .setDescription(
+                `已使用儲值卡 / 錢包完成月結繳費。\n\n` +
+                `結帳月份：${result.bill.billing_month}\n` +
+                `繳費金額：NT$${result.totalAmount.toLocaleString('zh-TW')}\n` +
+                `扣款後餘額：${result.finalCoins.toLocaleString('zh-TW')} ASD\n` +
+                `發放回饋：${result.cashbackAmount.toLocaleString('zh-TW')} ASD\n` +
+                `已使用額度：NT$${result.oldUsedAmount.toLocaleString('zh-TW')} → NT$${result.newUsedAmount.toLocaleString('zh-TW')}`
+              )
+              .setTimestamp()
+          ],
+          components: []
+        });
+      } catch (err) {
+        return await interaction.editReply({
+          content: `❌ 月結繳費失敗：${err.message || err}`,
+          components: []
+        });
+      }
+    }
+    if (customId.startsWith('monthly_bill_wallet_cancel_')) {
+      return await interaction.editReply({
+        content: '已取消月結儲值卡繳費。',
+        components: []
+      });
+    }
+    // ===== 客服確認月結已繳費 =====
+    if (customId.startsWith('monthly_bill_confirm_paid_')) {
+      const isStaff =
+        interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+        interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+      if (!isStaff) {
+        return await interaction.editReply({
+          content: '❌ 只有客服可以確認月結繳費'
+        });
+      }
+      const billId =
+        customId.replace('monthly_bill_confirm_paid_', '');
+      try {
+        const result =
+          await markMonthlyBillPaidByBillId({
+            billId,
+            paidBy: interaction.user.id,
+            method: '客服確認繳費'
+          });
+        await interaction.channel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#57F287')
+              .setTitle('✅ 月結帳單已確認繳費')
+              .setDescription(
+                `會員：<@${result.bill.user_id}>\n` +
+                `結帳月份：${result.bill.billing_month}\n` +
+                `繳款金額：NT$${result.totalAmount.toLocaleString('zh-TW')}\n` +
+                `發放回饋：${result.cashbackAmount.toLocaleString('zh-TW')} ASD\n` +
+                `已使用額度：NT$${result.oldUsedAmount.toLocaleString('zh-TW')} → NT$${result.newUsedAmount.toLocaleString('zh-TW')}\n\n` +
+                `客服：<@${interaction.user.id}>`
+              )
+              .setTimestamp()
+          ]
+        });
+        const closeRow =
+          new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId('save_order_log')
+                .setLabel('📁 儲存紀錄')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId('delete_order_now')
+                .setLabel('🗑️ 關閉頻道')
+                .setStyle(ButtonStyle.Danger)
+            );
+        await interaction.channel.send({
+          content:
+            `<@&${process.env.STAFF_ROLE}> 月結繳費已完成，請選擇是否儲存紀錄或關閉頻道。`,
+          components: [closeRow]
+        });
+        return await interaction.editReply({
+          content: '✅ 已確認月結繳費，月結額度已恢復'
+        });
+      } catch (err) {
+        return await interaction.editReply({
+          content: `❌ 月結確認失敗：${err.message || err}`
+        });
+      }
     }
     // ===== ATM 消費資訊 =====
     if (customId === 'consume_info') {
@@ -6624,6 +7114,156 @@ async function handleStringSelectInteraction(interaction) {
     }
     const customId = interaction.customId;
     const value = interaction.values[0];
+    // ===== 月結繳費方式選擇 =====
+    if (customId.startsWith('monthly_bill_payment_method_')) {
+      const billId =
+        customId.replace('monthly_bill_payment_method_', '');
+      const { data: bill, error } =
+        await supabase
+          .from('member_monthly_bills')
+          .select('*')
+          .eq('id', billId)
+          .maybeSingle();
+      if (error || !bill) {
+        return interaction.editReply({
+          content: '❌ 找不到月結帳單',
+          components: []
+        });
+      }
+      if (bill.user_id !== interaction.user.id) {
+        return interaction.editReply({
+          content: '❌ 只有帳單本人可以操作這張月結帳單',
+          components: []
+        });
+      }
+      if (bill.status === 'paid') {
+        return interaction.editReply({
+          content: '✅ 這張帳單已經繳清',
+          components: []
+        });
+      }
+      if (value === 'wallet') {
+        const confirmRow =
+          new ActionRowBuilder()
+            .addComponents(
+              new ButtonBuilder()
+                .setCustomId(`monthly_bill_wallet_confirm_${bill.id}`)
+                .setLabel('✅ 確認使用儲值卡繳費')
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`monthly_bill_wallet_cancel_${bill.id}`)
+                .setLabel('取消')
+                .setStyle(ButtonStyle.Secondary)
+            );
+        return interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#57F287')
+              .setTitle('🌙 確認月結儲值卡繳費')
+              .setDescription(
+                `結帳月份：${bill.billing_month}\n` +
+                `扣款金額：NT$${Number(bill.total_amount || 0).toLocaleString('zh-TW')}\n` +
+                `待發回饋：${Number(bill.cashback_amount || 0).toLocaleString('zh-TW')} ASD\n\n` +
+                `確認後會直接扣除你的 ASD 餘額，並恢復月結額度。`
+              )
+              .setTimestamp()
+          ],
+          components: [confirmRow]
+        });
+      }
+      if (value === 'manual') {
+        const payChannel =
+          await createMonthlyBillPaymentChannel(interaction, bill);
+        return interaction.editReply({
+          content:
+            `✅ 已建立月結繳費頻道：<#${payChannel.id}>\n` +
+            `請到該頻道選擇付款方式並上傳付款明細。`,
+          components: []
+        });
+      }
+    }
+    // ===== 月結臨時頻道付款方式 =====
+    if (customId.startsWith('monthly_bill_manual_method_')) {
+      const billId =
+        customId.replace('monthly_bill_manual_method_', '');
+      const { data: bill, error } =
+        await supabase  
+          .from('member_monthly_bills')
+          .select('*')
+          .eq('id', billId)
+          .maybeSingle();
+      if (error || !bill) {
+        return interaction.editReply({
+          content: '❌ 找不到月結帳單'
+        });
+      }
+      if (bill.user_id !== interaction.user.id) {
+        return interaction.editReply({
+          content: '❌ 只有帳單本人可以選擇付款方式'
+        });
+      }
+      const paymentMethod =
+        value;
+      await interaction.channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#ffd166')
+            .setTitle('🌙 月結付款方式已選擇')
+            .setDescription(
+              `會員：<@${bill.user_id}>\n` +
+              `結帳月份：${bill.billing_month}\n` +
+              `帳單金額：NT$${Number(bill.total_amount || 0).toLocaleString('zh-TW')}\n` +
+              `付款方式：${paymentMethod}\n\n` +
+              `請完成付款後，在此頻道上傳付款明細 / 截圖，等待客服確認。`
+            )
+            .setTimestamp()
+        ]
+      });
+      if (isCardPayment(paymentMethod)) {
+        await sendCardPaymentInfo(interaction.channel);
+      } else if (isNoCardPayment(paymentMethod)) {
+        await sendNoCardPaymentInfo(interaction.channel);
+      } else if (isBankTransfer(paymentMethod)) {
+        await sendBankTransferInfo(interaction.channel);
+      } else if (
+        paymentMethod.includes('虛擬貨幣') ||
+        paymentMethod.includes('加密貨幣')
+      ) {
+        await interaction.channel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor('#ffaa00')
+              .setTitle('💳 虛擬貨幣付款')
+              .setDescription(
+                `<@${bill.user_id}> 你選擇了：${paymentMethod}\n\n` +
+                `請等待客服提供錢包地址。\n` +
+                `付款完成後請上傳轉帳明細，等待客服確認。`
+              )
+              .setTimestamp()
+         ]
+        });
+      }
+      const confirmRow =
+        new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId(`monthly_bill_confirm_paid_${bill.id}`)
+              .setLabel('✅ 客服確認已繳費')
+              .setStyle(ButtonStyle.Success),
+            new ButtonBuilder()
+              .setCustomId('delete_order_now')
+              .setLabel('🗑️ 關閉頻道')
+              .setStyle(ButtonStyle.Danger)
+          );
+      await interaction.channel.send({
+        content:
+          `<@&${process.env.STAFF_ROLE}> 請確認付款明細無誤後，按下「客服確認已繳費」。`,
+        components: [confirmRow]
+      });
+      return interaction.editReply({
+        content: `✅ 已選擇月結付款方式：${paymentMethod}`
+      });
+    }
     if (customId.startsWith('tip_gift_')) {
       await handleTipGiftSelect(interaction);
       return;
