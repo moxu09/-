@@ -2751,12 +2751,18 @@ async function handleQuoteSelectCoupon(interaction) {
     await supabase
       .from('user_items')
       .select('*')
-      .eq('id', couponId)
+      .eq('id', Number(couponId))
       .eq('user_id', interaction.user.id)
-      .eq('item_type', 'coupon')
-      .single();
-
-  if (couponError || !coupon) {
+      .maybeSingle();
+  if (
+    couponError ||
+    !coupon ||
+    !(
+      coupon.item_type === 'coupon' ||
+      String(coupon.item_name || '').includes('折券') ||
+      String(coupon.item_name || '').includes('優惠券')
+    )
+  ) {
     return interaction.editReply({
       content: '❌ 找不到這張優惠券，可能已經被使用'
     });
