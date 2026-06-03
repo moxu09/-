@@ -3908,13 +3908,18 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
+      // ===== 訂單評價按鈕：會開 Modal，不能先 defer =====
+      if (interaction.customId.startsWith('order_review_')) {
+        await handleButtonInteraction(interaction);
+        return;
+      } 
       // ===== 其他普通按鈕都要先 defer =====
       if (!interaction.deferred && !interaction.replied) {
         await interaction.deferReply({ flags: 64 });
       }
       const handled =
         await dispatchSystem.handleDispatchInteraction(interaction);
-      if (handled) return; 
+      if (handled) return;
       await handleButtonInteraction(interaction);
       return;
     }
