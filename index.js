@@ -5110,27 +5110,94 @@ async function createPrivateRoom(interaction) {
     content: `✅ 已建立私人頻道：<#${roomChannel.id}>`
   });
 }
-async function getLatestUnpaidMonthlyBill(userId) {
-  const { data: bills, error } =
+async function getOrCreateMonthlyPayableBill(userId) {
+  const { data: account, error: accountError } =
+    await supabase
+      .from('member_monthly_accounts')
+      .select('*')
+      .eq('user_id', userId)
+      .maybeSingle();
+
+  if (accountError || !account) {
+    console.error('[月結繳費] 找不到月結帳戶', accountError);
+    throw new Error('你目前尚未開通月結會員');
+  }
+
+  if (!account.enabled) {
+    throw new Error('你的月結會員目前已停用');
+  }
+
+  const usedAmount =
+    Number(account.used_amount || 0);
+
+  if (usedAmount <= 0) {
+    return null;
+  }
+
+  const billingMonth =
+    getBillingMonth();
+
+  const cashbackAmount =
+    Math.floor(usedAmount * 0.03);
+
+  const { data: existingBill, error: existingError } =
     await supabase
       .from('member_monthly_bills')
       .select('*')
       .eq('user_id', userId)
-      .order('billing_month', { ascending: false });
+      .in('status', ['unpaid', 'pending', 'manual_pending'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
-  if (error) {
-    console.error('[月結繳費] 查詢帳單失敗', error);
+  if (existingError) {
+    console.error('[月結繳費] 查詢未繳帳單失敗', existingError);
     throw new Error('查詢月結帳單失敗');
   }
 
-  const bill =
-    (bills || []).find(item =>
-      !['paid', 'deducted'].includes(String(item.status || ''))
-    );
+  if (existingBill) {
+    const { data: updatedBill, error: updateError } =
+      await supabase
+        .from('member_monthly_bills')
+        .update({
+          total_amount: usedAmount,
+          cashback_amount: cashbackAmount,
+          billing_month: billingMonth,
+          status: 'unpaid'
+        })
+        .eq('id', existingBill.id)
+        .select()
+        .single();
 
-  return bill || null;
+    if (updateError || !updatedBill) {
+      console.error('[月結繳費] 更新即時帳單失敗', updateError);
+      throw new Error('更新月結帳單失敗');
+    }
+
+    return updatedBill;
+  }
+
+  const { data: bill, error: billError } =
+    await supabase
+      .from('member_monthly_bills')
+      .insert({
+        user_id: userId,
+        billing_month: billingMonth,
+        total_amount: usedAmount,
+        cashback_amount: cashbackAmount,
+        status: 'unpaid',
+        due_date: getNextMonthDueDate()
+      })
+      .select()
+      .single();
+
+  if (billError || !bill) {
+    console.error('[月結繳費] 建立即時帳單失敗', billError);
+    throw new Error('建立月結帳單失敗');
+  }
+
+  return bill;
 }
-
 async function markMonthlyBillPaidByBillId({
   billId,
   paidBy,
@@ -5564,8 +5631,15 @@ async function handleButtonInteraction(interaction) {
     }
     // ===== ATM 月結繳費 =====
     if (customId === 'monthly_bill_pay') {
-      const bill =
-        await getLatestUnpaidMonthlyBill(interaction.user.id);
+      let bill;
+      try {
+        bill =
+          await getOrCreateMonthlyPayableBill(interaction.user.id);
+      } catch (err) {
+        return await interaction.editReply({
+          content: `❌ ${err.message || err}`
+        });
+      }
       if (!bill) {
         return await interaction.editReply({
           content: '✅ 目前沒有未繳的月結帳單。'
