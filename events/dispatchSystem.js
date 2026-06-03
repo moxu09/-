@@ -3432,11 +3432,18 @@ async function openStaffEditOrderModal(interaction) {
       .setPlaceholder('要修改的備註內容')
       .setStyle(TextInputStyle.Paragraph)
       .setRequired(false);
-
+  const preferredPlayerInput =
+    new TextInputBuilder()
+      .setCustomId('preferred_player')
+      .setLabel('指定陪陪 / 不指定')
+      .setPlaceholder('輸入 不指定，或貼上陪陪 Discord ID / @陪陪')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false);
   modal.addComponents(
     new ActionRowBuilder().addComponents(serviceInput),
     new ActionRowBuilder().addComponents(timeInput),
-    new ActionRowBuilder().addComponents(noteInput)
+    new ActionRowBuilder().addComponents(noteInput),
+    new ActionRowBuilder().addComponents(preferredPlayerInput)
   );
 
   return interaction.showModal(modal);
@@ -3468,11 +3475,39 @@ async function submitStaffEditOrder(interaction) {
   const note =
     interaction.fields.getTextInputValue('note') || '';
 
+  const preferredPlayerRaw =
+    interaction.fields.getTextInputValue('preferred_player') || '';
+
   const updateData = {
     quote_status: 'fixed',
     status: 'quoted'
   };
-
+  if (preferredPlayerRaw.trim()) {
+    const raw =
+      preferredPlayerRaw.trim();
+    if (
+      raw === '不指定' ||
+      raw === '無' ||
+      raw.toLowerCase() === 'none'
+    ) {
+      updateData.preferred_player = null;
+      updateData.preferred_player_type = 'none';
+      updateData.reserved_player = null;
+      updateData.dispatch_type = null;
+    } else {
+      const playerId =
+        raw
+          .replace(/[<@!>]/g, '')
+          .replace(/[^0-9]/g, '')
+          .trim();
+      if (playerId) {
+        updateData.preferred_player = playerId;
+        updateData.preferred_player_type = 'online';
+        updateData.reserved_player = null;
+        updateData.dispatch_type = 'preferred';
+      }
+    }
+  }
   if (service.trim()) {
     updateData.service = service.trim();
   }
@@ -3526,6 +3561,11 @@ async function submitStaffEditOrder(interaction) {
           `訂單編號：${updatedOrder.order_no || updatedOrder.id}\n` +
           `闆闆：<@${updatedOrder.customer_id}>\n\n` +
           `🎮 服務：${updatedOrder.service || '未填寫'}\n` +
+          `🌟 指定陪陪：${
+            updatedOrder.preferred_player
+              ? buildPreferredPlayerText(updatedOrder.preferred_player)
+              : '不指定'
+          }\n` +
           `🕒 時間 / 局數：${updatedOrder.reserved_time || updatedOrder.duration_text || '未填寫'}\n` +
           `💰 金額：NT$${updatedOrder.final_price || updatedOrder.price || 0}\n` +
           `💳 付款方式：${updatedOrder.payment_method || '未選擇'}\n` +
