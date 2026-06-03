@@ -2944,32 +2944,54 @@ async function handleQuotePaymentMethodSelect(interaction) {
       content: '❌ 只有下單的闆闆可以選擇付款方式'
     });
   }
-  function isWalletPayment(text = '') {
+
+  if (order.paid) {
+    await interaction.message.edit({
+      components: []
+    }).catch(() => {});
+
+    return interaction.editReply({
+      content:
+        `❌ 這張訂單已經完成付款，不能重複選擇付款方式。\n` +
+        `目前付款方式：${order.payment_method || '已付款'}`
+    });
+  }
+
+  function isWalletPaymentLocal(text = '') {
     const value = String(text || '');
+
     return (
       value.includes('儲值卡') ||
       value.includes('錢包') ||
       value.includes('餘額')
     );
   }
-  function isMonthlyPayment(text = '') {
+
+  function isMonthlyPaymentLocal(text = '') {
     const value = String(text || '');
+
     return (
       value.includes('月結') ||
       value.includes('月結付款') ||
       value.includes('月結會員')
     );
   }
+
   let paidNow = false;
   let paidAt = null;
-  if (isWalletPayment(paymentMethod)) {
+
+  if (isWalletPaymentLocal(paymentMethod)) {
     try {
       if (!paymentHelpers.payOrderByWallet) {
         throw new Error('錢包付款函式尚未接入 dispatchSystem');
       }
-      const result = await paymentHelpers.payOrderByWallet(order);
+
+      const result =
+        await paymentHelpers.payOrderByWallet(order);
+
       paidNow = true;
       paidAt = new Date().toISOString();
+
       await interaction.channel.send({
         embeds: [
           new EmbedBuilder()
@@ -2977,27 +2999,29 @@ async function handleQuotePaymentMethodSelect(interaction) {
             .setTitle('💳 儲值卡 / 錢包付款完成')
             .setDescription(
               `<@${order.customer_id}> 已使用儲值卡 / 錢包付款。\n\n` +
-              `扣款金額：${result.amount} 星雨幣\n` +
-              `剩餘餘額：${result.finalCoins} 星雨幣`
+              `扣款金額：${result.amount} ASD\n` +
+              `剩餘餘額：${result.finalCoins} ASD`
             )
             .setTimestamp()
         ]
       });
-    
     } catch (err) {
       return interaction.editReply({
         content: `❌ 儲值卡付款失敗：${err.message}`
       });
     }
-  }
-  if (isMonthlyPayment(paymentMethod)) {
+  } else if (isMonthlyPaymentLocal(paymentMethod)) {
     try {
       if (!paymentHelpers.payOrderByMonthly) {
         throw new Error('月結付款函式尚未接入 dispatchSystem');
       }
-      const result = await paymentHelpers.payOrderByMonthly(order);
+
+      const result =
+        await paymentHelpers.payOrderByMonthly(order);
+
       paidNow = true;
       paidAt = new Date().toISOString();
+
       await interaction.channel.send({
         embeds: [
           new EmbedBuilder()
@@ -3006,7 +3030,7 @@ async function handleQuotePaymentMethodSelect(interaction) {
             .setDescription(
               `<@${order.customer_id}> 已使用月結付款。\n\n` +
               `本筆金額：NT$${result.amount}\n` +
-              `本筆回饋：${result.cashback} 星雨幣\n` +
+              `本筆回饋：${result.cashback} ASD\n` +
               `剩餘月結額度：NT$${result.availableAmount}`
             )
             .setTimestamp()
@@ -3018,6 +3042,7 @@ async function handleQuotePaymentMethodSelect(interaction) {
       });
     }
   }
+
   const { data: updatedOrder, error: updateError } =
     await supabase
       .from('play_orders')
@@ -3030,12 +3055,41 @@ async function handleQuotePaymentMethodSelect(interaction) {
       .eq('id', order.id)
       .select()
       .single();
+
   if (updateError || !updatedOrder) {
-    console.error('[報價流程] 更新付款方式失敗', updateError);
+    console.error('[付款方式] 更新訂單失敗', updateError);
     return interaction.editReply({
       content: '❌ 更新付款方式失敗'
     });
   }
+
+  await interaction.message.edit({
+    components: []
+  }).catch(() => {});
+
+  if (paidNow) {
+    await sendCustomerConfirmOrderPanel(updatedOrder);
+
+    return interaction.editReply({
+      content:
+        `✅ 已選擇付款方式：${paymentMethod}\n` +
+        `此訂單已完成付款，請確認訂單內容是否正確。`
+    });
+  }
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ffaa00')
+        .setTitle('💳 已選擇付款方式')
+        .setDescription(
+          `<@${order.customer_id}> 已選擇：${paymentMethod}\n\n` +
+          `訂單金額：NT$${Number(order.final_price || order.price || 0).toLocaleString('zh-TW')}\n` +
+          `請完成付款後，等待客服確認。`
+        )
+        .setTimestamp()
+    ]
+  });
 
   if (isCardPayment(paymentMethod)) {
     await sendCardPaymentInfo(interaction.channel);
@@ -3061,20 +3115,9 @@ async function handleQuotePaymentMethodSelect(interaction) {
       ]
     });
   }
-  await sendCustomerFinalConfirm(interaction.channel, updatedOrder);
-  if (!paidNow) {
-    await interaction.channel.send({
-      content: `<@&${process.env.STAFF_ROLE}> 請客服確認此訂單是否已付款`,
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`staff_confirm_order_paid_${order.id}`)
-            .setLabel('客服確認已付款')
-            .setStyle(ButtonStyle.Success)
-        )
-      ]
-    });
-  }
+
+  await sendStaffConfirmPaidPanel(updatedOrder);
+
   return interaction.editReply({
     content: `✅ 已選擇付款方式：${paymentMethod}`
   });
