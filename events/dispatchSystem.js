@@ -662,6 +662,11 @@ async function sendOrderToStaffChannel(order) {
           inline: true
         },
         {
+          name: '👥 需要人數',
+          value: `${Number(order.player_count || 1) || 1} 位`,
+          inline: true
+        },
+        {
           name: '🕒 預約時間',
           value: order.reserved_time || order.duration_text || '未填寫',
           inline: true
@@ -1326,10 +1331,23 @@ async function handleNewOrderGenderSelect(interaction) {
     });
   }
 
+  const maxPlayerCount =
+    Math.max(1, Number(pending.playerCount || 1));
   const menu =
     new StringSelectMenuBuilder()
       .setCustomId(`new_order_player_${flowId}`)
-      .setPlaceholder('請選擇陪陪，或選擇不指定')
+      .setPlaceholder(
+        maxPlayerCount > 1
+          ? `可選 0～${maxPlayerCount} 位指定陪陪`
+          : '請選擇陪陪'
+      )
+      .setMinValues(1)
+      .setMaxValues(
+        Math.min(
+          maxPlayerCount,
+          playerOptions.length
+        )
+      )
       .addOptions(playerOptions);
 
   const row =
@@ -1377,56 +1395,54 @@ async function handleNewOrderPlayerSelect(interaction) {
     });
   }
 
-  const selectedValue =
-    interaction.values[0];
-
-  if (selectedValue === 'none') {
+  const selectedValues =
+    interaction.values || [];
+  if (selectedValues.includes('none')) {
     pending.selectedPlayerType = 'none';
     pending.selectedPlayerId = null;
     pending.selectedPlayerIds = [];
     pendingNewOrders.set(flowId, pending);
-
     return await showDurationSelect(interaction, flowId, pending);
-  }
-
-  if (selectedValue.startsWith('online_')) {
-    const playerId =
-      selectedValue.replace('online_', '');
-
-    pending.selectedPlayerType = 'online';
-    pending.selectedPlayerId = playerId;
-    pending.selectedPlayerIds = [playerId];
+  } 
+  const onlineIds =
+    selectedValues
+      .filter(value => value.startsWith('online_'))
+      .map(value => value.replace('online_', ''));
+  const reserveIds =
+    selectedValues
+      .filter(value => value.startsWith('reserve_'))
+      .map(value => value.replace('reserve_', ''));
+  const selectedIds =
+    [...onlineIds, ...reserveIds]
+      .map(id => String(id).trim())
+      .filter(Boolean);
+  if (!selectedIds.length) {
+    pending.selectedPlayerType = 'none';
+    pending.selectedPlayerId = null;
+    pending.selectedPlayerIds = [];
     pendingNewOrders.set(flowId, pending);
-
     return await showDurationSelect(interaction, flowId, pending);
   }
-
-  if (selectedValue.startsWith('reserve_')) {
-    const playerId =
-      selectedValue.replace('reserve_', '');
-
+  pending.selectedPlayerIds = selectedIds;
+  pending.selectedPlayerId = selectedIds[0];
+  if (reserveIds.length > 0) {
     pending.selectedPlayerType = 'reserve';
-    pending.selectedPlayerId = playerId;
-    pending.selectedPlayerIds = [playerId];
     pendingNewOrders.set(flowId, pending);
-
-    const { data: player } =
+    const { data: players } =
       await supabase
         .from('players')
         .select('*')
-        .eq('discord_id', playerId)
-        .maybeSingle();
-
+        .in('discord_id', reserveIds);
     const availableText =
-      player
-        ? formatAvailableTime(player)
-        : '未填寫可接時間';
-
+      (players || [])
+        .map(player => {
+          return `<@${player.discord_id}>：${formatAvailableTime(player)}`;
+        })
+        .join('\n') || '未填寫可接時間';
     const modal =
       new ModalBuilder()
         .setCustomId(`submit_new_order_reserve_time_${flowId}`)
         .setTitle('填寫預約時間');
-
     const reserveInput =
       new TextInputBuilder()
         .setCustomId('reserve_time')
@@ -1438,13 +1454,12 @@ async function handleNewOrderPlayerSelect(interaction) {
     modal.addComponents(
       new ActionRowBuilder().addComponents(reserveInput)
     );
-
-    reserveInput.setPlaceholder(
-      `可接時間：${availableText}`.slice(0, 100)
-    );
-    return interaction.showModal(modal);
-      }
-    }
+    return await interaction.showModal(modal);
+  } 
+  pending.selectedPlayerType = 'online';
+  pendingNewOrders.set(flowId, pending);
+  return await showDurationSelect(interaction, flowId, pending);
+}
 async function showDurationSelect(interaction, flowId, pending) {
   const isValorantTech =
     pending.game === '特戰英豪' &&
@@ -1518,11 +1533,16 @@ async function showDurationSelect(interaction, flowId, pending) {
     new ActionRowBuilder()
       .addComponents(menu);
 
+  const selectedPlayerIds =
+    Array.isArray(pending.selectedPlayerIds)
+      ? pending.selectedPlayerIds
+          .map(id => String(id).trim())
+          .filter(Boolean)
+      : [];
   const playerText =
-    pending.selectedPlayerType === 'none'
+    pending.selectedPlayerType === 'none' || !selectedPlayerIds.length
       ? '不指定陪陪'
-      : `<@${pending.selectedPlayerId}>`;
-
+      : selectedPlayerIds.map(id => `<@${id}>`).join('、');
   return interaction.update({
     content:
       `🎮 遊戲：${pending.game}\n` +
@@ -1649,11 +1669,16 @@ async function askNewOrderNoteChoice(interaction, flowId, pending) {
           .setStyle(ButtonStyle.Secondary)
       );
 
+  const selectedPlayerIds =
+    Array.isArray(pending.selectedPlayerIds)
+      ? pending.selectedPlayerIds
+          .map(id => String(id).trim())
+          .filter(Boolean)
+      : [];
   const playerText =
-    pending.selectedPlayerType === 'none'
+    pending.selectedPlayerType === 'none' || !selectedPlayerIds.length
       ? '不指定陪陪'
-      : `<@${pending.selectedPlayerId}>`;
-
+      : selectedPlayerIds.map(id => `<@${id}>`).join('、');
   const timeText =
     pending.selectedPlayerType === 'reserve'
       ? pending.reservedTime
@@ -2149,9 +2174,15 @@ async function createWaitingQuoteOrder(interaction, flowId, pending) {
       ? pending.reservedTime
       : pending.duration;
 
+  const selectedPlayerIds =
+  Array.isArray(pending.selectedPlayerIds)
+    ? pending.selectedPlayerIds
+        .map(id => String(id).trim())
+        .filter(Boolean)
+    : [];
   const preferredPlayer =
-    pending.selectedPlayerId
-      ? pending.selectedPlayerId
+    selectedPlayerIds.length
+      ? selectedPlayerIds.join(',')
       : null;
 
   const { data: order, error } =
@@ -2268,8 +2299,9 @@ async function createWaitingQuoteOrder(interaction, flowId, pending) {
         },
         {
           name: '🌟 陪陪',
-          value: preferredPlayer ? `<@${preferredPlayer}>` : '不指定',
-          inline: true
+          value: selectedPlayerIds.length
+            ? selectedPlayerIds.map(id => `<@${id}>`).join('、')
+            : '不指定',
         },
         {
           name: '🕒 時間',
@@ -3432,6 +3464,13 @@ async function openStaffEditOrderModal(interaction) {
       .setPlaceholder('要修改的備註內容')
       .setStyle(TextInputStyle.Paragraph)
       .setRequired(false);
+  const playerCountInput =
+    new TextInputBuilder()
+      .setCustomId('player_count')
+      .setLabel('陪陪數量')
+      .setPlaceholder('例如：1、2、3；不改就留空')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(false);
   const preferredPlayerInput =
     new TextInputBuilder()
       .setCustomId('preferred_player')
@@ -3443,7 +3482,8 @@ async function openStaffEditOrderModal(interaction) {
     new ActionRowBuilder().addComponents(serviceInput),
     new ActionRowBuilder().addComponents(timeInput),
     new ActionRowBuilder().addComponents(noteInput),
-    new ActionRowBuilder().addComponents(preferredPlayerInput)
+    new ActionRowBuilder().addComponents(preferredPlayerInput),
+    new ActionRowBuilder().addComponents(playerCountInput)
   );
 
   return interaction.showModal(modal);
@@ -3477,11 +3517,22 @@ async function submitStaffEditOrder(interaction) {
 
   const preferredPlayerRaw =
     interaction.fields.getTextInputValue('preferred_player') || '';
-
+  const playerCountRaw =
+    interaction.fields.getTextInputValue('player_count') || '';
   const updateData = {
     quote_status: 'fixed',
     status: 'quoted'
   };
+  if (playerCountRaw.trim()) {
+    const playerCount =
+      Number(playerCountRaw.replace(/[^\d]/g, ''));
+    if (!playerCount || playerCount <= 0) {
+      return interaction.editReply({
+        content: '❌ 陪陪數量格式錯誤，請輸入 1、2、3 這種數字'
+      });
+    }
+    updateData.player_count = playerCount;
+  }
   if (preferredPlayerRaw.trim()) {
     const raw =
       preferredPlayerRaw.trim();
@@ -3495,16 +3546,27 @@ async function submitStaffEditOrder(interaction) {
       updateData.reserved_player = null;
       updateData.dispatch_type = null;
     } else {
-      const playerId =
+      const playerIds =
         raw
-          .replace(/[<@!>]/g, '')
-          .replace(/[^0-9]/g, '')
-          .trim();
-      if (playerId) {
-        updateData.preferred_player = playerId;
+          .split(/[\s,，、]+/)
+          .map(text =>
+            text
+              .replace(/[<@!>]/g, '')
+              .replace(/[^0-9]/g, '')
+              .trim()
+          )
+          .filter(Boolean);
+      if (playerIds.length) {
+        updateData.preferred_player = playerIds.join(',');
         updateData.preferred_player_type = 'online';
         updateData.reserved_player = null;
         updateData.dispatch_type = 'preferred';
+        if (
+          !updateData.player_count ||
+          Number(updateData.player_count) < playerIds.length
+        ) {
+          updateData.player_count = playerIds.length;
+        }
       }
     }
   }
@@ -4981,20 +5043,48 @@ async function acceptPlayOrder(interaction) {
       });
     }
     // ===== 指定陪陪限制 =====
+    // 如果指定人數已經等於需求人數：只有指定名單可以接。
+    // 如果指定人數小於需求人數：指定的人可以接，剩下名額開放符合服務的陪陪補位。
     if (order.preferred_player) {
       const preferredPlayers =
         String(order.preferred_player)
           .split(',')
           .map(id => id.trim())
           .filter(Boolean);
-      if (
-        preferredPlayers.length &&
-        !preferredPlayers.includes(interaction.user.id)
-      ) {
+      const needCount =
+        Number(order.player_count || 1) || 1;
+      const assignedPlayerIdsNow =
+        String(order.assigned_player || '')
+          .split(',')
+          .map(id => id.trim())
+          .filter(Boolean);
+      const preferredFull =
+        preferredPlayers.length >= needCount;
+      const isPreferredPlayer =
+        preferredPlayers.includes(interaction.user.id);
+      const alreadyAssignedPreferredCount =
+        assignedPlayerIdsNow
+          .filter(id => preferredPlayers.includes(id))
+          .length;
+      const stillWaitingPreferred =
+        preferredPlayers.length > alreadyAssignedPreferredCount;
+      if (preferredFull && !isPreferredPlayer) {
         return interaction.editReply({
           content:
             `❌ 這張訂單只開放指定陪陪接單：` +
             preferredPlayers.map(id => `<@${id}>`).join('、')
+        });
+      }
+      if (
+        !preferredFull &&
+        !isPreferredPlayer &&
+        stillWaitingPreferred
+      ) {
+        return interaction.editReply({
+          content:
+            `❌ 這張訂單還有指定陪陪尚未接單，請先等待：` +
+            preferredPlayers.map(id => `<@${id}>`).join('、') +
+            `\n如果指定陪陪無法接，請客服將指定改為不指定或調整名單。`
         });
       }
     }
