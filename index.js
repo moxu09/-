@@ -3889,6 +3889,7 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
+      const customId = interaction.customId;
       // ===== 訂單評價按鈕：會開 Modal，不能先 defer =====
       if (customId.startsWith('order_review_')) {
         await handleButtonInteraction(interaction);
