@@ -450,11 +450,6 @@ async function handleTipPaymentSelect(interaction) {
       finalCoins,
       `💝 打賞給 <@${selectedStaffId}>｜${item}`
     );
-    await checkAndUpgradeVip?.(
-      tipperId,
-      'spend',
-      amount
-    );
     await interaction.channel.send({
       embeds: [
         new EmbedBuilder()
@@ -496,14 +491,19 @@ async function handleTipPaymentSelect(interaction) {
       ]
     });
     try {
-      await saveTipToPlayOrders({
-        tipperId,
-        staffId: selectedStaffId,
-        item,
-        amount: Number(amount),
-        channelId: interaction.channel.id,
-        paid: true
-      });
+      const tipOrder =
+        await saveTipToPlayOrders({
+          tipperId,
+          staffId: selectedStaffId,
+          item,
+          amount: Number(amount),
+          channelId: interaction.channel.id,
+          paid: true
+        });
+      await countOrderVipSpentOnce(
+        tipOrder,
+        '儲值卡打賞付款完成'
+      );
       await interaction.channel.send({
         content:
           `✅ 儲值卡打賞已完成，並已寫入薪資網\n` +
@@ -1225,14 +1225,25 @@ async function payOrderByWallet(order) {
     `訂單 ${order.order_no || order.id}｜${order.service || '陪玩訂單'}`
   );
 
-  await supabase
-    .from('play_orders')
-    .update({
-      paid: true,
-      paid_at: new Date().toISOString()
-    })
-    .eq('id', order.id);
-
+  const { data: paidOrder, error: paidOrderError } =
+    await supabase
+      .from('play_orders')
+      .update({
+        paid: true,
+        paid_at: new Date().toISOString()
+      })
+      .eq('id', order.id)
+      .select()
+      .single();
+  if (paidOrderError || !paidOrder) {
+    console.error('[儲值卡付款] 更新付款狀態失敗', paidOrderError);
+    throw new Error('更新付款狀態失敗');
+  }
+  // ===== 付款完成後才計入累積消費，並防止重複 =====
+  await countOrderVipSpentOnce(
+    paidOrder,
+    '儲值卡 / 錢包付款完成'
+  );
   return {
     amount,
     finalCoins
@@ -1306,14 +1317,25 @@ async function payOrderByMonthly(order) {
       status: 'unbilled'
     });
 
-  await supabase
-    .from('play_orders')
-    .update({
-      paid: true,
-      paid_at: new Date().toISOString()
-    })
-    .eq('id', order.id);
-
+  const { data: paidOrder, error: paidOrderError } =
+    await supabase
+      .from('play_orders')
+      .update({
+        paid: true,
+        paid_at: new Date().toISOString()
+      })
+      .eq('id', order.id)
+      .select()
+      .single();
+  if (paidOrderError || !paidOrder) {
+    console.error('[月結付款] 更新付款狀態失敗', paidOrderError);
+    throw new Error('更新付款狀態失敗');
+  }
+  // ===== 月結付款完成後也計入累積消費，並防止重複 =====
+  await countOrderVipSpentOnce(
+    paidOrder,
+    '月結付款完成'
+  );
   return {
     amount,
     cashback,
@@ -1776,6 +1798,89 @@ async function checkAndUpgradeVip(userId, triggerType, amount) {
   }
 
   return newLevel;
+}
+// ===== 訂單付款完成後，計入累積消費，防止重複計算 =====
+async function countOrderVipSpentOnce(order, reason = '付款完成') {
+  if (!order) {
+    throw new Error('找不到訂單資料');
+  }
+
+  if (order.vip_spent_counted) {
+    console.log(
+      '[VIP累積消費] 已計算過，略過',
+      order.order_no || order.id
+    );
+
+    return {
+      counted: false,
+      amount: 0
+    };
+  }
+
+  const userId =
+    order.customer_id;
+
+  const amount =
+    Number(order.final_price || order.price || 0);
+
+  if (!userId) {
+    throw new Error('訂單缺少 customer_id');
+  }
+
+  if (!amount || amount <= 0) {
+    throw new Error('訂單金額錯誤，無法計入累積消費');
+  }
+
+  // 先把訂單鎖住，避免同一張單被重複按兩次時重複加
+  const { data: lockedOrder, error: lockError } =
+    await supabase
+      .from('play_orders')
+      .update({
+        vip_spent_counted: true,
+        vip_spent_counted_at: new Date().toISOString()
+      })
+      .eq('id', order.id)
+      .eq('vip_spent_counted', false)
+      .select()
+      .maybeSingle();
+
+  if (lockError) {
+    console.error('[VIP累積消費] 鎖定訂單失敗', lockError);
+    throw new Error('累積消費鎖定失敗');
+  }
+
+  if (!lockedOrder) {
+    console.log(
+      '[VIP累積消費] 這張訂單已被其他流程計算過',
+      order.order_no || order.id
+    );
+
+    return {
+      counted: false,
+      amount: 0
+    };
+  }
+
+  await checkAndUpgradeVip(
+    userId,
+    'spend',
+    amount
+  );
+
+  console.log(
+    '[VIP累積消費] 已計入',
+    {
+      order: order.order_no || order.id,
+      userId,
+      amount,
+      reason
+    }
+  );
+
+  return {
+    counted: true,
+    amount
+  };
 }
 // 更新簽到
 async function updateCheckin(userId, date) {
@@ -3114,6 +3219,38 @@ const commands = [
       option
         .setName('備註')
         .setDescription('可不填，例如：客人要求延長，陪陪同意')
+        .setRequired(false)
+    ),
+  new SlashCommandBuilder()
+    .setName('調整累積消費')
+    .setDescription('手動調整會員累積消費金額')
+    .addUserOption(option =>
+      option
+        .setName('玩家')
+        .setDescription('選擇要調整的會員')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('金額')
+        .setDescription('要調整的金額，例如 500 或 -500')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('模式')
+        .setDescription('增加、扣除或直接設定')
+        .setRequired(true)
+        .addChoices(
+          { name: '增加', value: 'add' },
+          { name: '扣除', value: 'subtract' },
+          { name: '直接設定', value: 'set' }
+        )
+    )
+    .addStringOption(option =>
+      option
+        .setName('備註')
+        .setDescription('例如：補登消費、修正重複累積')
         .setRequired(false)
     ),
   new SlashCommandBuilder()
@@ -4468,6 +4605,96 @@ async function handleSlashCommand(interaction) {
             content:
               `❌ 已扣除 <@${target.id}> ${amount} 星雨幣，目前餘額 ${finalCoins} 星雨幣`,
           });
+        }
+        if (interaction.commandName === '調整累積消費') {
+          if (!isAdminOrStaff(interaction)) {
+            return replyError(interaction, '你沒有權限');
+          }
+          const target =
+            interaction.options.getUser('玩家');
+          const amount =
+            interaction.options.getInteger('金額');
+          const mode =
+            interaction.options.getString('模式');
+          const note =
+            interaction.options.getString('備註') || '手動調整累積消費';
+          if (!target) {
+            return replyError(interaction, '找不到玩家');
+          }
+          if (!Number.isFinite(amount)) {
+            return replyError(interaction, '金額格式錯誤');
+          }
+          const { data: oldVip, error: readError } =
+            await supabase
+              .from('user_vips')
+              .select('*')
+              .eq('user_id', target.id)
+              .maybeSingle();
+          if (readError) {
+            console.error('[調整累積消費] 讀取失敗', readError);
+            return replyError(interaction, '讀取會員累積資料失敗');
+          }
+          const oldTotalSpent =
+            Number(oldVip?.total_spent || 0);
+          let newTotalSpent = oldTotalSpent;
+          if (mode === 'add') {
+            if (amount <= 0) {
+              return replyError(interaction, '增加金額必須大於 0');
+            }
+            newTotalSpent = oldTotalSpent + amount;
+          }
+          if (mode === 'subtract') {
+            if (amount <= 0) {
+              return replyError(interaction, '扣除金額必須大於 0');
+            }
+            newTotalSpent = Math.max(0, oldTotalSpent - amount);
+          }
+          if (mode === 'set') {
+            if (amount < 0) {
+              return replyError(interaction, '直接設定金額不能小於 0');
+            }
+            newTotalSpent = amount;
+          }
+          const { data: updatedVip, error: upsertError } =
+            await supabase
+              .from('user_vips')
+              .upsert({
+                user_id: target.id,
+                total_spent: newTotalSpent,
+                total_topup: Number(oldVip?.total_topup || 0),
+                highest_single_topup: Number(oldVip?.highest_single_topup || 0),
+                vip_level: oldVip?.vip_level || 0,
+                updated_at: new Date().toISOString()
+              }, {
+                onConflict: 'user_id'
+              })
+              .select()
+              .single();
+          if (upsertError || !updatedVip) {
+            console.error('[調整累積消費] 更新失敗', upsertError);
+            return replyError(interaction, '更新累積消費失敗');
+          }
+          // 重新檢查 VIP 升級：用 0 金額觸發重新判斷，不再增加消費
+          await checkAndUpgradeVip(target.id, 'spend', 0);
+          return interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setColor('#ffd166')
+                .setTitle('✅ 已調整累積消費')
+                .setDescription(
+                  `會員：<@${target.id}>\n` +
+                  `模式：${mode === 'add' ? '增加' : mode === 'subtract' ? '扣除' : '直接設定'}\n` +
+                  `調整金額：NT$${amount.toLocaleString('zh-TW')}\n\n` +
+                  `原本累積消費：NT$${oldTotalSpent.toLocaleString('zh-TW')}\n` +
+                  `現在累積消費：NT$${newTotalSpent.toLocaleString('zh-TW')}\n\n` +
+                  `備註：${note}`
+                )
+                .setFooter({
+                  text: `操作人員：${interaction.user.tag}`
+                })
+                .setTimestamp()
+            ]
+         });
         }
         if (interaction.commandName === '設定月結') {
           if (!isAdminOrStaff(interaction)) {
@@ -6650,14 +6877,19 @@ async function handleButtonInteraction(interaction) {
       pendingTips.delete(tipConfirmId);
       if (isWalletPayment(paymentMethod)) {
         try {
-          await saveTipToPlayOrders({
-            tipperId,
-            staffId: selectedStaffId,
-            item,
-            amount: Number(amount),
-            channelId: interaction.channel.id,
-            paid: true
-          });
+          const tipOrder =
+            await saveTipToPlayOrders({
+              tipperId,
+              staffId: selectedStaffId,
+              item,
+              amount: Number(amount),
+              channelId: interaction.channel.id,
+              paid: true
+            });
+          await countOrderVipSpentOnce(
+              tipOrder,
+              '儲值卡打賞付款完成'
+            );
           await interaction.channel.send({
             content:
               `✅ 儲值卡打賞已完成，並已寫入薪資網\n` +
@@ -6730,11 +6962,6 @@ async function handleButtonInteraction(interaction) {
         .eq('note', '打賞')
         .order('created_at', { ascending: false })
         .limit(1);
-      await checkAndUpgradeVip(
-        tipperId,
-        'spend',
-        Number(amount)
-      );
       const oldEmbed = interaction.message.embeds[0];
 
       const embed =
@@ -6767,14 +6994,19 @@ async function handleButtonInteraction(interaction) {
       });
       // ===== 寫入薪資網 / play_orders =====
       try {
-        await saveTipToPlayOrders({
-          tipperId,
-          staffId,
-          item: '打賞',
-          amount: Number(amount),
-          channelId: interaction.channel.id,
-          paid: true
-        });
+        const tipOrder =
+          await saveTipToPlayOrders({
+            tipperId,
+            staffId,
+            item: '打賞',
+            amount: Number(amount),
+            channelId: interaction.channel.id,
+            paid: true
+          });
+        await countOrderVipSpentOnce(
+          tipOrder,
+          '客服確認打賞付款完成'
+        );
         await interaction.channel.send({
           content:
             `打賞人：<@${tipperId}>\n` +
@@ -7035,12 +7267,6 @@ async function handleButtonInteraction(interaction) {
             completed_at: new Date().toISOString()
           })
           .eq('id', order.id);
-        // ===== VIP 累積消費檢查 =====
-        await checkAndUpgradeVip(
-          order.customer_id,
-          'spend',
-          Number(order.final_price || order.price || 0)
-        );
         // ===== 多位陪陪薪資平分 =====
         const playerCount =
           assignedPlayers.length || 1;
