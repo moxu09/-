@@ -6032,6 +6032,7 @@ async function acceptPlayOrder(interaction) {
     }
     const orderServiceKey =
       cleanServiceKey(
+        order.dispatch_service_key ||
         order.service ||
         `${order.game || ''}${order.order_item || ''}`
       );
@@ -6051,7 +6052,7 @@ async function acceptPlayOrder(interaction) {
         content:
           `❌ 你沒有權限接這個項目\n` +
           `此訂單服務：${order.service || '未填寫'}\n` +
-          `比對用服務：${orderServiceKey}\n` +
+          `比對用服務：${order.dispatch_service_key || orderServiceKey}\n` +
           `你的可接項目：${allowedServices.join('、') || '未設定'}\n\n` +
           `如果畫面看起來一樣，通常是服務名稱內有隱藏空白或客服修改後欄位沒有同步。`
       });
@@ -7229,7 +7230,37 @@ function buildServiceTextFromPending(pending) {
 
   return '陪玩訂單';
 }
+function getDispatchServiceKeyFromPending(pending) {
+  if (pending.category === 'valorant') {
+    if (pending.serviceType === '娛樂') {
+      return '特戰英豪娛樂陪玩';
+    }
 
+    if (pending.serviceType === '技術') {
+      return '特戰英豪技術陪玩';
+    }
+
+    return '特戰英豪';
+  }
+
+  if (pending.category === 'steam') {
+    return 'STEAM一般遊戲陪玩';
+  }
+
+  if (pending.category === 'delta') {
+    return '三角洲行動';
+  }
+
+  if (pending.category === 'chat') {
+    return '陪聊服務聊天陪伴';
+  }
+
+  if (pending.category === 'emotion') {
+    return '陪聊服務出氣服務';
+  }
+
+  return getServiceName(pending.category);
+}
 async function createPlayOrderFromServicePending(pending, channelId) {
   const amount =
     Number(pending.quotedPrice || 0);
@@ -7261,6 +7292,7 @@ async function createPlayOrderFromServicePending(pending, channelId) {
 
         game: getServiceName(pending.category),
         service: serviceText,
+        dispatch_service_key: getDispatchServiceKeyFromPending(pending),
         order_type: '訂單',
         order_item: serviceText,
 
