@@ -4204,6 +4204,13 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('new_order_gender_') ||
         interaction.customId.startsWith('new_order_player_') ||
         interaction.customId.startsWith('new_order_duration_') ||
+
+        // ===== 新版服務下單流程 =====
+        interaction.customId.startsWith('valorant_rank_') ||
+        interaction.customId.startsWith('service_player_count_') ||
+        interaction.customId.startsWith('service_gender_') ||
+        interaction.customId.startsWith('service_assign_') ||
+
         interaction.customId.startsWith('quote_select_coupon_') ||
         interaction.customId.startsWith('quote_payment_method_') ||
         interaction.customId.startsWith('topup_payment_method_') ||
