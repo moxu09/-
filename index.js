@@ -4223,6 +4223,7 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('service_player_count_') ||
         interaction.customId.startsWith('service_gender_') ||
         interaction.customId.startsWith('service_assign_') ||
+        interaction.customId.startsWith('service_selected_players_') ||
         interaction.customId.startsWith('service_duration_') ||
         interaction.customId.startsWith('service_rounds_') || 
         interaction.customId.startsWith('steam_category_') ||

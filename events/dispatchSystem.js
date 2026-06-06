@@ -1005,7 +1005,8 @@ async function createServiceTicket(interaction, serviceType) {
     rounds: null,
     note: '',
     quotedPrice: null,
-    paymentMethod: null
+    paymentMethod: null,
+    timeSelectShown: false
   });
 
   setTimeout(() => {
@@ -1442,6 +1443,38 @@ function isValorantGoldOrBelow(rank) {
   return ['鐵牌', '銅牌', '銀牌', '金牌', '金牌含以下', '不指定'].includes(
     String(rank || '')
   );
+}
+async function showValorantTimeOrRoundOnce(channel, flowId, pending) {
+  if (pending.timeSelectShown) {
+    return;
+  }
+
+  if (!pending.serviceType) {
+    return;
+  }
+
+  if (pending.serviceType === '娛樂') {
+    pending.timeSelectShown = true;
+    pendingServiceOrders.set(flowId, pending);
+    await showServiceDurationSelect(channel, flowId, 'hour');
+    return;
+  }
+
+  if (pending.serviceType === '技術') {
+    if (!pending.rank) {
+      await channel.send('請先選擇段位，系統會依段位顯示時長或局數。');
+      return;
+    }
+
+    pending.timeSelectShown = true;
+    pendingServiceOrders.set(flowId, pending);
+
+    if (isValorantGoldOrBelow(pending.rank)) {
+      await showServiceDurationSelect(channel, flowId, 'hour');
+    } else {
+      await showServiceRoundSelect(channel, flowId);
+    }
+  }
 }
 async function showSimpleServiceStart(channel, flowId, serviceType) {
   const isChat =
@@ -6195,19 +6228,13 @@ async function handleValorantTypeButton(interaction) {
       ? '娛樂'
       : '技術';
 
+  pending.timeSelectShown = false;
   pendingServiceOrders.set(flowId, pending);
-  if (pending.serviceType === '娛樂') {
-    await showServiceDurationSelect(interaction.channel, flowId, 'hour');
-  }
-  if (pending.serviceType === '技術') {
-    if (!pending.rank) {
-      await interaction.channel.send('請先選擇段位，系統會依段位顯示時長或局數。');
-    } else if (isValorantGoldOrBelow(pending.rank)) {
-      await showServiceDurationSelect(interaction.channel, flowId, 'hour');
-    } else {
-      await showServiceRoundSelect(interaction.channel, flowId);
-    }
-  }
+  await showValorantTimeOrRoundOnce(
+    interaction.channel,
+    flowId,
+    pending
+  );
   return interaction.editReply({
     content: `✅ 已選擇特戰服務：${pending.serviceType}`
   });
@@ -6260,20 +6287,14 @@ async function handleValorantRankSelect(interaction) {
       content: '❌ 這筆訂單流程已過期，請重新下單。'
     });
   }
-
   pending.rank = interaction.values[0];
-
+  pending.timeSelectShown = false;
   pendingServiceOrders.set(flowId, pending);
-  if (pending.serviceType === '娛樂') {
-    await showServiceDurationSelect(interaction.channel, flowId, 'hour');
-  }
-  if (pending.serviceType === '技術') {
-    if (isValorantGoldOrBelow(pending.rank)) {
-      await showServiceDurationSelect(interaction.channel, flowId, 'hour');
-    } else {
-      await showServiceRoundSelect(interaction.channel, flowId);
-    }
-  }
+  await showValorantTimeOrRoundOnce(
+    interaction.channel,
+    flowId,
+    pending
+  );
   return interaction.editReply({
     content: `✅ 已選擇段位：${pending.rank}`
   });
@@ -6328,7 +6349,139 @@ async function handleServiceGenderSelect(interaction) {
     content: `✅ 已選擇性別偏好：${pending.genderPreference}`
   });
 }
+function getServiceKeywordFromPending(pending) {
+  if (pending.category === 'valorant') {
+    return [
+      '特戰英豪',
+      pending.serviceType
+        ? `${pending.serviceType}陪玩`
+        : ''
+    ].filter(Boolean).join('');
+  }
 
+  if (pending.category === 'steam') {
+    return 'Steam';
+  }
+
+  if (pending.category === 'delta') {
+    return [
+      '三角洲',
+      pending.deltaMode || ''
+    ].filter(Boolean).join('');
+  }
+
+  if (pending.category === 'chat') {
+    return '陪聊';
+  }
+
+  if (pending.category === 'emotion') {
+    return '出氣包';
+  }
+
+  return getServiceName(pending.category);
+}
+
+async function showServicePlayerSelect(channel, flowId, pending) {
+  const { data: players, error } =
+    await supabase
+      .from('players')
+      .select('*')
+      .order('status', { ascending: true });
+
+  if (error) {
+    console.error('[新版指定陪陪] 讀取陪陪失敗', error);
+    return channel.send('❌ 讀取陪陪資料失敗，請聯繫客服。');
+  }
+
+  const serviceKeyword =
+    getServiceKeywordFromPending(pending);
+
+  const matchedPlayers =
+    (players || [])
+      .filter(player => player.discord_id)
+      .filter(player => matchPlayerGender(player, pending.genderPreference))
+      .filter(player => {
+        const allowedServices =
+          normalizeAllowedServices(player.allowed_services);
+
+        // 沒填 allowed_services 的先顯示，避免陪陪資料沒補完整時完全沒人可選
+        if (!allowedServices.length) return true;
+
+        const clean = text =>
+          String(text || '')
+            .replace(/\s+/g, '')
+            .replace(/[｜|]/g, '')
+            .replace(/　/g, '')
+            .replace(/[\u200B-\u200D\uFEFF]/g, '')
+            .trim();
+
+        const target =
+          clean(serviceKeyword);
+
+        return allowedServices.some(service => {
+          const serviceText =
+            clean(service);
+
+          return (
+            serviceText === target ||
+            serviceText.includes(target) ||
+            target.includes(serviceText)
+          );
+        });
+      });
+
+  const onlinePlayers =
+    matchedPlayers.filter(player => player.status === 'available');
+
+  const offlinePlayers =
+    matchedPlayers.filter(player => player.status !== 'available');
+
+  const options = [
+    ...onlinePlayers.map(player => ({
+      label: `🟢 ${String(player.name || player.discord_id)}`.slice(0, 100),
+      description: '目前在線，可直接安排'.slice(0, 100),
+      value: `online_${player.discord_id}`
+    })),
+
+    ...offlinePlayers.map(player => ({
+      label: `⚪ ${String(player.name || player.discord_id)}`.slice(0, 100),
+      description: formatAvailableTime(player).slice(0, 100),
+      value: `reserve_${player.discord_id}`
+    }))
+  ].slice(0, 25);
+
+  if (!options.length) {
+    return channel.send(
+      `❌ 目前沒有符合條件的陪陪。\n` +
+      `性別偏好：${pending.genderPreference || '不指定'}\n` +
+      `服務：${serviceKeyword || '未填寫'}`
+    );
+  }
+
+  const maxValues =
+    Math.min(
+      Number(pending.playerCount || 1),
+      options.length
+    );
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_selected_players_${flowId}`)
+      .setPlaceholder(`請選擇指定陪陪，最多 ${maxValues} 位`)
+      .setMinValues(1)
+      .setMaxValues(maxValues)
+      .addOptions(options);
+
+  await channel.send({
+    content:
+      `請選擇指定陪陪：\n` +
+      `🟢 在線：可直接安排\n` +
+      `⚪ 不在線：可查看可接單時間並預約`,
+    components: [
+      new ActionRowBuilder().addComponents(menu)
+    ]
+  });
+}
 async function handleServiceAssignSelect(interaction) {
   await interaction.deferReply({
     flags: 64
@@ -6346,11 +6499,94 @@ async function handleServiceAssignSelect(interaction) {
   }
 
   pending.assignMode = interaction.values[0];
+  pendingServiceOrders.set(flowId, pending);
+  if (pending.assignMode === '不指定') {
+    return interaction.editReply({
+      content: '✅ 已選擇指定方式：不指定陪陪'
+    });
+  }
+  await showServicePlayerSelect(
+    interaction.channel,
+    flowId,
+    pending
+  );
+  return interaction.editReply({
+    content:
+      `✅ 已選擇指定方式：${pending.assignMode}\n` +
+      `請在頻道內選擇陪陪。`
+  });
+}
+async function handleServiceSelectedPlayersSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_selected_players_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  const selectedValues =
+    interaction.values || [];
+
+  const playerIds =
+    selectedValues
+      .map(value =>
+        String(value)
+          .replace('online_', '')
+          .replace('reserve_', '')
+      )
+      .filter(Boolean);
+
+  const reserveIds =
+    selectedValues
+      .filter(value => String(value).startsWith('reserve_'))
+      .map(value => String(value).replace('reserve_', ''));
+
+  pending.selectedPlayerIds = playerIds;
+  pending.selectedPlayerType =
+    reserveIds.length > 0
+      ? 'reserve'
+      : 'online';
+
+  if (reserveIds.length > 0) {
+    pending.assignMode = '預約指定';
+  }
 
   pendingServiceOrders.set(flowId, pending);
 
+  if (reserveIds.length > 0) {
+    const { data: players } =
+      await supabase
+        .from('players')
+        .select('*')
+        .in('discord_id', reserveIds);
+
+    const availableText =
+      (players || [])
+        .map(player => {
+          return `<@${player.discord_id}>：${formatAvailableTime(player)}`;
+        })
+        .join('\n') || '未填寫可接時間';
+
+    await interaction.channel.send({
+      content:
+        `⚪ 你選擇了不在線 / 可預約的陪陪：\n` +
+        `${availableText}\n\n` +
+        `請在備註或頻道內告訴客服想預約的時間。`
+    });
+  }
+
   return interaction.editReply({
-    content: `✅ 已選擇指定方式：${pending.assignMode}`
+    content:
+      `✅ 已選擇陪陪：${playerIds.map(id => `<@${id}>`).join('、')}`
   });
 }
 async function handleServiceDurationSelect(interaction) {
@@ -6941,7 +7177,10 @@ async function createPlayOrderFromServicePending(pending, channelId) {
           pending.assignMode === '預約指定'
             ? preferredPlayer
             : null,
-
+        dispatch_type:
+          pending.selectedPlayerType === 'reserve'
+            ? 'reserve'
+            : null,
         assigned_player: null,
 
         duration_text:
@@ -7556,6 +7795,10 @@ async function handleDispatchInteraction(interaction) {
 
     if (interaction.customId.startsWith('service_assign_')) {
       await handleServiceAssignSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_selected_players_')) {
+      await handleServiceSelectedPlayersSelect(interaction);
       return true;
     }
     if (interaction.customId.startsWith('service_duration_')) {
