@@ -730,7 +730,58 @@ async function sendOrderToStaffChannel(order) {
     components: [row]
   });
 }
+async function sendStaffOrderControlPanel(channel, order) {
+  const row1 =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`staff_edit_order_${order.id}`)
+          .setLabel('修改訂單')
+          .setEmoji('🛠️')
+          .setStyle(ButtonStyle.Primary),
 
+        new ButtonBuilder()
+          .setCustomId(`change_order_price_${order.id}`)
+          .setLabel('修改金額')
+          .setEmoji('💰')
+          .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+          .setCustomId(`extend_order_${order.id}`)
+          .setLabel('訂單加時')
+          .setEmoji('➕')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+  const row2 =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('complete_order')
+          .setLabel('完成訂單')
+          .setEmoji('🏁')
+          .setStyle(ButtonStyle.Success)
+      );
+
+  await channel.send({
+    content:
+      `<@&${process.env.STAFF_ROLE}> 訂單客服操作面板`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('🛠️ 客服訂單管理')
+        .setDescription(
+          `訂單編號：${order.order_no || order.id}\n` +
+          `闆闆：<@${order.customer_id}>\n` +
+          `服務：${order.service || order.order_item || '未填寫'}\n` +
+          `金額：NT$${order.final_price || order.price || 0}\n\n` +
+          `可在這裡修改訂單、修改金額、建立加時，或在服務結束後完成訂單。`
+        )
+        .setTimestamp()
+    ],
+    components: [row1, row2]
+  });
+}
 // ===== 陪玩控制面板 =====
 async function sendPlayerPanel(channel) {
 
@@ -7342,6 +7393,10 @@ async function handleServicePaymentMethodSelect(interaction) {
       });
 
       await sendOrderToStaffChannel(paidOrder || order);
+      await sendStaffOrderControlPanel(
+        interaction.channel,
+        paidOrder || order
+      );
       pendingServiceOrders.delete(flowId);
 
       return interaction.editReply({
@@ -7395,8 +7450,11 @@ async function handleServicePaymentMethodSelect(interaction) {
       });
 
       await sendOrderToStaffChannel(paidOrder || order);
+      await sendStaffOrderControlPanel(
+        interaction.channel,
+        paidOrder || order
+      );
       pendingServiceOrders.delete(flowId);
-
       return interaction.editReply({
         content: '✅ 已使用月結付款，並已派單。'
       });
@@ -7500,14 +7558,15 @@ async function handleServiceConfirmPaid(interaction) {
       '客服確認新版訂單付款完成'
     );
   }
-
   await sendOrderToStaffChannel(order);
-
+  await sendStaffOrderControlPanel(
+    interaction.channel,
+    order
+  );
   return interaction.editReply({
-    content: '✅ 已確認付款，並已派單。'
+    content: '✅ 已確認付款，並已派單，客服操作面板也已送出。'
   });
 }
-
 async function handleServiceCancelOrder(interaction) {
   await interaction.deferReply({
     flags: 64
