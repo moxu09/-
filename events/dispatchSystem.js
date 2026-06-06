@@ -6584,9 +6584,11 @@ async function handleServiceSelectedPlayersSelect(interaction) {
     });
   }
 
+  await showFinishNeedButtons(interaction.channel, flowId);
   return interaction.editReply({
     content:
-      `✅ 已選擇陪陪：${playerIds.map(id => `<@${id}>`).join('、')}`
+      `✅ 已選擇陪陪：${playerIds.map(id => `<@${id}>`).join('、')}\n` +
+      `請確認需求無誤後，按下方「送出訂單」。`
   });
 }
 async function handleServiceDurationSelect(interaction) {
@@ -6713,12 +6715,13 @@ async function showFinishNeedButtons(channel, flowId) {
 
         new ButtonBuilder()
           .setCustomId(`order_finish_need_${flowId}`)
-          .setLabel('完成需求，等待客服報價')
+          .setLabel('送出訂單')
+          .setEmoji('📨')
           .setStyle(ButtonStyle.Success)
       );
 
   await channel.send({
-    content: '需求填寫完成後，請按「完成需求，等待客服報價」。',
+    content: '需求填寫完成後，請按「送出訂單」。',
     components: [row]
   });
 }
