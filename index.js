@@ -4129,6 +4129,8 @@ client.on(Events.InteractionCreate, async interaction => {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
       if (
+        interaction.customId.startsWith('valorant_type_') ||
+        interaction.customId.startsWith('valorant_mode_') ||
         interaction.customId.startsWith('steam_game_name_') ||
         interaction.customId.startsWith('order_add_note_') ||
         interaction.customId.startsWith('order_finish_need_') ||
