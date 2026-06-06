@@ -1192,7 +1192,54 @@ async function showValorantStart(channel, flowId) {
           value: '預約指定'
         }
       ]);
-
+  const durationMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_duration_${flowId}`)
+      .setPlaceholder('請選擇時長｜娛樂 / 金牌以下技術適用')
+      .addOptions([
+        {
+          label: '1 小時',
+          value: '1'
+        },
+        {
+          label: '2 小時',
+          value: '2'
+        },
+        {
+          label: '3 小時',
+          value: '3'
+        },
+        {
+          label: '4 小時',
+          value: '4'
+        },
+        {
+          label: '自訂',
+          value: 'custom'
+        }
+      ]);
+  const roundsMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_rounds_${flowId}`)
+      .setPlaceholder('請選擇局數｜技術金牌以上適用')
+      .addOptions([
+        {
+          label: '1 局',
+          value: '1'
+        },
+        {
+          label: '3 局',
+          value: '3'
+        },
+        {
+          label: '5 局',
+          value: '5'
+        },
+        {
+          label: '自訂',
+          value: 'custom'
+        }
+      ]);
   await channel.send({
     embeds: [
       new EmbedBuilder()
@@ -1216,9 +1263,14 @@ async function showValorantStart(channel, flowId) {
   });
 
   await channel.send({
-    content: '請選擇是否指定陪陪：',
+    content:
+      `請繼續選擇指定方式與時間：\n\n` +
+      `娛樂陪玩 / 金牌以下技術單 → 選「時長」\n` +
+      `金牌以上技術單 → 選「局數」`,
     components: [
-      new ActionRowBuilder().addComponents(assignMenu)
+      new ActionRowBuilder().addComponents(assignMenu),
+      new ActionRowBuilder().addComponents(durationMenu),
+      new ActionRowBuilder().addComponents(roundsMenu)
     ]
   });
 }
@@ -6230,11 +6282,6 @@ async function handleValorantTypeButton(interaction) {
 
   pending.timeSelectShown = false;
   pendingServiceOrders.set(flowId, pending);
-  await showValorantTimeOrRoundOnce(
-    interaction.channel,
-    flowId,
-    pending
-  );
   return interaction.editReply({
     content: `✅ 已選擇特戰服務：${pending.serviceType}`
   });
@@ -6290,11 +6337,6 @@ async function handleValorantRankSelect(interaction) {
   pending.rank = interaction.values[0];
   pending.timeSelectShown = false;
   pendingServiceOrders.set(flowId, pending);
-  await showValorantTimeOrRoundOnce(
-    interaction.channel,
-    flowId,
-    pending
-  );
   return interaction.editReply({
     content: `✅ 已選擇段位：${pending.rank}`
   });
