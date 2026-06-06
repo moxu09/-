@@ -6328,6 +6328,15 @@ async function handleButtonInteraction(interaction) {
     // ===== ATM 消費資訊 =====
     if (customId === 'consume_info') {
       const userData = await getUser(interaction.user.id);
+      const { data: vipData, error: vipError } =
+        await supabase
+          .from('user_vips')
+          .select('*')
+          .eq('user_id', interaction.user.id)
+          .maybeSingle();
+      if (vipError) {
+        console.error('[ATM 消費資訊] 查詢 VIP 累積資料失敗', vipError);
+      }
       const now = new Date();
       const taiwanNow =
         new Date(now.getTime() + 8 * 60 * 60 * 1000);
@@ -6351,11 +6360,10 @@ async function handleButtonInteraction(interaction) {
       }
       const logs =
         topupLogs || [];
+      // 總累積儲值改讀 user_vips，這樣 /調整累積儲值 才會同步顯示
       const totalTopup =
-        logs.reduce(
-          (sum, log) => sum + Number(log.amount || 0),
-          0
-        );
+        Number(vipData?.total_topup || 0);
+      // 本月累積儲值仍然用 wallet_logs 計算
       const monthTopup =
         logs
           .filter(log => {
@@ -6404,7 +6412,7 @@ async function handleButtonInteraction(interaction) {
             `**錢包餘額**\n` +
             `${Number(userData.coins || 0).toLocaleString('zh-TW')} ASD\n\n` +
             `**累積消費金額**\n` +
-            `${Number(userData.total_spent || 0).toLocaleString('zh-TW')} 元\n\n` +
+            `${Number(vipData?.total_spent || 0).toLocaleString('zh-TW')} 元\n\n` +
             `**月累積消費金額**\n` +
             `${Number(monthSpent || 0).toLocaleString('zh-TW')} ASD\n\n` +            
             `**累積儲值金額**\n` +
