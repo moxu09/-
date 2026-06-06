@@ -3260,6 +3260,38 @@ const commands = [
         .setRequired(false)
     ),
   new SlashCommandBuilder()
+    .setName('調整累積儲值')
+    .setDescription('手動調整會員累積儲值金額')
+    .addUserOption(option =>
+      option
+        .setName('玩家')
+        .setDescription('選擇要調整的會員')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('金額')
+        .setDescription('要調整的儲值金額，例如 500')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('模式')
+        .setDescription('增加、扣除或直接設定')
+        .setRequired(true)
+        .addChoices(
+          { name: '增加', value: 'add' },
+          { name: '扣除', value: 'subtract' },
+          { name: '直接設定', value: 'set' }
+        )
+    )
+    .addStringOption(option =>
+      option
+        .setName('備註')
+        .setDescription('例如：補登儲值、修正重複累積')
+        .setRequired(false)
+    ),
+  new SlashCommandBuilder()
     .setName('設定月結')
     .setDescription('設定會員月結保證金與額度')
     .addUserOption(option =>
@@ -4717,7 +4749,11 @@ async function handleSlashCommand(interaction) {
             return replyError(interaction, '更新累積消費失敗');
           }
           // 重新檢查 VIP 升級：用 0 金額觸發重新判斷，不再增加消費
-          await checkAndUpgradeVip(target.id, 'spend', 0);
+          try {
+            await checkAndUpgradeVip(target.id, 'spend', 0);
+          } catch (vipError) {
+            console.error('[調整累積消費] VIP 重新檢查失敗', vipError);
+          }
           return interaction.editReply({
             embeds: [
               new EmbedBuilder()
@@ -4737,6 +4773,133 @@ async function handleSlashCommand(interaction) {
                 .setTimestamp()
             ]
          });
+        }
+        if (interaction.commandName === '調整累積儲值') {
+          if (!isAdminOrStaff(interaction)) {
+            return replyError(interaction, '你沒有權限');
+          }
+
+          const target =
+            interaction.options.getUser('玩家');
+
+          const amount =
+            interaction.options.getInteger('金額');
+
+          const mode =
+            interaction.options.getString('模式');
+
+          const note =
+            interaction.options.getString('備註') || '手動調整累積儲值';
+
+          if (!target) {
+            return replyError(interaction, '找不到玩家');
+          }
+
+          if (!Number.isFinite(amount)) {
+            return replyError(interaction, '金額格式錯誤');
+          }
+
+          const { data: oldVip, error: readError } =
+            await supabase
+              .from('user_vips')
+              .select('*')
+              .eq('user_id', target.id)
+              .maybeSingle();
+
+          if (readError) {
+            console.error('[調整累積儲值] 讀取失敗', readError);
+            return replyError(interaction, '讀取會員累積資料失敗');
+          }
+
+          const oldTotalTopup =
+            Number(oldVip?.total_topup || 0);
+
+          let newTotalTopup =
+            oldTotalTopup;
+
+          if (mode === 'add') {
+            if (amount <= 0) {
+              return replyError(interaction, '增加金額必須大於 0');
+            }
+
+            newTotalTopup =
+              oldTotalTopup + amount;
+          }
+
+          if (mode === 'subtract') {
+            if (amount <= 0) {
+              return replyError(interaction, '扣除金額必須大於 0');
+            }
+
+            newTotalTopup =
+              Math.max(0, oldTotalTopup - amount);
+          }
+
+          if (mode === 'set') {
+            if (amount < 0) {
+              return replyError(interaction, '直接設定金額不能小於 0');
+            }
+
+            newTotalTopup =
+              amount;
+          }
+
+          const oldHighestSingleTopup =
+            Number(oldVip?.highest_single_topup || 0);
+
+          const newHighestSingleTopup =
+            mode === 'add'
+              ? Math.max(oldHighestSingleTopup, amount)
+              : oldHighestSingleTopup;
+
+          const { data: updatedVip, error: upsertError } =
+            await supabase
+              .from('user_vips')
+              .upsert({
+                user_id: target.id,
+                total_spent: Number(oldVip?.total_spent || 0),
+                total_topup: newTotalTopup,
+                highest_single_topup: newHighestSingleTopup,
+                vip_level: oldVip?.vip_level || 0,
+                updated_at: new Date().toISOString()
+              }, {
+                onConflict: 'user_id'
+              })
+              .select()
+              .single();
+
+          if (upsertError || !updatedVip) {
+            console.error('[調整累積儲值] 更新失敗', upsertError);
+            return replyError(interaction, '更新累積儲值失敗');
+          }
+
+          // 重新檢查 VIP 升級：失敗不要擋掉累積儲值調整
+          try {
+            await checkAndUpgradeVip(target.id, 'topup', 0);
+          } catch (vipError) {
+            console.error('[調整累積儲值] VIP 重新檢查失敗', vipError);
+          }
+
+          return interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setColor('#66ccff')
+                .setTitle('✅ 已調整累積儲值')
+                .setDescription(
+                  `會員：<@${target.id}>\n` +
+                  `模式：${mode === 'add' ? '增加' : mode === 'subtract' ? '扣除' : '直接設定'}\n` +
+                  `調整金額：NT$${amount.toLocaleString('zh-TW')}\n\n` +
+                  `原本累積儲值：NT$${oldTotalTopup.toLocaleString('zh-TW')}\n` +
+                  `現在累積儲值：NT$${newTotalTopup.toLocaleString('zh-TW')}\n` +
+                  `最高單筆儲值：NT$${newHighestSingleTopup.toLocaleString('zh-TW')}\n\n` +
+                  `備註：${note}`
+                )
+                .setFooter({
+                  text: `操作人員：${interaction.user.tag}`
+                })
+                .setTimestamp()
+            ]
+          });
         }
         if (interaction.commandName === '設定月結') {
           if (!isAdminOrStaff(interaction)) {
