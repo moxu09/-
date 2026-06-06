@@ -2897,7 +2897,7 @@ async function sendOrderSystem(client) {
 
         new ButtonBuilder()
           .setCustomId('order_start_delta')
-          .setLabel('三角洲')
+          .setLabel('三角洲行動')
           .setEmoji('🛡️')
           .setStyle(ButtonStyle.Primary)
       );
@@ -2907,13 +2907,13 @@ async function sendOrderSystem(client) {
       .addComponents(
         new ButtonBuilder()
           .setCustomId('order_start_chat')
-          .setLabel('陪聊')
+          .setLabel('陪聊服務')
           .setEmoji('💬')
           .setStyle(ButtonStyle.Secondary),
 
         new ButtonBuilder()
           .setCustomId('order_start_emotion')
-          .setLabel('出氣包')
+          .setLabel('出氣服務')
           .setEmoji('🧸')
           .setStyle(ButtonStyle.Secondary)
       );
