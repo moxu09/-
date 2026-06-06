@@ -45,7 +45,8 @@ dispatchSystem.setup(supabase, client, {
   sendWalletLog,
   checkAndUpgradeVip,
   changeCoins,
-  startTipFlowInChannel
+  startTipFlowInChannel,
+  countOrderVipSpentOnce
 });
 // ===== 轉帳冷卻 =====
 const transferCooldown =
@@ -4127,6 +4128,16 @@ client.on(Events.InteractionCreate, async interaction => {
       if (interaction.customId.startsWith('new_order_back_')) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
+      if (
+        interaction.customId.startsWith('steam_game_name_') ||
+        interaction.customId.startsWith('order_add_note_') ||
+        interaction.customId.startsWith('order_finish_need_') ||
+        interaction.customId.startsWith('service_quote_price_') ||
+        interaction.customId.startsWith('service_confirm_paid_') ||
+        interaction.customId.startsWith('service_cancel_order_')
+      ) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
       // Modal 類按鈕不能 defer
       if (
         interaction.customId === 'open_topup_modal' ||
@@ -4210,6 +4221,11 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('service_player_count_') ||
         interaction.customId.startsWith('service_gender_') ||
         interaction.customId.startsWith('service_assign_') ||
+        interaction.customId.startsWith('service_duration_') ||
+        interaction.customId.startsWith('service_rounds_') || 
+        interaction.customId.startsWith('steam_category_') ||
+        interaction.customId.startsWith('delta_mode_') ||
+        interaction.customId.startsWith('service_payment_method_') ||
 
         interaction.customId.startsWith('quote_select_coupon_') ||
         interaction.customId.startsWith('quote_payment_method_') ||

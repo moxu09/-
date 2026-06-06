@@ -1039,23 +1039,18 @@ async function createServiceTicket(interaction, serviceType) {
   if (serviceType === 'valorant') {
     await showValorantStart(channel, flowId);
   }
-
   if (serviceType === 'steam') {
-    await channel.send('🎮 Steam 流程下一步再接，目前已建立頻道。');
+    await showSteamStart(channel, flowId);
   }
-
   if (serviceType === 'delta') {
-    await channel.send('🛡️ 三角洲流程下一步再接，目前已建立頻道。');
+    await showDeltaStart(channel, flowId);
   }
-
   if (serviceType === 'chat') {
-    await channel.send('💬 陪聊流程下一步再接，目前已建立頻道。');
+    await showSimpleServiceStart(channel, flowId, 'chat');
   }
-
   if (serviceType === 'emotion') {
-    await channel.send('🧸 出氣包流程下一步再接，目前已建立頻道。');
+    await showSimpleServiceStart(channel, flowId, 'emotion');
   }
-
   return interaction.editReply({
     content: `✅ 已建立下單頻道：<#${channel.id}>`
   });
@@ -1223,6 +1218,350 @@ async function showValorantStart(channel, flowId) {
     content: '請選擇是否指定陪陪：',
     components: [
       new ActionRowBuilder().addComponents(assignMenu)
+    ]
+  });
+}
+async function showSteamStart(channel, flowId) {
+  const categoryMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`steam_category_${flowId}`)
+      .setPlaceholder('請選擇 Steam 遊戲類型')
+      .addOptions([
+        {
+          label: '恐怖遊戲',
+          description: '價格參考：由客服依遊戲與時長報價',
+          value: '恐怖遊戲'
+        },
+        {
+          label: '生存遊戲',
+          description: '價格參考：由客服依遊戲與時長報價',
+          value: '生存遊戲'
+        },
+        {
+          label: '肉鴿遊戲',
+          description: '價格參考：由客服依遊戲與時長報價',
+          value: '肉鴿遊戲'
+        },
+        {
+          label: '派對遊戲',
+          description: '價格參考：由客服依遊戲與時長報價',
+          value: '派對遊戲'
+        },
+        {
+          label: '其他',
+          description: '請輸入遊戲名稱，由客服報價',
+          value: '其他'
+        }
+      ]);
+
+  const countMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_player_count_${flowId}`)
+      .setPlaceholder('請選擇陪陪人數')
+      .addOptions([
+        { label: '1 位', value: '1' },
+        { label: '2 位', value: '2' },
+        { label: '3 位', value: '3' },
+        { label: '4 位', value: '4' }
+      ]);
+
+  const genderMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_gender_${flowId}`)
+      .setPlaceholder('請選擇陪陪性別偏好')
+      .addOptions([
+        { label: '不指定', value: '不指定' },
+        { label: '男陪', value: '男陪' },
+        { label: '女陪', value: '女陪' }
+      ]);
+
+  const assignMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_assign_${flowId}`)
+      .setPlaceholder('是否指定陪陪')
+      .addOptions([
+        { label: '不指定陪陪', value: '不指定' },
+        { label: '指定陪陪', value: '指定' },
+        { label: '預約指定陪陪', value: '預約指定' }
+      ]);
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`steam_game_name_${flowId}`)
+          .setLabel('輸入遊戲名稱')
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId(`order_add_note_${flowId}`)
+          .setLabel('填寫備註 / 自訂需求')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#5dade2')
+        .setTitle('🎮 Steam 下單需求')
+        .setDescription(
+          `請選擇遊戲類型、人數、性別、指定方式與時長。\n\n` +
+          `⚠️ 價格只提供客服參考，正式報價由客服輸入。`
+        )
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(categoryMenu),
+      new ActionRowBuilder().addComponents(countMenu),
+      new ActionRowBuilder().addComponents(genderMenu),
+      new ActionRowBuilder().addComponents(assignMenu),
+      row
+    ]
+  });
+
+  await showServiceDurationSelect(channel, flowId, 'hour');
+}
+async function showDeltaStart(channel, flowId) {
+  const modeMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`delta_mode_${flowId}`)
+      .setPlaceholder('請選擇三角洲玩法')
+      .addOptions([
+        { label: '基礎陪護', value: '基礎陪護' },
+        { label: '機密雙護', value: '機密雙護' },
+        { label: '機密雙護（保底）', value: '機密雙護（保底）' },
+        { label: '猛攻護航', value: '猛攻護航' },
+        { label: '猛攻護航（保底）', value: '猛攻護航（保底）' },
+        { label: '一般陪玩', value: '一般陪玩' },
+        { label: '其他玩法', value: '其他玩法' }
+      ]);
+
+  const countMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_player_count_${flowId}`)
+      .setPlaceholder('請選擇陪陪人數')
+      .addOptions([
+        { label: '1 位', value: '1' },
+        { label: '2 位', value: '2' },
+        { label: '3 位', value: '3' },
+        { label: '4 位', value: '4' }
+      ]);
+
+  const genderMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_gender_${flowId}`)
+      .setPlaceholder('請選擇陪陪性別偏好')
+      .addOptions([
+        { label: '不指定', value: '不指定' },
+        { label: '男陪', value: '男陪' },
+        { label: '女陪', value: '女陪' }
+      ]);
+
+  const assignMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_assign_${flowId}`)
+      .setPlaceholder('是否指定陪陪')
+      .addOptions([
+        { label: '不指定陪陪', value: '不指定' },
+        { label: '指定陪陪', value: '指定' },
+        { label: '預約指定陪陪', value: '預約指定' }
+      ]);
+
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#95d5b2')
+        .setTitle('🛡️ 三角洲下單需求')
+        .setDescription(
+          `請選擇玩法、人數、性別、指定方式與時間。\n\n` +
+          `⚠️ 保底、雙護、護航等價格僅供客服參考，正式報價由客服輸入。`
+        )
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(modeMenu),
+      new ActionRowBuilder().addComponents(countMenu),
+      new ActionRowBuilder().addComponents(genderMenu),
+      new ActionRowBuilder().addComponents(assignMenu)
+    ]
+  });
+
+  await showServiceDurationSelect(channel, flowId, 'hour');
+}
+async function showServiceDurationSelect(channel, flowId, unit = 'hour') {
+  const options =
+    unit === 'half'
+      ? [
+          { label: '30 分鐘', value: '0.5' },
+          { label: '1 小時', value: '1' },
+          { label: '1.5 小時', value: '1.5' },
+          { label: '2 小時', value: '2' },
+          { label: '自訂', value: 'custom' }
+        ]
+      : [
+          { label: '1 小時', value: '1' },
+          { label: '2 小時', value: '2' },
+          { label: '3 小時', value: '3' },
+          { label: '4 小時', value: '4' },
+          { label: '自訂', value: 'custom' }
+        ];
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_duration_${flowId}`)
+      .setPlaceholder('請選擇時間')
+      .addOptions(options);
+
+  await channel.send({
+    content: '請選擇服務時間：',
+    components: [
+      new ActionRowBuilder().addComponents(menu)
+    ]
+  });
+}
+
+async function showServiceRoundSelect(channel, flowId) {
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_rounds_${flowId}`)
+      .setPlaceholder('請選擇局數')
+      .addOptions([
+        { label: '1 局', value: '1' },
+        { label: '3 局', value: '3' },
+        { label: '5 局', value: '5' },
+        { label: '自訂', value: 'custom' }
+      ]);
+
+  await channel.send({
+    content: '請選擇局數：',
+    components: [
+      new ActionRowBuilder().addComponents(menu)
+    ]
+  });
+}
+
+function isValorantGoldOrBelow(rank) {
+  return ['鐵牌', '銅牌', '銀牌', '金牌', '金牌含以下', '不指定'].includes(
+    String(rank || '')
+  );
+}
+async function showSimpleServiceStart(channel, flowId, serviceType) {
+  const isChat =
+    serviceType === 'chat';
+
+  const title =
+    isChat
+      ? '💬 陪聊需求'
+      : '🧸 出氣包需求';
+
+  const description =
+    isChat
+      ? '陪聊以半小時為一單位，正式價格由客服輸入。'
+      : '出氣包以半小時為一單位，正式價格由客服輸入。';
+
+  const countMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_player_count_${flowId}`)
+      .setPlaceholder('請選擇陪陪人數')
+      .addOptions([
+        {
+          label: '1 位',
+          value: '1'
+        },
+        {
+          label: '2 位',
+          value: '2'
+        },
+        {
+          label: '3 位',
+          value: '3'
+        },
+        {
+          label: '4 位',
+          value: '4'
+        }
+      ]);
+
+  const genderMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_gender_${flowId}`)
+      .setPlaceholder('請選擇陪陪性別偏好')
+      .addOptions([
+        {
+          label: '不指定',
+          value: '不指定'
+        },
+        {
+          label: '男陪',
+          value: '男陪'
+        },
+        {
+          label: '女陪',
+          value: '女陪'
+        }
+      ]);
+
+  const assignMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_assign_${flowId}`)
+      .setPlaceholder('是否指定陪陪')
+      .addOptions([
+        {
+          label: '不指定陪陪',
+          value: '不指定'
+        },
+        {
+          label: '指定陪陪',
+          value: '指定'
+        },
+        {
+          label: '預約指定陪陪',
+          value: '預約指定'
+        }
+      ]);
+
+  const durationMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_duration_${flowId}`)
+      .setPlaceholder('請選擇時間')
+      .addOptions([
+        {
+          label: '30 分鐘',
+          value: '0.5'
+        },
+        {
+          label: '1 小時',
+          value: '1'
+        },
+        {
+          label: '1.5 小時',
+          value: '1.5'
+        },
+        {
+          label: '2 小時',
+          value: '2'
+        },
+        {
+          label: '自訂',
+          value: 'custom'
+        }
+      ]);
+
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#cdb4db')
+        .setTitle(title)
+        .setDescription(
+          `${description}\n\n` +
+          `請依序選擇人數、性別、指定方式與時間。\n\n` +
+          `⚠️ 價格僅供參考，正式報價由客服輸入。`
+        )
+        .setTimestamp()
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(countMenu),
+      new ActionRowBuilder().addComponents(genderMenu),
+      new ActionRowBuilder().addComponents(assignMenu),
+      new ActionRowBuilder().addComponents(durationMenu)
     ]
   });
 }
@@ -5857,7 +6196,18 @@ async function handleValorantTypeButton(interaction) {
       : '技術';
 
   pendingServiceOrders.set(flowId, pending);
-
+  if (pending.serviceType === '娛樂') {
+    await showServiceDurationSelect(interaction.channel, flowId, 'hour');
+  }
+  if (pending.serviceType === '技術') {
+    if (!pending.rank) {
+      await interaction.channel.send('請先選擇段位，系統會依段位顯示時長或局數。');
+    } else if (isValorantGoldOrBelow(pending.rank)) {
+      await showServiceDurationSelect(interaction.channel, flowId, 'hour');
+    } else {
+      await showServiceRoundSelect(interaction.channel, flowId);
+    }
+  }
   return interaction.editReply({
     content: `✅ 已選擇特戰服務：${pending.serviceType}`
   });
@@ -5914,7 +6264,16 @@ async function handleValorantRankSelect(interaction) {
   pending.rank = interaction.values[0];
 
   pendingServiceOrders.set(flowId, pending);
-
+  if (pending.serviceType === '娛樂') {
+    await showServiceDurationSelect(interaction.channel, flowId, 'hour');
+  }
+  if (pending.serviceType === '技術') {
+    if (isValorantGoldOrBelow(pending.rank)) {
+      await showServiceDurationSelect(interaction.channel, flowId, 'hour');
+    } else {
+      await showServiceRoundSelect(interaction.channel, flowId);
+    }
+  }
   return interaction.editReply({
     content: `✅ 已選擇段位：${pending.rank}`
   });
@@ -5994,6 +6353,940 @@ async function handleServiceAssignSelect(interaction) {
     content: `✅ 已選擇指定方式：${pending.assignMode}`
   });
 }
+async function handleServiceDurationSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_duration_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  pending.duration = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  await showFinishNeedButtons(interaction.channel, flowId);
+
+  return interaction.editReply({
+    content:
+      pending.duration === 'custom'
+        ? '✅ 已選擇自訂時間，請在頻道內告訴客服想要的時間。'
+        : `✅ 已選擇時間：${pending.duration} 小時`
+  });
+}
+
+async function handleServiceRoundsSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_rounds_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  pending.rounds = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  await showFinishNeedButtons(interaction.channel, flowId);
+
+  return interaction.editReply({
+    content:
+      pending.rounds === 'custom'
+        ? '✅ 已選擇自訂局數，請在頻道內告訴客服想要的局數。'
+        : `✅ 已選擇局數：${pending.rounds} 局`
+  });
+}
+
+async function handleSteamCategorySelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('steam_category_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  pending.steamCategory = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇 Steam 類型：${pending.steamCategory}`
+  });
+}
+
+async function handleDeltaModeSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('delta_mode_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  pending.deltaMode = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇三角洲玩法：${pending.deltaMode}`
+  });
+}
+async function showFinishNeedButtons(channel, flowId) {
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`order_add_note_${flowId}`)
+          .setLabel('填寫備註')
+          .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+          .setCustomId(`order_finish_need_${flowId}`)
+          .setLabel('完成需求，等待客服報價')
+          .setStyle(ButtonStyle.Success)
+      );
+
+  await channel.send({
+    content: '需求填寫完成後，請按「完成需求，等待客服報價」。',
+    components: [row]
+  });
+}
+async function finishServiceNeed(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('order_finish_need_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#ffd166')
+      .setTitle('📋 待客服報價訂單')
+      .addFields(
+        {
+          name: '客人',
+          value: `<@${pending.customerId}>`,
+          inline: true
+        },
+        {
+          name: '服務類型',
+          value: getServiceName(pending.category),
+          inline: true
+        },
+        {
+          name: '服務內容',
+          value:
+            pending.steamGameName ||
+            pending.serviceType ||
+            pending.steamCategory ||
+            pending.deltaMode ||
+            '未填寫',
+          inline: true
+        },
+        {
+          name: '模式 / 段位',
+          value:
+            `${pending.playMode || '無'} / ${pending.rank || '無'}`,
+          inline: true
+        },
+        {
+          name: '陪陪人數',
+          value: `${pending.playerCount || 1} 位`,
+          inline: true
+        },
+        {
+          name: '性別偏好',
+          value: pending.genderPreference || '不指定',
+          inline: true
+        },
+        {
+          name: '指定方式',
+          value: pending.assignMode || '不指定',
+          inline: true
+        },
+        {
+          name: '時間 / 局數',
+          value:
+            pending.duration
+              ? `${pending.duration} 小時`
+              : pending.rounds
+                ? `${pending.rounds} 局`
+                : '未填寫',
+          inline: true
+        },
+        {
+          name: '備註',
+          value: pending.note || '無',
+          inline: false
+        }
+      )
+      .setFooter({
+        text: '正式價格請由客服輸入'
+      })
+      .setTimestamp();
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`service_quote_price_${flowId}`)
+          .setLabel('輸入價格')
+          .setEmoji('💰')
+          .setStyle(ButtonStyle.Success)
+      );
+  await interaction.channel.send({
+    content: `<@&${process.env.STAFF_ROLE}> 有新的訂單需求等待報價。`,
+    embeds: [embed],
+    components: [row]
+  });
+  return interaction.editReply({
+    content: '✅ 已送出需求，請等待客服報價。'
+  });
+}
+async function openServiceQuotePriceModal(interaction) {
+  if (
+    !interaction.member.roles.cache.has(process.env.STAFF_ROLE) &&
+    !interaction.member.permissions.has(PermissionFlagsBits.Administrator)
+  ) {
+    return interaction.reply({
+      content: '❌ 只有客服可以填寫報價',
+      flags: 64
+    });
+  }
+
+  const flowId =
+    interaction.customId.replace('service_quote_price_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.reply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。',
+      flags: 64
+    });
+  }
+
+  const modal =
+    new ModalBuilder()
+      .setCustomId(`submit_service_quote_price_${flowId}`)
+      .setTitle('客服輸入正式報價');
+
+  const priceInput =
+    new TextInputBuilder()
+      .setCustomId('price')
+      .setLabel('請輸入正式報價金額')
+      .setPlaceholder('例如：560')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(priceInput)
+  );
+
+  return interaction.showModal(modal);
+}
+async function submitServiceQuotePrice(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  if (
+    !interaction.member.roles.cache.has(process.env.STAFF_ROLE) &&
+    !interaction.member.permissions.has(PermissionFlagsBits.Administrator)
+  ) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以填寫報價'
+    });
+  }
+
+  const flowId =
+    interaction.customId.replace('submit_service_quote_price_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  const priceText =
+    interaction.fields.getTextInputValue('price');
+
+  const price =
+    Number(String(priceText || '').replace(/[^\d]/g, ''));
+
+  if (!price || price <= 0) {
+    return interaction.editReply({
+      content: '❌ 金額格式錯誤，請輸入大於 0 的數字'
+    });
+  }
+
+  pending.quotedPrice = price;
+  pendingServiceOrders.set(flowId, pending);
+
+  const paymentMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_payment_method_${flowId}`)
+      .setPlaceholder('請選擇付款方式')
+      .addOptions([
+        {
+          label: '儲值卡 / 錢包',
+          value: '儲值卡'
+        },
+        {
+          label: '月結付款',
+          value: '月結'
+        },
+        {
+          label: '匯款 / 轉帳',
+          value: '匯款'
+        },
+        {
+          label: '刷卡',
+          value: '刷卡'
+        },
+        {
+          label: '無卡',
+          value: '無卡'
+        },
+        {
+          label: '虛擬貨幣',
+          value: '虛擬貨幣'
+        }
+      ]);
+
+  await interaction.channel.send({
+    content:
+      `<@${pending.customerId}> 客服已完成報價，請選擇付款方式。`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('💰 正式報價單')
+        .setDescription(
+          `服務：${getServiceName(pending.category)}\n` +
+          `金額：NT$${price.toLocaleString('zh-TW')}\n\n` +
+          `請選擇付款方式，付款完成後請上傳付款證明。`
+        )
+        .setTimestamp()
+    ],
+    components: [
+      new ActionRowBuilder().addComponents(paymentMenu)
+    ]
+  });
+
+  return interaction.editReply({
+    content: `✅ 已送出正式報價：NT$${price.toLocaleString('zh-TW')}`
+  });
+}
+async function openServiceOrderNoteModal(interaction) {
+  const flowId =
+    interaction.customId.replace('order_add_note_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.reply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。',
+      flags: 64
+    });
+  }
+
+  const modal =
+    new ModalBuilder()
+      .setCustomId(`submit_service_order_note_${flowId}`)
+      .setTitle('填寫訂單備註');
+
+  const noteInput =
+    new TextInputBuilder()
+      .setCustomId('note')
+      .setLabel('請輸入備註 / 自訂需求')
+      .setPlaceholder('例如：指定時間、遊戲名稱、希望氣氛、特殊需求等')
+      .setStyle(TextInputStyle.Paragraph)
+      .setRequired(false);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(noteInput)
+  );
+
+  return interaction.showModal(modal);
+}
+
+async function submitServiceOrderNote(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('submit_service_order_note_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  const note =
+    interaction.fields.getTextInputValue('note') || '';
+
+  pending.note = note || '無';
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: '✅ 已儲存備註'
+  });
+}
+async function openSteamGameNameModal(interaction) {
+  const flowId =
+    interaction.customId.replace('steam_game_name_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.reply({
+      content: '❌ 這筆訂單流程已過期',
+      flags: 64
+    });
+  }
+
+  const modal =
+    new ModalBuilder()
+      .setCustomId(`submit_steam_game_name_${flowId}`)
+      .setTitle('Steam 遊戲名稱');
+
+  const gameInput =
+    new TextInputBuilder()
+      .setCustomId('game_name')
+      .setLabel('請輸入遊戲名稱')
+      .setPlaceholder('例如：Lethal Company')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(gameInput)
+  );
+
+  return interaction.showModal(modal);
+}
+
+async function submitSteamGameName(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace(
+      'submit_steam_game_name_',
+      ''
+    );
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期'
+    });
+  }
+
+  pending.steamGameName =
+    interaction.fields.getTextInputValue('game_name');
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content:
+      `✅ 已設定遊戲名稱：${pending.steamGameName}`
+  });
+}
+function buildServiceTextFromPending(pending) {
+  if (pending.category === 'valorant') {
+    return [
+      '特戰英豪',
+      pending.serviceType,
+      pending.playMode,
+      pending.rank,
+      pending.duration ? `${pending.duration}小時` : '',
+      pending.rounds ? `${pending.rounds}局` : ''
+    ].filter(Boolean).join('｜');
+  }
+
+  if (pending.category === 'steam') {
+    return [
+      'Steam',
+      pending.steamCategory,
+      pending.steamGameName,
+      pending.duration ? `${pending.duration}小時` : ''
+    ].filter(Boolean).join('｜');
+  }
+
+  if (pending.category === 'delta') {
+    return [
+      '三角洲',
+      pending.deltaMode,
+      pending.duration ? `${pending.duration}小時` : '',
+      pending.rounds ? `${pending.rounds}局` : ''
+    ].filter(Boolean).join('｜');
+  }
+
+  if (pending.category === 'chat') {
+    return [
+      '陪聊',
+      pending.duration ? `${pending.duration}小時` : ''
+    ].filter(Boolean).join('｜');
+  }
+
+  if (pending.category === 'emotion') {
+    return [
+      '出氣包',
+      pending.duration ? `${pending.duration}小時` : ''
+    ].filter(Boolean).join('｜');
+  }
+
+  return '陪玩訂單';
+}
+
+async function createPlayOrderFromServicePending(pending, channelId) {
+  const amount =
+    Number(pending.quotedPrice || 0);
+
+  if (!amount || amount <= 0) {
+    throw new Error('尚未報價，不能建立訂單');
+  }
+
+  const serviceText =
+    buildServiceTextFromPending(pending);
+
+  const preferredPlayer =
+    pending.selectedPlayerIds?.length
+      ? pending.selectedPlayerIds.join(',')
+      : null;
+
+  const { data, error } =
+    await supabase
+      .from('play_orders')
+      .insert({
+        order_no: `ORD-${Date.now()}`,
+
+        customer_id: pending.customerId,
+        customer_username: pending.customerUsername || `<@${pending.customerId}>`,
+        customer_name: `<@${pending.customerId}>`,
+
+        channel_id: channelId,
+        source_channel_id: channelId,
+
+        game: getServiceName(pending.category),
+        service: serviceText,
+        order_type: '訂單',
+        order_item: serviceText,
+
+        rank_preference: pending.rank || null,
+        player_count: Number(pending.playerCount || 1),
+        gender_preference: pending.genderPreference || '不指定',
+
+        preferred_player: preferredPlayer,
+        reserved_player:
+          pending.assignMode === '預約指定'
+            ? preferredPlayer
+            : null,
+
+        assigned_player: null,
+
+        duration_text:
+          pending.duration
+            ? `${pending.duration} 小時`
+            : pending.rounds
+              ? `${pending.rounds} 局`
+              : null,
+
+        note: pending.note || '',
+
+        price: amount,
+        final_price: amount,
+        payment_method: pending.paymentMethod || null,
+
+        paid: false,
+        paid_at: null,
+
+        salary_paid: false,
+        salary_paid_at: null,
+
+        status: 'waiting_payment'
+      })
+      .select()
+      .single();
+
+  if (error || !data) {
+    console.error('[新版下單] 建立 play_orders 失敗', error);
+    throw new Error(error?.message || '建立訂單失敗');
+  }
+
+  return data;
+}
+async function handleServicePaymentMethodSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_payment_method_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  if (interaction.user.id !== pending.customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以選擇付款方式。'
+    });
+  }
+
+  const paymentMethod =
+    interaction.values[0];
+
+  pending.paymentMethod = paymentMethod;
+  pendingServiceOrders.set(flowId, pending);
+
+  let order;
+
+  try {
+    order =
+      await createPlayOrderFromServicePending(
+        pending,
+        interaction.channel.id
+      );
+  } catch (err) {
+    console.error('[新版下單] 建立訂單失敗', err);
+    return interaction.editReply({
+      content: `❌ 建立訂單失敗：${err.message || err}`
+    });
+  }
+
+  if (paymentMethod === '儲值卡') {
+    try {
+      if (!paymentHelpers.payOrderByWallet) {
+        throw new Error('儲值卡付款函式尚未接入');
+      }
+
+      const result =
+        await paymentHelpers.payOrderByWallet(order);
+      await supabase
+        .from('play_orders')
+        .update({
+          status: 'paid',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', order.id);
+      const { data: paidOrder } =
+        await supabase
+          .from('play_orders')
+          .select('*')
+          .eq('id', order.id)
+          .single();
+
+      await interaction.channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#57F287')
+            .setTitle('✅ 儲值卡付款完成')
+            .setDescription(
+              `<@${order.customer_id}> 已使用儲值卡 / 錢包完成付款。\n\n` +
+              `扣款金額：${result.amount} ASD\n` +
+              `剩餘餘額：${result.finalCoins} ASD\n\n` +
+              `系統已自動派單。`
+            )
+            .setTimestamp()
+        ]
+      });
+
+      await sendOrderToStaffChannel(paidOrder || order);
+      pendingServiceOrders.delete(flowId);
+
+      return interaction.editReply({
+        content: '✅ 已使用儲值卡付款，並已派單。'
+      });
+    } catch (err) {
+      console.error('[新版下單] 儲值卡付款失敗', err);
+      return interaction.editReply({
+        content: `❌ 儲值卡付款失敗：${err.message || err}`
+      });
+    }
+  }
+
+  if (paymentMethod === '月結') {
+    try {
+      if (!paymentHelpers.payOrderByMonthly) {
+        throw new Error('月結付款函式尚未接入');
+      }
+
+      const result =
+        await paymentHelpers.payOrderByMonthly(order);
+      await supabase
+        .from('play_orders')
+        .update({
+          status: 'paid',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', order.id);
+      const { data: paidOrder } =
+        await supabase
+          .from('play_orders')
+          .select('*')
+          .eq('id', order.id)
+          .single();
+
+      await interaction.channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#57F287')
+            .setTitle('✅ 月結付款完成')
+            .setDescription(
+              `<@${order.customer_id}> 已使用月結付款。\n\n` +
+              `本次扣額：NT$${result.amount}\n` +
+              `回饋：${result.cashback} ASD\n` +
+              `剩餘月結額度：NT$${result.availableAmount}\n\n` +
+              `系統已自動派單。`
+            )
+            .setTimestamp()
+        ]
+      });
+
+      await sendOrderToStaffChannel(paidOrder || order);
+      pendingServiceOrders.delete(flowId);
+
+      return interaction.editReply({
+        content: '✅ 已使用月結付款，並已派單。'
+      });
+    } catch (err) {
+      console.error('[新版下單] 月結付款失敗', err);
+      return interaction.editReply({
+        content: `❌ 月結付款失敗：${err.message || err}`
+      });
+    }
+  }
+
+  if (paymentMethod === '匯款') {
+    await sendBankTransferInfo(interaction.channel);
+  }
+
+  if (paymentMethod === '刷卡') {
+    await sendCardPaymentInfo(interaction.channel);
+  }
+
+  if (paymentMethod === '無卡') {
+    await sendNoCardPaymentInfo(interaction.channel);
+  }
+
+  if (paymentMethod === '虛擬貨幣') {
+    await interaction.channel.send({
+      content:
+        `<@${pending.customerId}> 你選擇了虛擬貨幣付款。\n` +
+        `請等待客服提供錢包地址，付款後請上傳付款證明。`
+    });
+  }
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`service_confirm_paid_${order.id}`)
+          .setLabel('客服確認付款，派單')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId(`service_cancel_order_${order.id}`)
+          .setLabel('取消訂單')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await interaction.channel.send({
+    content:
+      `<@&${process.env.STAFF_ROLE}> 客人已選擇付款方式：${paymentMethod}\n` +
+      `付款完成並確認明細後，請按「客服確認付款，派單」。`,
+    components: [row]
+  });
+
+  pendingServiceOrders.delete(flowId);
+
+  return interaction.editReply({
+    content: `✅ 已選擇付款方式：${paymentMethod}，請依照頻道內資訊完成付款。`
+  });
+}
+async function handleServiceConfirmPaid(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以確認付款'
+    });
+  }
+
+  const orderId =
+    interaction.customId.replace('service_confirm_paid_', '');
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .update({
+        paid: true,
+        paid_at: new Date().toISOString(),
+        status: 'paid',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', orderId)
+      .select()
+      .single();
+
+  if (error || !order) {
+    console.error('[新版下單] 客服確認付款失敗', error);
+    return interaction.editReply({
+      content: '❌ 確認付款失敗'
+    });
+  }
+
+  if (paymentHelpers.countOrderVipSpentOnce) {
+    await paymentHelpers.countOrderVipSpentOnce(
+      order,
+      '客服確認新版訂單付款完成'
+    );
+  }
+
+  await sendOrderToStaffChannel(order);
+
+  return interaction.editReply({
+    content: '✅ 已確認付款，並已派單。'
+  });
+}
+
+async function handleServiceCancelOrder(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以取消訂單'
+    });
+  }
+
+  const orderId =
+    interaction.customId.replace('service_cancel_order_', '');
+
+  const { error } =
+    await supabase
+      .from('play_orders')
+      .update({
+        status: 'cancelled',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', orderId);
+
+  if (error) {
+    console.error('[新版下單] 取消訂單失敗', error);
+    return interaction.editReply({
+      content: '❌ 取消訂單失敗'
+    });
+  }
+
+  return interaction.editReply({
+    content: '✅ 已取消訂單'
+  });
+}
+async function handleServiceDurationSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_duration_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  pending.duration = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content:
+      pending.duration === 'custom'
+        ? '✅ 已選擇自訂時間，請在頻道內告訴客服想要的時間。'
+        : `✅ 已選擇時間：${pending.duration} 小時`
+  });
+}
 async function handleDispatchInteraction(interaction) {
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === '上班') {
@@ -6071,6 +7364,30 @@ async function handleDispatchInteraction(interaction) {
 
     if (interaction.customId.startsWith('valorant_mode_')) {
       await handleValorantModeButton(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('order_add_note_')) {
+      await openServiceOrderNoteModal(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('steam_game_name_')) {
+      await openSteamGameNameModal(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('order_finish_need_')) {
+      await finishServiceNeed(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_quote_price_')) {
+      await openServiceQuotePriceModal(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_confirm_paid_')) {
+      await handleServiceConfirmPaid(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_cancel_order_')) {
+      await handleServiceCancelOrder(interaction);
       return true;
     }
     if (interaction.customId === 'open_play_order_form') {
@@ -6176,6 +7493,18 @@ async function handleDispatchInteraction(interaction) {
       await submitStaffQuotePrice(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('submit_service_quote_price_')) {
+      await submitServiceQuotePrice(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('submit_service_order_note_')) {
+      await submitServiceOrderNote(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('submit_steam_game_name_')) {
+      await submitSteamGameName(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('submit_new_order_note_')) {
       await submitNewOrderNote(interaction);
       return true;
@@ -6227,6 +7556,26 @@ async function handleDispatchInteraction(interaction) {
 
     if (interaction.customId.startsWith('service_assign_')) {
       await handleServiceAssignSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_duration_')) {
+      await handleServiceDurationSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_rounds_')) {
+      await handleServiceRoundsSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('steam_category_')) {
+      await handleSteamCategorySelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('delta_mode_')) {
+      await handleDeltaModeSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_payment_method_')) {
+      await handleServicePaymentMethodSelect(interaction);
       return true;
     }
     if (interaction.customId.startsWith('new_order_game_')) {
