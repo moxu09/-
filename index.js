@@ -4852,27 +4852,40 @@ async function handleSlashCommand(interaction) {
               ? Math.max(oldHighestSingleTopup, amount)
               : oldHighestSingleTopup;
 
-          const { data: updatedVip, error: upsertError } =
-            await supabase
-              .from('user_vips')
-              .upsert({
-                user_id: target.id,
-                total_spent: Number(oldVip?.total_spent || 0),
-                total_topup: newTotalTopup,
-                highest_single_topup: newHighestSingleTopup,
-                vip_level: oldVip?.vip_level || 0,
-                updated_at: new Date().toISOString()
-              }, {
-                onConflict: 'user_id'
-              })
-              .select()
-              .single();
-
-          if (upsertError || !updatedVip) {
-            console.error('[調整累積儲值] 更新失敗', upsertError);
+          let updatedVip = null;
+          let saveError = null;
+          const payload = {
+            user_id: target.id,
+            total_spent: Number(oldVip?.total_spent || 0),
+            total_topup: newTotalTopup,
+            highest_single_topup: newHighestSingleTopup,
+            vip_level: Number(oldVip?.vip_level || 0),
+            updated_at: new Date().toISOString()
+          };
+          if (oldVip) {
+            const { data, error } =
+              await supabase
+                .from('user_vips')
+                .update(payload)
+                .eq('user_id', target.id)
+                .select()
+                .maybeSingle();
+            updatedVip = data;
+            saveError = error;
+          } else {
+            const { data, error } =
+              await supabase
+                .from('user_vips')
+                .insert(payload)
+                .select()
+                .maybeSingle();
+            updatedVip = data;
+            saveError = error;
+          }
+          if (saveError || !updatedVip) {
+            console.error('[調整累積儲值] 更新失敗', saveError);
             return replyError(interaction, '更新累積儲值失敗');
           }
-
           // 重新檢查 VIP 升級：失敗不要擋掉累積儲值調整
           try {
             await checkAndUpgradeVip(target.id, 'topup', 0);
