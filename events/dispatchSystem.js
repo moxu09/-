@@ -7314,7 +7314,8 @@ async function handleServicePaymentMethodSelect(interaction) {
       await supabase
         .from('play_orders')
         .update({
-          status: 'paid',
+          status: 'pending',
+          quote_status: 'dispatched',
           updated_at: new Date().toISOString()
         })
         .eq('id', order.id);
@@ -7365,7 +7366,8 @@ async function handleServicePaymentMethodSelect(interaction) {
       await supabase
         .from('play_orders')
         .update({
-          status: 'paid',
+          status: 'pending',
+          quote_status: 'dispatched',
           updated_at: new Date().toISOString()
         })
         .eq('id', order.id);
@@ -7477,7 +7479,8 @@ async function handleServiceConfirmPaid(interaction) {
       .update({
         paid: true,
         paid_at: new Date().toISOString(),
-        status: 'paid',
+        status: 'pending',
+        quote_status: 'dispatched',
         updated_at: new Date().toISOString()
       })
       .eq('id', orderId)
