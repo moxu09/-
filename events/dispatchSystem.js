@@ -6458,10 +6458,7 @@ function getServiceKeywordFromPending(pending) {
   }
 
   if (pending.category === 'delta') {
-    return [
-      '三角洲',
-      pending.deltaMode || ''
-    ].filter(Boolean).join('');
+    return '三角洲行動';
   }
 
   if (pending.category === 'chat') {
@@ -7244,6 +7241,9 @@ function getDispatchServiceKeyFromPending(pending) {
   }
 
   if (pending.category === 'steam') {
+    if (pending.steamCategory === '恐怖遊戲') {
+      return 'STEAM恐怖遊戲陪玩';
+    }
     return 'STEAM一般遊戲陪玩';
   }
 
