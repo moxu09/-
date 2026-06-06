@@ -2856,103 +2856,108 @@ async function sendGachaPanel(client) {
   console.log('[GACHA] 已建立');
 }
 async function sendOrderSystem(client) {
-  const channel = await client.channels.fetch(
-    ORDER_CHANNEL
-  );
+  const channel =
+    await client.channels.fetch(process.env.ORDER_CHANNEL);
 
   if (!channel) return;
-
-  // 下拉選單
-  const menu =
-    new StringSelectMenuBuilder()
-      .setCustomId('order_system_select')
-      .setPlaceholder('請選擇功能')
-      .addOptions([
-        {
-          label: '🛒 點單',
-          description: '建立點單頻道',
-          value: 'order'
-        },
-        {
-          label: '💰 儲值',
-          description: '建立儲值頻道',
-          value: 'topup'
-        },
-        {
-          label: '💝 打賞',
-          description: '建立打賞頻道',
-          value: 'tip'
-        }
-      ]);
-
-  const row =
-    new ActionRowBuilder()
-      .addComponents(menu);
 
   const embed =
     new EmbedBuilder()
       .setColor('#ff66cc')
-      .setTitle('📦 星雨訂單中心')
+      .setTitle('🌙 星雨訂單中心')
       .setDescription(
-        `歡迎使用星雨訂單系統 ✨\n\n` +
-        `請從下方選單選擇你需要的服務。\n\n` +
-        `━━━━━━━━━━━━━━\n` +
-        `🛒 點單｜建立專屬訂單頻道\n` +
-        `💰 儲值｜建立專屬儲值頻道\n\n` +
-        `建立後只有你與客服可以看見。`
+        `請選擇要建立的服務。\n\n` +
+        `**下單區**\n` +
+        `🎯 特戰英豪｜🎮 Steam｜🛡️ 三角洲｜💬 陪聊｜🧸 出氣包\n\n` +
+        `**儲值區**\n` +
+        `💳 儲值 ASD\n\n` +
+        `**打賞區**\n` +
+        `💝 打賞陪陪禮物`
       )
-      .setThumbnail(client.user.displayAvatarURL())
       .setFooter({
-        text: '星雨客服｜欲立新單請重複建立頻道'
-    })
-    .setTimestamp()
-    .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1505274858567762153/ChatGPT_Image_2026517_02_24_37.png?ex=6a0a07f4&is=6a08b674&hm=e3cf59696e54af40365cec86b215036e4ee34bc83ac941016808de3719010617&');
-  // ===== 新版面板系統 =====
-  const orderPanel =
-    await getPanelMessage('order');
-  if (orderPanel) {
-    try {
-      const oldMessage =
-        await channel.messages.fetch(
-          orderPanel.message_id
-        );
-      await oldMessage.edit({
-        embeds: [embed],
-        components: [row]
-      });
-      console.log(
-        '[ORDER] 已更新舊面板'
+        text: '深夜不關燈｜We Are Still Here'
+      })
+      .setTimestamp()
+      .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1505274858567762153/ChatGPT_Image_2026517_02_24_37.png?ex=6a0a07f4&is=6a08b674&hm=e3cf59696e54af40365cec86b215036e4ee34bc83ac941016808de3719010617&');
+  const row1 =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('order_start_valorant')
+          .setLabel('特戰英豪')
+          .setEmoji('🎯')
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId('order_start_steam')
+          .setLabel('Steam')
+          .setEmoji('🎮')
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId('order_start_delta')
+          .setLabel('三角洲')
+          .setEmoji('🛡️')
+          .setStyle(ButtonStyle.Primary)
       );
-    } catch {
-      const newMessage =
-        await channel.send({
-          embeds: [embed],
-          components: [row]
-        });
-      await savePanelMessage(
-        'order',
-        channel.id,
-        newMessage.id
+
+  const row2 =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('order_start_chat')
+          .setLabel('陪聊')
+          .setEmoji('💬')
+          .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+          .setCustomId('order_start_emotion')
+          .setLabel('出氣包')
+          .setEmoji('🧸')
+          .setStyle(ButtonStyle.Secondary)
       );
-      console.log(
-        '[ORDER] 已建立新面板'
+
+  const row3 =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('order_start_topup')
+          .setLabel('儲值')
+          .setEmoji('💳')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId('order_start_tip')
+          .setLabel('打賞')
+          .setEmoji('💝')
+          .setStyle(ButtonStyle.Danger)
       );
-    }
-  } else {
-    const newMessage =
-      await channel.send({
-        embeds: [embed],
-        components: [row]
-      });
-    await savePanelMessage(
-      'order',
-      channel.id,
-      newMessage.id
+
+  const messages =
+    await channel.messages.fetch({
+      limit: 10
+    });
+
+  const oldPanel =
+    messages.find(
+      msg =>
+        msg.author.id === client.user.id &&
+        msg.embeds.length > 0 &&
+        msg.embeds[0].title === '🌙 星雨訂單中心'
     );
-    console.log(
-      '[ORDER] 已建立初始面板'
-    );
+
+  if (oldPanel) {
+    await oldPanel.edit({
+      embeds: [embed],
+      components: [row1, row2, row3]
+    });
+    return;
   }
+
+  await channel.send({
+    embeds: [embed],
+    components: [row1, row2, row3]
+  });
 }
 // ===== 私人臨時文字頻道面板 =====
 async function sendPrivateRoomPanel(client) {
@@ -4072,6 +4077,17 @@ client.on(Events.InteractionCreate, async interaction => {
         }
         await createPrivateRoom(interaction);
         return;
+      }
+      if (
+        interaction.customId === 'order_start_valorant' ||
+        interaction.customId === 'order_start_steam' ||
+        interaction.customId === 'order_start_delta' ||
+        interaction.customId === 'order_start_chat' ||
+        interaction.customId === 'order_start_emotion' ||
+        interaction.customId === 'order_start_topup' ||
+        interaction.customId === 'order_start_tip'
+      ) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
       }
       // ===== 關閉私人文字頻道 =====
       if (interaction.customId.startsWith('private_room_close_')) {

@@ -17,6 +17,20 @@ let paymentHelpers = {};
 
 const pendingNewOrders = new Map();
 const pendingTopups = new Map();
+const pendingServiceOrders = new Map();
+
+function createFlowId(userId) {
+  return `${userId}_${Date.now()}`;
+}
+
+function getServiceName(serviceType) {
+  if (serviceType === 'valorant') return '特戰英豪';
+  if (serviceType === 'steam') return 'Steam';
+  if (serviceType === 'delta') return '三角洲';
+  if (serviceType === 'chat') return '陪聊';
+  if (serviceType === 'emotion') return '出氣包';
+  return '訂單';
+}
 
 function setup(supabaseInstance, clientInstance, helpers = {}) {
   supabase = supabaseInstance;
@@ -775,6 +789,442 @@ function buildOrderBackRow(flowId, target) {
         .setLabel('⬅️ 上一步')
         .setStyle(ButtonStyle.Secondary)
     );
+}
+async function createTopupTicket(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const guild = interaction.guild;
+
+  const channel =
+    await guild.channels.create({
+      name: `儲值-${interaction.user.username}`.slice(0, 90),
+      type: ChannelType.GuildText,
+      parent: process.env.ORDER_CATEGORY || null,
+      topic: `owner:${interaction.user.id}`,
+      permissionOverwrites: [
+        {
+          id: guild.id,
+          deny: ['ViewChannel']
+        },
+        {
+          id: interaction.user.id,
+          allow: [
+            'ViewChannel',
+            'SendMessages',
+            'ReadMessageHistory',
+            'AttachFiles'
+          ]
+        },
+        {
+          id: process.env.STAFF_ROLE,
+          allow: [
+            'ViewChannel',
+            'SendMessages',
+            'ReadMessageHistory',
+            'AttachFiles',
+            'ManageMessages'
+          ]
+        }
+      ]
+    });
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('open_topup_modal')
+          .setLabel('填寫儲值資料')
+          .setEmoji('💳')
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId('owner_cancel_ticket')
+          .setLabel('我按錯了，關閉頻道')
+          .setEmoji('🗑️')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await channel.send({
+    content: `<@${interaction.user.id}> <@&${process.env.STAFF_ROLE}>`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ffd166')
+        .setTitle('💳 儲值頻道')
+        .setDescription('請點擊下方按鈕填寫儲值資料。')
+    ],
+    components: [row]
+  });
+
+  return interaction.editReply({
+    content: `✅ 已建立儲值頻道：<#${channel.id}>`
+  });
+}
+async function createTipTicket(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const guild = interaction.guild;
+
+  const channel =
+    await guild.channels.create({
+      name: `打賞-${interaction.user.username}`.slice(0, 90),
+      type: ChannelType.GuildText,
+      parent: process.env.ORDER_CATEGORY || null,
+      topic: `owner:${interaction.user.id}`,
+      permissionOverwrites: [
+        {
+          id: guild.id,
+          deny: ['ViewChannel']
+        },
+        {
+          id: interaction.user.id,
+          allow: [
+            'ViewChannel',
+            'SendMessages',
+            'ReadMessageHistory',
+            'AttachFiles'
+          ]
+        },
+        {
+          id: process.env.STAFF_ROLE,
+          allow: [
+            'ViewChannel',
+            'SendMessages',
+            'ReadMessageHistory',
+            'AttachFiles',
+            'ManageMessages'
+          ]
+        }
+      ]
+    });
+
+  await channel.send({
+    content: `<@${interaction.user.id}> <@&${process.env.STAFF_ROLE}>`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ff99cc')
+        .setTitle('💝 打賞頻道')
+        .setDescription('請依照下方選單選擇打賞禮物。')
+    ],
+    components: [
+      new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('owner_cancel_ticket')
+            .setLabel('我按錯了，關閉頻道')
+            .setEmoji('🗑️')
+            .setStyle(ButtonStyle.Danger)
+        )
+    ]
+  });
+
+  if (!paymentHelpers.startTipFlowInChannel) {
+    await channel.send('❌ 打賞流程尚未接入 startTipFlowInChannel。');
+  } else {
+    await paymentHelpers.startTipFlowInChannel(
+      channel,
+      interaction.user
+    );
+  }
+
+  return interaction.editReply({
+    content: `✅ 已建立打賞頻道：<#${channel.id}>`
+  });
+}
+async function createServiceTicket(interaction, serviceType) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const guild = interaction.guild;
+  const serviceName = getServiceName(serviceType);
+  const flowId = createFlowId(interaction.user.id);
+
+  const channel =
+    await guild.channels.create({
+      name: `${serviceName}-${interaction.user.username}`.slice(0, 90),
+      type: ChannelType.GuildText,
+      parent: process.env.ORDER_CATEGORY || null,
+      topic: `owner:${interaction.user.id}`,
+      permissionOverwrites: [
+        {
+          id: guild.id,
+          deny: ['ViewChannel']
+        },
+        {
+          id: interaction.user.id,
+          allow: [
+            'ViewChannel',
+            'SendMessages',
+            'ReadMessageHistory',
+            'AttachFiles'
+          ]
+        },
+        {
+          id: process.env.STAFF_ROLE,
+          allow: [
+            'ViewChannel',
+            'SendMessages',
+            'ReadMessageHistory',
+            'AttachFiles',
+            'ManageMessages'
+          ]
+        }
+      ]
+    });
+
+  pendingServiceOrders.set(flowId, {
+    flowId,
+    channelId: channel.id,
+    customerId: interaction.user.id,
+    customerUsername: interaction.user.username,
+    category: serviceType,
+
+    serviceType: null,
+    playMode: null,
+    rank: null,
+    steamCategory: null,
+    steamGameName: null,
+    deltaMode: null,
+
+    playerCount: null,
+    genderPreference: null,
+    assignMode: null,
+    selectedPlayerIds: [],
+
+    duration: null,
+    rounds: null,
+    note: '',
+    quotedPrice: null,
+    paymentMethod: null
+  });
+
+  setTimeout(() => {
+    pendingServiceOrders.delete(flowId);
+  }, 60 * 60 * 1000);
+
+  await channel.send({
+    content: `<@${interaction.user.id}> <@&${process.env.STAFF_ROLE}>`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ffd166')
+        .setTitle(`🌙 ${serviceName} 下單頻道`)
+        .setDescription(
+          `請依照下方選項填寫需求。\n\n` +
+          `填寫完成後，客服會依照需求輸入正式報價。`
+        )
+        .setTimestamp()
+    ],
+    components: [
+      new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('owner_cancel_ticket')
+            .setLabel('我按錯了，關閉頻道')
+            .setEmoji('🗑️')
+            .setStyle(ButtonStyle.Danger)
+        )
+    ]
+  });
+
+  if (serviceType === 'valorant') {
+    await showValorantStart(channel, flowId);
+  }
+
+  if (serviceType === 'steam') {
+    await channel.send('🎮 Steam 流程下一步再接，目前已建立頻道。');
+  }
+
+  if (serviceType === 'delta') {
+    await channel.send('🛡️ 三角洲流程下一步再接，目前已建立頻道。');
+  }
+
+  if (serviceType === 'chat') {
+    await channel.send('💬 陪聊流程下一步再接，目前已建立頻道。');
+  }
+
+  if (serviceType === 'emotion') {
+    await channel.send('🧸 出氣包流程下一步再接，目前已建立頻道。');
+  }
+
+  return interaction.editReply({
+    content: `✅ 已建立下單頻道：<#${channel.id}>`
+  });
+}
+async function showValorantStart(channel, flowId) {
+  const row1 =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`valorant_type_entertain_${flowId}`)
+          .setLabel('娛樂')
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId(`valorant_type_skill_${flowId}`)
+          .setLabel('技術')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+  const row2 =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`valorant_mode_rank_${flowId}`)
+          .setLabel('排位')
+          .setStyle(ButtonStyle.Primary),
+
+        new ButtonBuilder()
+          .setCustomId(`valorant_mode_normal_${flowId}`)
+          .setLabel('一般')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+  const rankMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`valorant_rank_${flowId}`)
+      .setPlaceholder('請選擇段位')
+      .addOptions([
+        {
+          label: '鐵牌',
+          value: '鐵牌'
+        },
+        {
+          label: '銅牌',
+          value: '銅牌'
+        },
+        {
+          label: '銀牌',
+          value: '銀牌'
+        },
+        {
+          label: '金牌',
+          value: '金牌'
+        },
+        {
+          label: '白金',
+          value: '白金'
+        },
+        {
+          label: '鑽石',
+          value: '鑽石'
+        },
+        {
+          label: '超凡',
+          value: '超凡'
+        },
+        {
+          label: '神話',
+          value: '神話'
+        },
+        {
+          label: '輻能',
+          value: '輻能'
+        },
+        {
+          label: '不指定 / 尚未確認',
+          value: '不指定'
+        }
+      ]);
+
+  const countMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_player_count_${flowId}`)
+      .setPlaceholder('請選擇陪陪人數')
+      .addOptions([
+        {
+          label: '1 位',
+          value: '1'
+        },
+        {
+          label: '2 位',
+          value: '2'
+        },
+        {
+          label: '3 位',
+          value: '3'
+        },
+        {
+          label: '4 位',
+          value: '4'
+        }
+      ]);
+
+  const genderMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_gender_${flowId}`)
+      .setPlaceholder('請選擇陪陪性別偏好')
+      .addOptions([
+        {
+          label: '不指定',
+          value: '不指定'
+        },
+        {
+          label: '男陪',
+          value: '男陪'
+        },
+        {
+          label: '女陪',
+          value: '女陪'
+        }
+      ]);
+
+  const assignMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_assign_${flowId}`)
+      .setPlaceholder('是否指定陪陪')
+      .addOptions([
+        {
+          label: '不指定陪陪',
+          value: '不指定'
+        },
+        {
+          label: '指定陪陪',
+          value: '指定'
+        },
+        {
+          label: '預約指定陪陪',
+          value: '預約指定'
+        }
+      ]);
+
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ff6b6b')
+        .setTitle('🎯 特戰英豪需求')
+        .setDescription(
+          `請依序選擇服務內容。\n\n` +
+          `**客服價格參考**\n` +
+          `娛樂陪玩：NT$250、250、260、270、310\n` +
+          `技術陪玩：金牌以下以時長報價，金牌以上以局數報價\n\n` +
+          `⚠️ 此價格僅供參考，正式金額仍以客服輸入為準。`
+        )
+    ],
+    components: [
+      row1,
+      row2,
+      new ActionRowBuilder().addComponents(rankMenu),
+      new ActionRowBuilder().addComponents(countMenu),
+      new ActionRowBuilder().addComponents(genderMenu)
+    ]
+  });
+
+  await channel.send({
+    content: '請選擇是否指定陪陪：',
+    components: [
+      new ActionRowBuilder().addComponents(assignMenu)
+    ]
+  });
 }
 async function openPlayOrderModal(interaction) {
   const flowId = `${interaction.user.id}_${Date.now()}`;
@@ -5377,6 +5827,173 @@ async function checkGrowthVip(client, guildId, userId, singleTopup = 0) {
       `🎉 恭喜你已升級為 ${levelName[newLevel]}！`
   }).catch(() => {});
 }
+function getFlowIdFromCustomId(customId, prefix = '') {
+  return String(customId || '').replace(prefix, '');
+}
+
+async function handleValorantTypeButton(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    getFlowIdFromCustomId(
+      interaction.customId,
+      interaction.customId.includes('valorant_type_entertain_')
+        ? 'valorant_type_entertain_'
+        : 'valorant_type_skill_'
+    );
+  const pending = pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  pending.serviceType =
+    interaction.customId.includes('_entertain_')
+      ? '娛樂'
+      : '技術';
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇特戰服務：${pending.serviceType}`
+  });
+}
+
+async function handleValorantModeButton(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    getFlowIdFromCustomId(
+      interaction.customId,
+      interaction.customId.includes('valorant_mode_rank_')
+        ? 'valorant_mode_rank_'
+        : 'valorant_mode_normal_'
+    );
+  const pending = pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  pending.playMode =
+    interaction.customId.includes('_rank_')
+      ? '排位'
+      : '一般';
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇模式：${pending.playMode}`
+  });
+}
+
+async function handleValorantRankSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('valorant_rank_', '');
+
+  const pending = pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  pending.rank = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇段位：${pending.rank}`
+  });
+}
+
+async function handleServicePlayerCountSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_player_count_', '');
+
+  const pending = pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  pending.playerCount = Number(interaction.values[0]);
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇陪陪人數：${pending.playerCount} 位`
+  });
+}
+
+async function handleServiceGenderSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_gender_', '');
+
+  const pending = pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  pending.genderPreference = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇性別偏好：${pending.genderPreference}`
+  });
+}
+
+async function handleServiceAssignSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_assign_', '');
+
+  const pending = pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  pending.assignMode = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇指定方式：${pending.assignMode}`
+  });
+}
 async function handleDispatchInteraction(interaction) {
   if (interaction.isChatInputCommand()) {
     if (interaction.commandName === '上班') {
@@ -5411,6 +6028,49 @@ async function handleDispatchInteraction(interaction) {
         });
       }
       await confirmTopup(interaction);
+      return true;
+    }
+    if (interaction.customId === 'order_start_valorant') {
+      await createServiceTicket(interaction, 'valorant');
+      return true;
+    }
+
+    if (interaction.customId === 'order_start_steam') {
+      await createServiceTicket(interaction, 'steam');
+      return true;
+    }
+
+    if (interaction.customId === 'order_start_delta') {
+      await createServiceTicket(interaction, 'delta');
+      return true;
+    }
+
+    if (interaction.customId === 'order_start_chat') {
+      await createServiceTicket(interaction, 'chat');
+      return true;
+    }
+
+    if (interaction.customId === 'order_start_emotion') {
+      await createServiceTicket(interaction, 'emotion');
+      return true;
+    }
+
+    if (interaction.customId === 'order_start_topup') {
+      await createTopupTicket(interaction);
+      return true;
+    }
+
+    if (interaction.customId === 'order_start_tip') {
+      await createTipTicket(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('valorant_type_')) {
+      await handleValorantTypeButton(interaction);
+      return true;
+    }
+
+    if (interaction.customId.startsWith('valorant_mode_')) {
+      await handleValorantModeButton(interaction);
       return true;
     }
     if (interaction.customId === 'open_play_order_form') {
@@ -5548,6 +6208,25 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId.startsWith('quote_payment_method_')) {
       await handleQuotePaymentMethodSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('valorant_rank_')) {
+      await handleValorantRankSelect(interaction);
+      return true;
+    }
+
+    if (interaction.customId.startsWith('service_player_count_')) {
+      await handleServicePlayerCountSelect(interaction);
+      return true;
+    }
+
+    if (interaction.customId.startsWith('service_gender_')) {
+      await handleServiceGenderSelect(interaction);
+      return true;
+    }
+
+    if (interaction.customId.startsWith('service_assign_')) {
+      await handleServiceAssignSelect(interaction);
       return true;
     }
     if (interaction.customId.startsWith('new_order_game_')) {
