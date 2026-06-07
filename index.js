@@ -4484,7 +4484,7 @@ async function handleSlashCommand(interaction) {
     const balanceText =
       balanceHidden
         ? '已隱藏'
-        : `${balanceText}`
+        : `${Number(userData.coins || 0).toLocaleString('zh-TW')} ASD`;
     const { data: monthlyAccount, error: monthlyError } =
       await supabase
         .from('member_monthly_accounts')
@@ -4494,16 +4494,18 @@ async function handleSlashCommand(interaction) {
     if (monthlyError) {
       console.error('[餘額查詢] 查詢月結資料失敗', monthlyError);
     }
+    const hasMonthly =
+      !!monthlyAccount;
     const monthlyLimit =
       Number(monthlyAccount?.monthly_limit || 0);
     const monthlyUsed =
       Number(monthlyAccount?.used_amount || 0);
     const monthlyAvailable =
-      monthlyAccount
+      hasMonthly
         ? Math.max(0, monthlyLimit - monthlyUsed)
         : 0;
     const monthlyStatus =
-      monthlyAccount
+      hasMonthly
         ? monthlyAccount.enabled
           ? '✅ 已啟用'
           : '⛔ 已停用'
