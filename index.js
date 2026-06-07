@@ -3260,6 +3260,15 @@ const commands = [
         .setRequired(false)
     ),
   new SlashCommandBuilder()
+    .setName('查詢累積')
+    .setDescription('公開查詢會員累積儲值與累積消費')
+    .addUserOption(option =>
+      option
+        .setName('玩家')
+        .setDescription('要查詢的會員，不填則查詢自己')
+        .setRequired(false)
+    ),
+  new SlashCommandBuilder()
     .setName('調整累積儲值')
     .setDescription('手動調整會員累積儲值金額')
     .addUserOption(option =>
@@ -4437,14 +4446,46 @@ async function handleSlashCommand(interaction) {
   if (interaction.commandName === '餘額') {
     const userData =
       await getUser(interaction.user.id);
+    const { data: monthlyAccount, error: monthlyError } =
+      await supabase
+        .from('member_monthly_accounts')
+        .select('*')
+        .eq('user_id', interaction.user.id)
+        .maybeSingle();
+    if (monthlyError) {
+      console.error('[餘額查詢] 查詢月結資料失敗', monthlyError);
+    }
+    const monthlyLimit =
+      Number(monthlyAccount?.monthly_limit || 0);
+    const monthlyUsed =
+      Number(monthlyAccount?.used_amount || 0);
+    const monthlyAvailable =
+      monthlyAccount
+        ? Math.max(0, monthlyLimit - monthlyUsed)
+        : 0;
+    const monthlyStatus =
+      monthlyAccount
+        ? monthlyAccount.enabled
+          ? '✅ 已啟用'
+          : '⛔ 已停用'
+        : '尚未開通';
     return interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor('#57F287')
           .setTitle('💰 ASD 餘額查詢')
           .setDescription(
-            `<@${interaction.user.id}> 目前餘額：\n\n` +
-            `**${Number(userData.coins || 0).toLocaleString('zh-TW')} ASD**`
+            `<@${interaction.user.id}> 的錢包與月結資訊\n\n` +
+            `💰 **錢包餘額**\n` +
+            `${Number(userData.coins || 0).toLocaleString('zh-TW')} ASD\n\n` +
+            `🌙 **月結狀態**\n` +
+            `${monthlyStatus}\n\n` +
+            `📌 **月結總額度**\n` +
+            `NT$${monthlyLimit.toLocaleString('zh-TW')}\n\n` +
+            `🧾 **已使用額度**\n` +
+            `NT$${monthlyUsed.toLocaleString('zh-TW')}\n\n` +
+            `✅ **剩餘可用額度**\n` +
+            `NT$${monthlyAvailable.toLocaleString('zh-TW')}`
           )
           .setFooter({
             text: '深夜不關燈｜公開餘額查詢'
@@ -4966,6 +5007,59 @@ async function handleSlashCommand(interaction) {
               `保證金：NT$${guarantee}\n` +
               `月結額度：NT$${guarantee}\n` +
               `目前已使用：NT$${Number(oldAccount?.used_amount || 0)}`
+          });
+        }
+        if (interaction.commandName === '查詢累積') {
+          const target =
+            interaction.options.getUser('玩家') ||
+            interaction.user;
+
+          const { data: vipData, error: vipError } =
+            await supabase
+              .from('user_vips')
+              .select('*')
+              .eq('user_id', target.id)
+              .maybeSingle();
+
+          if (vipError) {
+            console.error('[查詢累積] 讀取 user_vips 失敗', vipError);
+            return replyError(interaction, '查詢累積資料失敗');
+          }
+
+          const totalSpent =
+            Number(vipData?.total_spent || 0);
+
+          const totalTopup =
+            Number(vipData?.total_topup || 0);
+
+          const highestSingleTopup =
+            Number(vipData?.highest_single_topup || 0);
+
+          const vipLevel =
+            Number(vipData?.vip_level || 0);
+
+          return interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setColor('#66ccff')
+                .setTitle('📊 會員累積資訊')
+                .setThumbnail(target.displayAvatarURL())
+                .setDescription(
+                  `會員：<@${target.id}>\n\n` +
+                  `💰 **累積消費**\n` +
+                  `NT$${totalSpent.toLocaleString('zh-TW')}\n\n` +
+                  `💳 **累積儲值**\n` +
+                  `NT$${totalTopup.toLocaleString('zh-TW')}\n\n` +
+                  `🏦 **最高單筆儲值**\n` +
+                  `NT$${highestSingleTopup.toLocaleString('zh-TW')}\n\n` +
+                  `🌙 **目前 VIP 等級**\n` +
+                  `VIP ${vipLevel}`
+                )
+                .setFooter({
+                  text: `查詢人：${interaction.user.tag}`
+                })
+                .setTimestamp()
+            ]
           });
         }
         if (interaction.commandName === '標記月結已繳') {
