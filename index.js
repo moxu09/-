@@ -3036,23 +3036,21 @@ const commands = [
   new SlashCommandBuilder()
     .setName('ping')
     .setDescription('測試機器人'),
-
   new SlashCommandBuilder()
     .setName('我的排名')
     .setDescription('查看自己的排名'),
-
   new SlashCommandBuilder()
     .setName('餘額')
     .setDescription('公開查看自己的 ASD 餘額'),  
-  
+  new SlashCommandBuilder()
+    .setName('隱藏餘額')
+    .setDescription('切換是否隱藏自己的錢包餘額'),
   new SlashCommandBuilder()
     .setName('交易紀錄')
     .setDescription('查看最近交易'),
-
   new SlashCommandBuilder()
     .setName('我的商品')
     .setDescription('查看自己購買的商品'),
-
   new SlashCommandBuilder()
     .setName('刪除商品')
     .setDescription('刪除商店商品')
@@ -4446,9 +4444,47 @@ async function handleSlashCommand(interaction) {
   if (interaction.commandName === 'ping') {
     return interaction.editReply('Pong!');
   }
+  if (interaction.commandName === '隱藏餘額') {
+    const userData =
+      await getUser(interaction.user.id);
+    const currentHidden =
+      Boolean(userData.balance_hidden);
+    const newHidden =
+      !currentHidden;
+    const { error } =
+      await supabase
+        .from('users')
+        .update({
+          balance_hidden: newHidden
+        })
+        .eq('user_id', interaction.user.id);
+    if (error) {
+      console.error('[隱藏餘額] 更新失敗', error);
+      return replyError(interaction, '更新隱藏餘額狀態失敗');
+    }
+    return interaction.editReply({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(newHidden ? '#ffcc66' : '#57F287')
+          .setTitle(newHidden ? '🔒 已隱藏餘額' : '🔓 已公開餘額')
+          .setDescription(
+            newHidden
+              ? `<@${interaction.user.id}> 的錢包餘額已設為隱藏。\n之後公開查詢時會顯示「已隱藏」。`
+              : `<@${interaction.user.id}> 的錢包餘額已改為公開。`
+          )
+          .setTimestamp()
+      ]
+    });
+  }
   if (interaction.commandName === '餘額') {
     const userData =
       await getUser(interaction.user.id);
+    const balanceHidden =
+      Boolean(userData.balance_hidden);
+    const balanceText =
+      balanceHidden
+        ? '已隱藏'
+        : `${balanceText}`
     const { data: monthlyAccount, error: monthlyError } =
       await supabase
         .from('member_monthly_accounts')
@@ -4480,7 +4516,7 @@ async function handleSlashCommand(interaction) {
           .setDescription(
             `<@${interaction.user.id}> 的錢包與月結資訊\n\n` +
             `💰 **錢包餘額**\n` +
-            `${Number(userData.coins || 0).toLocaleString('zh-TW')} ASD\n\n` +
+            `${balanceText}\n\n` +
             `🌙 **月結狀態**\n` +
             `${monthlyStatus}\n\n` +
             `📌 **月結總額度**\n` +
