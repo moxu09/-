@@ -4051,7 +4051,10 @@ client.on(Events.InteractionCreate, async interaction => {
     // ===== Slash =====
     if (interaction.isChatInputCommand()) {
       if (!interaction.deferred && !interaction.replied) {
-        if (interaction.commandName === '餘額') {
+        if (
+          interaction.commandName === '餘額' ||
+          interaction.commandName === '查詢累積'
+        ) {
           await interaction.deferReply(); // 公開，頻道都看得到
         } else {
           await interaction.deferReply({ flags: 64 }); // 其他指令維持只有自己看得到
@@ -5035,9 +5038,10 @@ async function handleSlashCommand(interaction) {
           const highestSingleTopup =
             Number(vipData?.highest_single_topup || 0);
 
-          const vipLevel =
-            Number(vipData?.vip_level || 0);
-
+          const vipName =
+            vipData?.level_name ||
+            vipData?.level_key ||
+            '尚未達成 VIP';
           return interaction.editReply({
             embeds: [
               new EmbedBuilder()
@@ -5053,7 +5057,7 @@ async function handleSlashCommand(interaction) {
                   `🏦 **最高單筆儲值**\n` +
                   `NT$${highestSingleTopup.toLocaleString('zh-TW')}\n\n` +
                   `🌙 **目前 VIP 等級**\n` +
-                  `VIP ${vipLevel}`
+                  `${vipName}`
                 )
                 .setFooter({
                   text: `查詢人：${interaction.user.tag}`
