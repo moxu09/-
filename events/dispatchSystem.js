@@ -1057,7 +1057,8 @@ async function createServiceTicket(interaction, serviceType) {
     note: '',
     quotedPrice: null,
     paymentMethod: null,
-    timeSelectShown: false
+    timeSelectShown: false,
+    finishButtonShown: false
   });
 
   setTimeout(() => {
@@ -6414,8 +6415,14 @@ async function handleServicePlayerCountSelect(interaction) {
 
   pendingServiceOrders.set(flowId, pending);
 
+  await showFinishNeedButtons(
+    interaction.channel,
+    flowId
+  );
   return interaction.editReply({
-    content: `✅ 已選擇陪陪人數：${pending.playerCount} 位`
+    content:
+      `✅ 已選擇陪陪人數：${pending.playerCount} 位\n` +
+      `如果需求都填好了，可以按下方「送出訂單」。`
   });
 }
 
@@ -6592,8 +6599,14 @@ async function handleServiceAssignSelect(interaction) {
   pending.assignMode = interaction.values[0];
   pendingServiceOrders.set(flowId, pending);
   if (pending.assignMode === '不指定') {
+    await showFinishNeedButtons(
+      interaction.channel,
+      flowId
+    );
     return interaction.editReply({
-      content: '✅ 已選擇指定方式：不指定陪陪'
+      content:
+        '✅ 已選擇指定方式：不指定陪陪\n' +
+        '請確認需求無誤後，按下方「送出訂單」。'
     });
   }
   await showServicePlayerSelect(
@@ -6765,11 +6778,16 @@ async function handleSteamCategorySelect(interaction) {
 
   pendingServiceOrders.set(flowId, pending);
 
+  await showFinishNeedButtons(
+    interaction.channel,
+    flowId
+  );
   return interaction.editReply({
-    content: `✅ 已選擇 Steam 類型：${pending.steamCategory}`
+    content:
+      `✅ 已選擇 Steam 類型：${pending.steamCategory}\n` +
+      `如果需求都填好了，可以按下方「送出訂單」。`
   });
 }
-
 async function handleDeltaModeSelect(interaction) {
   await interaction.deferReply({
     flags: 64
@@ -6791,11 +6809,31 @@ async function handleDeltaModeSelect(interaction) {
 
   pendingServiceOrders.set(flowId, pending);
 
+  await showFinishNeedButtons(
+    interaction.channel,
+    flowId
+  );
   return interaction.editReply({
-    content: `✅ 已選擇三角洲玩法：${pending.deltaMode}`
+    content:
+      `✅ 已選擇三角洲玩法：${pending.deltaMode}\n` +
+      `如果需求都填好了，可以按下方「送出訂單」。`
   });
 }
 async function showFinishNeedButtons(channel, flowId) {
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return;
+  }
+
+  if (pending.finishButtonShown) {
+    return;
+  }
+
+  pending.finishButtonShown = true;
+  pendingServiceOrders.set(flowId, pending);
+
   const row =
     new ActionRowBuilder()
       .addComponents(
@@ -7176,9 +7214,14 @@ async function submitSteamGameName(interaction) {
 
   pendingServiceOrders.set(flowId, pending);
 
+  await showFinishNeedButtons(
+    interaction.channel,
+    flowId
+  );
   return interaction.editReply({
     content:
-      `✅ 已設定遊戲名稱：${pending.steamGameName}`
+      `✅ 已設定遊戲名稱：${pending.steamGameName}\n` +
+      `如果需求都填好了，可以按下方「送出訂單」。`
   });
 }
 function buildServiceTextFromPending(pending) {
