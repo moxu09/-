@@ -3770,11 +3770,12 @@ async function sendBankTransferInfo(channel) {
     embeds: [embed]
   });
 }
-async function getAvailablePlayerOptions(service) {
+async function getAvailablePlayerOptions(service, guildId = process.env.GUILD_ID) {
   const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
+      .eq('guild_id', guildId)
       .eq('status', 'available');
 
   if (error) {
@@ -7743,6 +7744,7 @@ async function handleButtonInteraction(interaction) {
             await supabase
               .from('players')
               .select('*')
+              .eq('guild_id', getGuildId(interaction))
               .eq('discord_id', playerId)
               .maybeSingle();
           const salaryRate =

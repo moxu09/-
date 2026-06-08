@@ -5355,7 +5355,7 @@ async function openDispatchPlayerMenu(interaction) {
     });
   }
   const playerOptions =
-    await getAvailablePlayerOptions(order.service || '');
+    await getAvailablePlayerOptions(service, getGuildId(interaction));
 
   if (!playerOptions.length) {
     return interaction.editReply({
