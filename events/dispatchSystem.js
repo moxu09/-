@@ -8197,8 +8197,11 @@ async function handleServiceConfirmWalletGroup(interaction) {
           '特戰分單儲值卡合併付款完成'
         );
       }
-
       await sendOrderToStaffChannel(order);
+      await sendStaffOrderControlPanel(
+        interaction.channel,
+        order
+      );
     }
 
     await interaction.channel.send({
@@ -8353,10 +8356,12 @@ async function handleServiceConfirmMonthlyGroup(interaction) {
           '特戰分單月結合併付款完成'
         );
       }
-
-      await sendOrderToStaffChannel(order);
+      await sendOrderToStaffChannel(order); 
+      await sendStaffOrderControlPanel(
+        interaction.channel,
+        order
+      );
     }
-
     await interaction.channel.send({
       embeds: [
         new EmbedBuilder()
@@ -8427,10 +8432,12 @@ async function handleServiceConfirmPaidGroup(interaction) {
         '客服確認特戰分單付款完成'
       );
     }
-
     await sendOrderToStaffChannel(order);
+    await sendStaffOrderControlPanel(
+      interaction.channel,
+      order
+    );
   }
-
   await interaction.channel.send({
     embeds: [
       new EmbedBuilder()
