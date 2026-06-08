@@ -617,7 +617,7 @@ async function savePanelMessage(
   if (res.error) {
     console.error('[Panel] 儲存失敗', res.error);
   }
-}
+} 
 // ===== 工具函數 =====
 function getGuildId(interaction = null) {
   return interaction?.guildId || interaction?.guild?.id || process.env.GUILD_ID;
