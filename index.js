@@ -229,10 +229,12 @@ async function handleTipGiftSelect(interaction) {
   tipData.amount = gift.price;
   pendingTips.set(tipId, tipData);
 
+  const guildId = getGuildId(interaction);
   const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
+      .eq('guild_id', guildId)
       .order('status', { ascending: true });
 
   if (error) {
@@ -424,109 +426,55 @@ async function handleTipPaymentSelect(interaction) {
       content: '❌ 打賞資料不完整，請重新建立打賞流程。'
     });
   }
+
   const walletPayment =
     paymentMethod.includes('儲值卡') ||
     paymentMethod.includes('儲值') ||
     paymentMethod.includes('錢包') ||
     paymentMethod.includes('餘額');
+
   if (walletPayment) {
-    const userData =
-      await getUser(tipperId);
-    const currentCoins =
-      Number(userData.coins || 0);
-    if (currentCoins < amount) {
-      return interaction.editReply({
-        content:
-          `❌ ASD 餘額不足。\n` +
-          `目前餘額：${currentCoins} ASD\n` +
-          `需要金額：${amount} ASD`
-      });
-    }
-    const finalCoins =
-      await changeCoins(tipperId, -amount);
-    await sendWalletLog(
-      tipperId,
-      '打賞消費',
-      -amount,
-      finalCoins,
-      `💝 打賞給 <@${selectedStaffId}>｜${item}`
-    );
+    tipData.paymentMethod = paymentMethod;
+    pendingTips.set(tipId, tipData);
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`confirm_tip_wallet_${tipId}`)
+            .setLabel('確認使用儲值卡付款')
+            .setEmoji('💳')
+            .setStyle(ButtonStyle.Success),
+
+          new ButtonBuilder()
+            .setCustomId(`cancel_tip_wallet_${tipId}`)
+            .setLabel('取消此付款方式')
+            .setStyle(ButtonStyle.Danger)
+        );
+
     await interaction.channel.send({
+      content: `<@${tipperId}>`,
       embeds: [
         new EmbedBuilder()
-          .setColor('#57F287')
-          .setTitle('✅ 打賞已使用儲值卡付款')
-          .addFields(
-            {
-              name: '打賞人',
-              value: `<@${tipperId}>`,
-              inline: true
-            },
-            {
-              name: '受賞陪陪',
-              value: `<@${selectedStaffId}>`,
-              inline: true
-            },
-            {
-              name: '品項',
-              value: item,
-              inline: true
-            },
-            {
-              name: '金額',
-              value: `NT$${amount}`,
-              inline: true
-            },
-            {
-              name: '付款方式',
-              value: paymentMethod,
-              inline: true
-            },
-            {
-              name: '扣款後餘額',
-              value: `${finalCoins} ASD`,
-              inline: true
-            }
+          .setColor('#ffd166')
+          .setTitle('💳 確認打賞儲值卡付款')
+          .setDescription(
+            `請確認是否使用儲值卡 / 錢包完成打賞。\n\n` +
+            `受賞陪陪：<@${selectedStaffId}>\n` +
+            `品項：${item}\n` +
+            `扣款金額：${Number(amount).toLocaleString('zh-TW')} ASD\n\n` +
+            `確認後會直接從你的 ASD 餘額扣款。`
           )
           .setTimestamp()
-      ]
+      ],
+      components: [row]
     });
-    try {
-      const tipOrder =
-        await saveTipToPlayOrders({
-          tipperId,
-          staffId: selectedStaffId,
-          item,
-          amount: Number(amount),
-          channelId: interaction.channel.id,
-          paid: true
-        });
-      await countOrderVipSpentOnce(
-        tipOrder,
-        '儲值卡打賞付款完成'
-      );
-      await interaction.channel.send({
-        content:
-          `✅ 儲值卡打賞已完成，並已寫入薪資網\n` +
-          `打賞人：<@${tipperId}>\n` +
-          `受賞陪陪：<@${selectedStaffId}>\n` +
-          `品項：${item}\n` +
-          `金額：NT$${amount}`
-      });
-    } catch (error) {
-      console.error('[儲值卡打賞寫入薪資網失敗]', error);
-      await interaction.channel.send({
-        content:
-          `⚠️ 儲值卡已扣款，但寫入薪資網失敗。\n` +
-          `錯誤：${error.message || error}`
-      });
-    }
-    await sendTipCloseButtons(interaction.channel);
-    pendingTips.delete(tipId);
+
     return interaction.editReply({
-      content: '✅ 已使用儲值卡 / 錢包完成打賞付款，並已送出關閉頻道按鈕'
+      content: '✅ 已選擇儲值卡付款，請確認是否使用此付款方式。'
     });
   }
+
   const embed =
     new EmbedBuilder()
       .setColor('#ff99cc')
@@ -659,6 +607,9 @@ async function savePanelMessage(panelName, channelId, messageId) {
   }
 }
 // ===== 工具函數 =====
+function getGuildId(interaction = null) {
+  return interaction?.guildId || interaction?.guild?.id || process.env.GUILD_ID;
+}
 function getRarityEmoji(rarity) {
   switch (rarity) {
     case 'SSR':
@@ -761,6 +712,7 @@ async function giveMonthlyVip(
     });
 }
 async function saveTipToPlayOrders({
+  guildId,
   tipperId,
   staffId,
   item,
@@ -771,30 +723,24 @@ async function saveTipToPlayOrders({
   const { data, error } = await supabase
     .from('play_orders')
     .insert({
+      guild_id: guildId,
       customer_id: tipperId,
       customer_name: `<@${tipperId}>`,
       customer_username: `<@${tipperId}>`,
-
       assigned_player: staffId,
-
       order_type: '打賞',
       order_item: item,
-
       game: '打賞',
       service: `打賞：${item}`,
       note: '打賞',
-
       channel_id: channelId,
       source_channel_id: channelId,
-
       price: Number(amount),
       final_price: Number(amount),
-
       paid,
       paid_at: paid ? new Date().toISOString() : null,
       salary_paid: false,
       salary_paid_at: null,
-
       status: 'completed',
       completed_at: new Date().toISOString(),
       accepted_at: new Date().toISOString()
@@ -935,12 +881,13 @@ function isAdmin(interaction) {
     interaction.member.permissions.has(PermissionFlagsBits.Administrator)
   );
 }
-async function findOrderForExtend({ orderNo, channelId }) {
+async function findOrderForExtend({ guildId, orderNo, channelId }) {
   // 1. 有訂單編號就先用訂單編號找
   if (orderNo) {
     const { data, error } = await supabase
       .from('play_orders')
       .select('*')
+      .eq('guild_id', guildId)
       .eq('order_no', orderNo)
       .maybeSingle();
 
@@ -952,6 +899,7 @@ async function findOrderForExtend({ orderNo, channelId }) {
     const { data, error } = await supabase
       .from('play_orders')
       .select('*')
+      .eq('guild_id', guildId)
       .eq('channel_id', channelId)
       .order('created_at', { ascending: false })
       .limit(1)
@@ -1252,10 +1200,8 @@ async function payOrderByWallet(order) {
 }
 async function payOrderByMonthly(order) {
   const userId = order.customer_id;
-
   const amount =
     Number(order.final_price || order.price || 0);
-
   if (!amount || amount <= 0) {
     throw new Error('訂單金額錯誤');
   }
@@ -1392,6 +1338,7 @@ async function handleSlashExtendOrder(interaction) {
       await supabase
         .from('play_orders')
         .select('*')
+        .eq('guild_id', getGuildId(interaction))
         .eq('id', orderId)
         .maybeSingle();
     order = result.data;
@@ -1400,6 +1347,7 @@ async function handleSlashExtendOrder(interaction) {
   // 2. 訂單 ID 找不到，就用訂單編號 / 頻道 ID 找
   if (!order) {
     order = await findOrderForExtend({
+      guildId: getGuildId(interaction),
       orderNo,
       channelId: interaction.channel.id
     });
@@ -1415,10 +1363,12 @@ async function handleSlashExtendOrder(interaction) {
         '3. 或手動輸入訂單編號'
     });
   }
+  const guildId = getGuildId(interaction);
   const { data: extension, error: insertError } =
     await supabase
       .from('order_extensions')
       .insert({
+        guild_id: guildId,
         order_id: order.id,
         order_no: order.order_no || null,
         customer_id: order.customer_id,
@@ -2323,7 +2273,6 @@ async function performGacha(userId, guildId, amount, poolId = null) {
       await supabase
         .from('gacha_pools')
         .select('*')
-        .eq('guild_id', guildId)
         .eq('id', poolId)
         .single();
 
@@ -2336,8 +2285,7 @@ async function performGacha(userId, guildId, amount, poolId = null) {
     const { data: pools } =
       await supabase
         .from('gacha_pools')
-        .select('*')
-        .eq('guild_id', guildId);
+        .select('*');
 
     if (!pools || pools.length === 0) {
       throw new Error('目前沒有卡池');
@@ -4176,7 +4124,20 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('steam_game_name_') ||
         interaction.customId.startsWith('order_add_note_') ||
         interaction.customId.startsWith('order_finish_need_') ||
-        interaction.customId.startsWith('service_quote_price_') ||
+
+        interaction.customId.startsWith('confirm_extension_wallet_') ||
+        interaction.customId.startsWith('cancel_extension_wallet_') ||
+
+        interaction.customId.startsWith('service_confirm_wallet_group_') ||
+        interaction.customId.startsWith('service_confirm_monthly_group_') ||
+        interaction.customId.startsWith('service_confirm_wallet_') ||
+        interaction.customId.startsWith('service_confirm_monthly_') ||
+        interaction.customId.startsWith('service_cancel_wallet_group_') ||
+        interaction.customId.startsWith('service_cancel_monthly_group_') ||
+        interaction.customId.startsWith('service_cancel_wallet_') ||
+        interaction.customId.startsWith('service_cancel_monthly_') ||
+        interaction.customId.startsWith('service_confirm_paid_group_') ||
+        interaction.customId.startsWith('service_cancel_order_group_') ||
         interaction.customId.startsWith('service_confirm_paid_') ||
         interaction.customId.startsWith('service_cancel_order_')
       ) {
@@ -4485,6 +4446,7 @@ async function handleSlashCommand(interaction) {
       balanceHidden
         ? '已隱藏'
         : `${Number(userData.coins || 0).toLocaleString('zh-TW')} ASD`;
+    const guildId = getGuildId(interaction);
     const { data: monthlyAccount, error: monthlyError } =
       await supabase
         .from('member_monthly_accounts')
@@ -4552,8 +4514,11 @@ async function handleSlashCommand(interaction) {
   if (interaction.commandName === '扭蛋列表') {
     const { data, error } = await supabase
             .from('gacha_pools')
-            .select('*')
-            .eq('guild_id', interaction.guild.id);
+            .select('*');
+          if (error) {
+            console.error('[扭蛋列表] 讀取失敗', error);
+            return replyError(interaction, '讀取扭蛋列表失敗');
+          }
           if (!data.length) {
             return interaction.editReply('目前沒有扭蛋');
           }
@@ -4573,12 +4538,12 @@ async function handleSlashCommand(interaction) {
             interaction.options.getString('名稱');
           const price =
             interaction.options.getInteger('價格');
-          const { error } = await supabase
+          const { error } = 
+          await supabase
             .from('gacha_pools')
             .insert({
-              guild_id: interaction.guild.id,
               pool_name: name,
-             price
+              price
             });
           if (error) {
             console.error(error);
@@ -5111,7 +5076,7 @@ async function handleSlashCommand(interaction) {
           const target =
             interaction.options.getUser('玩家');
           const billingMonth =
-            interaction.options.getString('月份');
+              interaction.options.getString('月份');
           if (!/^\d{4}-\d{2}$/.test(billingMonth)) {
             return replyError(interaction, '月份格式錯誤，請輸入例如 2026-06');
           }
@@ -5161,7 +5126,9 @@ async function handleSlashCommand(interaction) {
               .from('member_monthly_bills')
               .update({
                 status: 'paid',
-                paid_at: new Date().toISOString()
+                paid_at: new Date().toISOString(),
+                paid_by: interaction.user.id,
+                payment_method: '客服標記已繳'
               })
               .eq('id', bill.id);
           if (updateBillError) {
@@ -5175,7 +5142,7 @@ async function handleSlashCommand(interaction) {
               .update({
                 used_amount: newUsedAmount,
                 updated_at: new Date().toISOString()
-              })
+                })
               .eq('user_id', target.id);
           if (updateAccountError) {
             console.error('[月結已繳] 更新月結額度失敗', updateAccountError);
@@ -5224,10 +5191,11 @@ async function handleSlashCommand(interaction) {
           }
           return interaction.editReply({
             content:
-              `✅ 已標記 <@${target.id}> ${billingMonth} 月結帳單為已繳\n` +
-              `繳款金額：NT$${totalAmount.toLocaleString('zh-TW')}\n` + 
-              `發放回饋：${cashbackAmount.toLocaleString('zh-TW')} 星雨幣\n` +
-              `已使用額度：NT$${oldUsedAmount.toLocaleString('zh-TW')} → NT$${newUsedAmount.toLocaleString('zh-TW')}`
+              `✅ 已標記月結已繳\n` +
+              `會員：<@${target.id}>\n` +
+              `月份：${billingMonth}\n` +
+              `金額：NT$${totalAmount.toLocaleString('zh-TW')}\n` +
+              `已恢復額度，並發放 ${cashbackAmount.toLocaleString('zh-TW')} ASD 回饋`
           });
         }
         if (interaction.commandName === '保證金抵扣') {
@@ -6990,7 +6958,6 @@ async function handleButtonInteraction(interaction) {
         await supabase
           .from('gacha_pools')
           .select('*')
-          .eq('guild_id', interaction.guild.id);
       if (error || !pools || pools.length === 0) {
         return await interaction.editReply({
           content: '❌ 目前沒有卡池'
@@ -7295,6 +7262,127 @@ async function handleButtonInteraction(interaction) {
       pendingTips.delete(tipConfirmId);
       return await interaction.editReply({
         content: '❌ 已取消送出打賞',
+        components: []
+      });
+    }
+    if (customId.startsWith('confirm_tip_wallet_')) {
+      const tipId =
+        customId.replace('confirm_tip_wallet_', '');
+      const tipData =
+        pendingTips.get(tipId);
+      if (!tipData) {
+        return await interaction.editReply({
+          content: '❌ 這筆打賞流程已過期，請重新建立打賞頻道。'
+        });
+      }
+      if (interaction.user.id !== tipData.tipperId) {
+        return await interaction.editReply({
+          content: '❌ 只有打賞人可以確認儲值卡付款'
+        });
+      }
+      const {
+        tipperId,
+        selectedStaffId,
+        item,
+        amount
+      } = tipData;
+      const userData =
+        await getUser(tipperId);
+      const currentCoins =
+        Number(userData.coins || 0);
+      if (currentCoins < amount) {
+        return await interaction.editReply({
+          content:
+            `❌ ASD 餘額不足。\n` +
+            `目前餘額：${currentCoins} ASD\n` +
+            `需要金額：${amount} ASD`
+        });
+      }
+      const finalCoins =
+        await changeCoins(tipperId, -amount);
+      await sendWalletLog(
+        tipperId,
+        '打賞消費',
+        -amount,
+        finalCoins,
+        `💝 打賞給 <@${selectedStaffId}>｜${item}`
+      );
+      await interaction.channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor('#57F287')
+            .setTitle('✅ 打賞已使用儲值卡付款')
+            .addFields(
+              {
+                name: '打賞人',
+                value: `<@${tipperId}>`,
+                inline: true
+              },
+              {
+                name: '受賞陪陪',
+                value: `<@${selectedStaffId}>`,
+                inline: true
+              },  
+              {
+                name: '品項',
+                value: item,
+                inline: true
+              },
+              {
+                name: '金額',
+                value: `NT$${amount}`,
+                inline: true
+              },
+              {
+                name: '扣款後餘額',
+                value: `${finalCoins} ASD`,
+                inline: true
+              }
+            )
+            .setTimestamp()
+        ]
+      });
+      try {
+        const tipOrder =
+          await saveTipToPlayOrders({
+            tipperId,
+            staffId: selectedStaffId,
+            item,
+            amount: Number(amount),
+            channelId: interaction.channel.id,
+            paid: true
+          });
+        await countOrderVipSpentOnce(
+          tipOrder,
+          '儲值卡打賞付款完成'
+        );
+        await interaction.channel.send({
+          content:
+            `✅ 儲值卡打賞已完成，並已寫入薪資網\n` +
+            `打賞人：<@${tipperId}>\n` +
+            `受賞陪陪：<@${selectedStaffId}>\n` +
+            `品項：${item}\n` +
+            `金額：NT$${amount}`
+        });
+      } catch (error) {
+        console.error('[儲值卡打賞寫入薪資網失敗]', error);
+        await interaction.channel.send({
+          content:
+            `⚠️ 儲值卡已扣款，但寫入薪資網失敗。\n` +
+            `錯誤：${error.message || error}`
+        });
+      }
+      await sendTipCloseButtons(interaction.channel);
+      pendingTips.delete(tipId);
+      return await interaction.editReply({
+        content: '✅ 已確認使用儲值卡完成打賞付款'
+      });
+    }
+    if (customId.startsWith('cancel_tip_wallet_')) {
+      const tipId =
+        customId.replace('cancel_tip_wallet_', '');
+      return await interaction.editReply({
+        content: '已取消儲值卡付款，請重新選擇付款方式或聯繫客服。',
         components: []
       });
     }
@@ -7742,7 +7830,7 @@ async function handleButtonInteraction(interaction) {
     if (customId === 'delete_order_now') {
       if (!isAdminOrStaff(interaction)) {
         return await interaction.editReply({
-          content: '❌ 只有客服可以操作'
+          content: '❌ 只有客服或管理員可以刪除紀錄'
         });
       }
       await interaction.editReply({
@@ -7759,6 +7847,11 @@ async function handleButtonInteraction(interaction) {
     }
     // ===== 儲存訂單紀錄 =====
     if (customId === 'save_order_log') {
+      if (!isAdminOrStaff(interaction)) {
+        return await interaction.editReply({
+          content: '❌ 只有客服或管理員可以儲存紀錄'
+        });
+      }
       try {
         const messages =
           await interaction.channel.messages.fetch({
@@ -8659,7 +8752,7 @@ async function handleModalSubmit(interaction) {
         await supabase
           .from("play_orders")
           .select("customer_id")
-        .eq("channel_id", interaction.channel.id)
+          .eq("channel_id", interaction.channel.id)
           .order("created_at", { ascending: false })
           .limit(1)
           .maybeSingle();

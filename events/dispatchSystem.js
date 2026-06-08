@@ -1041,6 +1041,7 @@ async function createServiceTicket(interaction, serviceType) {
     category: serviceType,
 
     serviceType: null,
+    serviceTypes: [],
     playMode: null,
     rank: null,
     steamCategory: null,
@@ -4807,103 +4808,48 @@ async function handleExtensionPaymentMethodSelect(interaction) {
 
   // 儲值卡直接扣款
   if (paymentMethod.includes('儲值卡')) {
-    const { data: userData, error: userError } =
-      await supabase
-        .from('users')
-        .select('*')
-        .eq('user_id', extension.customer_id)
-        .maybeSingle();
-
-    if (userError || !userData) {
-      return interaction.editReply({
-        content: '❌ 找不到錢包資料'
-      });
-    }
-
-    const currentCoins =
-      Number(userData.coins || 0);
-
-    if (currentCoins < amount) {
-      return interaction.editReply({
-        content:
-          `❌ ASD 餘額不足。\n` +
-          `目前餘額：${currentCoins} ASD\n` +
-          `需要金額：${amount} ASD`
-      });
-    }
-
-    if (!paymentHelpers.changeCoins) {
-      return interaction.editReply({
-        content: '❌ changeCoins 尚未接入，請確認 index.js 的 dispatchSystem.setup'
-      });
-    }
-    let finalCoins = 0;
-    try {
-      finalCoins = await paymentHelpers.changeCoins(
-        extension.customer_id,
-        -amount
-      );
-    } catch (error) {
-      console.error('[加時] 扣款失敗', error);
-      return interaction.editReply({
-        content: '❌ 扣款失敗，請查看 Railway Logs'
-      });
-    }
-
-    await paymentHelpers.sendWalletLog?.(
-      extension.customer_id,
-      '加時扣款',
-      -amount,
-      finalCoins,
-      `加時 ${extension.extension_text}｜原訂單 ${extension.order_no || extension.order_id}`
-    );
-
     await supabase
       .from('order_extensions')
       .update({
         payment_method: paymentMethod,
-        paid: true,
-        status: 'paid',
-        paid_at: new Date().toISOString()
+        status: 'waiting_wallet_confirm',
+        updated_at: new Date().toISOString()
       })
       .eq('id', extension.id);
-    let salaryResult = null;
-    try {
-      salaryResult = await applyExtensionToPlayOrder(extension);
-    } catch (error) {
-      console.error('[加時] 寫入薪資網失敗', error);
-      await interaction.channel.send({
-        content:
-          `⚠️ 加時已付款，但寫入薪資網失敗。\n` +
-          `錯誤：${error.message || error}`
-      });
-    }
+    const row =
+      new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`confirm_extension_wallet_${extension.id}`)
+            .setLabel('確認使用儲值卡付款')
+            .setEmoji('💳')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId(`cancel_extension_wallet_${extension.id}`)
+            .setLabel('取消此付款方式')
+            .setStyle(ButtonStyle.Danger)
+        );
     await interaction.channel.send({
+      content: `<@${extension.customer_id}>`,
       embeds: [
         new EmbedBuilder()
-          .setColor('#57F287')
-          .setTitle('✅ 加時已付款')
+          .setColor('#ffd166')
+          .setTitle('💳 確認加時儲值卡付款')
           .setDescription(
-              `原訂單：${extension.order_no || extension.order_id}\n` +
-              `闆闆：<@${extension.customer_id}>\n` +
-              `加時內容：${extension.extension_text}\n` +
-              `加時金額：NT$${amount.toLocaleString('zh-TW')}\n` +
-              `付款方式：${paymentMethod}\n` +
-              (
-                salaryResult
-                  ? `\n已更新薪資網金額：NT$${salaryResult.oldPrice.toLocaleString('zh-TW')} → NT$${salaryResult.newPrice.toLocaleString('zh-TW')}`
-                  : `\n⚠️ 薪資網尚未更新，請查看 Railway Logs`
-              )
-            )
+            `請確認是否使用儲值卡 / 錢包付款。\n\n` +
+            `原訂單：${extension.order_no || extension.order_id}\n` +
+            `加時內容：${extension.extension_text}\n` +
+            `扣款金額：${Number(extension.amount || 0).toLocaleString('zh-TW')} ASD\n\n` +
+            `確認後會直接從你的 ASD 餘額扣款。`
+          )
           .setTimestamp()
-      ]
+      ],
+      components: [row]
     });
-
     return interaction.editReply({
-      content: '✅ 加時已用儲值卡 / 錢包付款完成'
+      content: '✅ 已選擇儲值卡付款，請闆闆確認是否使用此付款方式。'
     });
   }
-
   const { data: updatedExtension, error: updateError } =
     await supabase
       .from('order_extensions')
@@ -4963,6 +4909,145 @@ async function handleExtensionPaymentMethodSelect(interaction) {
 
   return interaction.editReply({
     content: `✅ 已選擇加時付款方式：${paymentMethod}`
+  });
+}
+async function handleConfirmExtensionWallet(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const extensionId =
+    interaction.customId.replace('confirm_extension_wallet_', '');
+
+  const { data: extension, error } =
+    await supabase
+      .from('order_extensions')
+      .select('*')
+      .eq('id', extensionId)
+      .maybeSingle();
+
+  if (error || !extension) {
+    return interaction.editReply({
+      content: '❌ 找不到這筆加時資料'
+    });
+  }
+
+  if (interaction.user.id !== extension.customer_id) {
+    return interaction.editReply({
+      content: '❌ 只有下單闆闆可以確認加時儲值卡付款'
+    });
+  }
+
+  if (extension.paid) {
+    return interaction.editReply({
+      content: '⚠️ 這筆加時已經付款過了'
+    });
+  }
+
+  const amount =
+    Number(extension.amount || 0);
+
+  if (!amount || amount <= 0) {
+    return interaction.editReply({
+      content: '❌ 加時金額錯誤'
+    });
+  }
+
+  if (!paymentHelpers.changeCoins) {
+    return interaction.editReply({
+      content: '❌ changeCoins 尚未接入，請確認 index.js 的 dispatchSystem.setup'
+    });
+  }
+
+  let finalCoins = 0;
+
+  try {
+    finalCoins =
+      await paymentHelpers.changeCoins(
+        extension.customer_id,
+        -amount
+      );
+  } catch (error) {
+    console.error('[加時儲值卡確認] 扣款失敗', error);
+
+    return interaction.editReply({
+      content:
+        `❌ 儲值卡扣款失敗。\n` +
+        `可能是 ASD 餘額不足，或錢包系統異常。\n` +
+        `錯誤：${error.message || error}`
+    });
+  }
+
+  await paymentHelpers.sendWalletLog?.(
+    extension.customer_id,
+    '加時扣款',
+    -amount,
+    finalCoins,
+    `加時 ${extension.extension_text}｜原訂單 ${extension.order_no || extension.order_id}`
+  );
+
+  const { error: updateError } =
+    await supabase
+      .from('order_extensions')
+      .update({
+        payment_method: '儲值卡',
+        paid: true,
+        status: 'paid',
+        paid_at: new Date().toISOString()
+      })
+      .eq('id', extension.id);
+
+  if (updateError) {
+    console.error('[加時儲值卡確認] 更新加時付款狀態失敗', updateError);
+
+    return interaction.editReply({
+      content:
+        `⚠️ 已扣款，但更新加時付款狀態失敗。\n` +
+        `請客服手動確認 Railway Logs。`
+    });
+  }
+
+  let salaryResult = null;
+
+  try {
+    salaryResult =
+      await applyExtensionToPlayOrder(extension);
+  } catch (error) {
+    console.error('[加時儲值卡確認] 寫入薪資網失敗', error);
+
+    await interaction.channel.send({
+      content:
+        `⚠️ 加時已付款，但寫入薪資網失敗。\n` +
+        `錯誤：${error.message || error}`
+    });
+  }
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('✅ 加時儲值卡付款完成')
+        .setDescription(
+          `原訂單：${extension.order_no || extension.order_id}\n` +
+          `闆闆：<@${extension.customer_id}>\n` +
+          `加時內容：${extension.extension_text}\n` +
+          `加時金額：NT$${amount.toLocaleString('zh-TW')}\n` +
+          `付款方式：儲值卡\n` +
+          `扣款後餘額：${Number(finalCoins || 0).toLocaleString('zh-TW')} ASD` +
+          (
+            salaryResult
+              ? `\n\n已更新薪資網金額：NT$${salaryResult.oldPrice.toLocaleString('zh-TW')} → NT$${salaryResult.newPrice.toLocaleString('zh-TW')}`
+              : `\n\n⚠️ 薪資網尚未更新，請查看 Railway Logs`
+          )
+        )
+        .setTimestamp()
+    ]
+  });
+
+  return interaction.editReply({
+    content: '✅ 已確認使用儲值卡完成加時付款'
   });
 }
 async function handleStaffConfirmExtensionPaid(interaction) {
@@ -6313,14 +6398,22 @@ async function handleValorantTypeButton(interaction) {
     flags: 64
   });
 
+  const isEntertainment =
+    interaction.customId.includes('valorant_type_entertain_');
+
+  const prefix =
+    isEntertainment
+      ? 'valorant_type_entertain_'
+      : 'valorant_type_skill_';
+
   const flowId =
     getFlowIdFromCustomId(
       interaction.customId,
-      interaction.customId.includes('valorant_type_entertain_')
-        ? 'valorant_type_entertain_'
-        : 'valorant_type_skill_'
+      prefix
     );
-  const pending = pendingServiceOrders.get(flowId);
+
+  const pending =
+    pendingServiceOrders.get(flowId);
 
   if (!pending) {
     return interaction.editReply({
@@ -6328,15 +6421,34 @@ async function handleValorantTypeButton(interaction) {
     });
   }
 
-  pending.serviceType =
-    interaction.customId.includes('_entertain_')
+  const selectedType =
+    isEntertainment
       ? '娛樂'
       : '技術';
 
-  pending.timeSelectShown = false;
+  const serviceTypes =
+    Array.isArray(pending.serviceTypes)
+      ? pending.serviceTypes
+      : [];
+
+  if (serviceTypes.includes(selectedType)) {
+    pending.serviceTypes =
+      serviceTypes.filter(type => type !== selectedType);
+  } else {
+    pending.serviceTypes =
+      [...serviceTypes, selectedType];
+  }
+
+  pending.serviceType =
+    pending.serviceTypes.join('＋') || null;
+
   pendingServiceOrders.set(flowId, pending);
+
   return interaction.editReply({
-    content: `✅ 已選擇特戰服務：${pending.serviceType}`
+    content:
+      pending.serviceTypes.length
+        ? `✅ 目前已選擇特戰服務：${pending.serviceTypes.join('＋')}`
+        : '✅ 已取消選擇，目前尚未選擇特戰服務'
   });
 }
 
@@ -6452,12 +6564,23 @@ async function handleServiceGenderSelect(interaction) {
 }
 function getServiceKeywordFromPending(pending) {
   if (pending.category === 'valorant') {
-    return [
-      '特戰英豪',
-      pending.serviceType
-        ? `${pending.serviceType}陪玩`
-        : ''
-    ].filter(Boolean).join('');
+    const serviceTypes =
+      Array.isArray(pending.serviceTypes)
+        ? pending.serviceTypes
+        : [];
+    if (
+      serviceTypes.includes('技術') ||
+      pending.serviceType === '技術'
+    ) {
+      return '特戰英豪技術陪玩';
+    }
+    if (
+      serviceTypes.includes('娛樂') ||
+      pending.serviceType === '娛樂'
+    ) {
+      return '特戰英豪娛樂陪玩';
+    }
+    return '特戰英豪';
   }
 
   if (pending.category === 'steam') {
@@ -6980,10 +7103,49 @@ async function openServiceQuotePriceModal(interaction) {
     });
   }
 
+  const serviceTypes =
+    Array.isArray(pending.serviceTypes)
+      ? pending.serviceTypes
+      : [];
+
+  const isValorantSplit =
+    pending.category === 'valorant' &&
+    serviceTypes.includes('娛樂') &&
+    serviceTypes.includes('技術');
+
   const modal =
     new ModalBuilder()
       .setCustomId(`submit_service_quote_price_${flowId}`)
-      .setTitle('客服輸入正式報價');
+      .setTitle(
+        isValorantSplit
+          ? '客服輸入娛樂 / 技術報價'
+          : '客服輸入正式報價'
+      );
+
+  if (isValorantSplit) {
+    const entertainInput =
+      new TextInputBuilder()
+        .setCustomId('entertain_price')
+        .setLabel('娛樂陪玩金額')
+        .setPlaceholder('例如：500')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+    const skillInput =
+      new TextInputBuilder()
+        .setCustomId('skill_price')
+        .setLabel('技術陪玩金額')
+        .setPlaceholder('例如：700')
+        .setStyle(TextInputStyle.Short)
+        .setRequired(true);
+
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(entertainInput),
+      new ActionRowBuilder().addComponents(skillInput)
+    );
+
+    return interaction.showModal(modal);
+  }
 
   const priceInput =
     new TextInputBuilder()
@@ -7025,18 +7187,52 @@ async function submitServiceQuotePrice(interaction) {
     });
   }
 
-  const priceText =
-    interaction.fields.getTextInputValue('price');
-
-  const price =
-    Number(String(priceText || '').replace(/[^\d]/g, ''));
-
-  if (!price || price <= 0) {
-    return interaction.editReply({
-      content: '❌ 金額格式錯誤，請輸入大於 0 的數字'
-    });
+  const serviceTypes =
+    Array.isArray(pending.serviceTypes)
+      ? pending.serviceTypes
+      : [];
+  const isValorantSplit =
+    pending.category === 'valorant' &&
+    serviceTypes.includes('娛樂') &&
+    serviceTypes.includes('技術');
+  let price = 0;
+  if (isValorantSplit) {
+    const entertainText =
+      interaction.fields.getTextInputValue('entertain_price');
+    const skillText =
+      interaction.fields.getTextInputValue('skill_price');
+    const entertainPrice =
+      Number(String(entertainText || '').replace(/[^\d]/g, ''));  
+    const skillPrice =
+      Number(String(skillText || '').replace(/[^\d]/g, ''));
+    if (!entertainPrice || entertainPrice <= 0) {
+      return interaction.editReply({
+        content: '❌ 娛樂陪玩金額格式錯誤'
+      });
+    }
+    if (!skillPrice || skillPrice <= 0) {
+      return interaction.editReply({
+        content: '❌ 技術陪玩金額格式錯誤'
+      });
+    }
+    price =
+      entertainPrice + skillPrice;
+    pending.quoteParts = {
+      entertain: entertainPrice,
+      skill: skillPrice
+    };
+  } else {
+    const priceText =
+      interaction.fields.getTextInputValue('price');
+    price =
+      Number(String(priceText || '').replace(/[^\d]/g, ''));
+    if (!price || price <= 0) {
+      return interaction.editReply({
+        content: '❌ 金額格式錯誤，請輸入大於 0 的數字'
+      });
+    }
+    pending.quoteParts = null;
   }
-
   pending.quotedPrice = price;
   pendingServiceOrders.set(flowId, pending);
 
@@ -7080,7 +7276,13 @@ async function submitServiceQuotePrice(interaction) {
         .setTitle('💰 正式報價單')
         .setDescription(
           `服務：${getServiceName(pending.category)}\n` +
-          `金額：NT$${price.toLocaleString('zh-TW')}\n\n` +
+          (
+            pending.quoteParts
+              ? `娛樂陪玩：NT$${pending.quoteParts.entertain.toLocaleString('zh-TW')}\n` +
+                `技術陪玩：NT$${pending.quoteParts.skill.toLocaleString('zh-TW')}\n` +
+                `合計金額：NT$${price.toLocaleString('zh-TW')}\n\n`
+              : `金額：NT$${price.toLocaleString('zh-TW')}\n\n`
+          ) +
           `請選擇付款方式，付款完成後請上傳付款證明。`
         )
         .setTimestamp()
@@ -7226,9 +7428,13 @@ async function submitSteamGameName(interaction) {
 }
 function buildServiceTextFromPending(pending) {
   if (pending.category === 'valorant') {
+    const typeText =
+      Array.isArray(pending.serviceTypes) && pending.serviceTypes.length
+        ? pending.serviceTypes.join('＋')
+        : pending.serviceType;
     return [
       '特戰英豪',
-      pending.serviceType,
+      typeText,
       pending.playMode,
       pending.rank,
       pending.duration ? `${pending.duration}小時` : '',
@@ -7272,14 +7478,22 @@ function buildServiceTextFromPending(pending) {
 }
 function getDispatchServiceKeyFromPending(pending) {
   if (pending.category === 'valorant') {
-    if (pending.serviceType === '娛樂') {
-      return '特戰英豪娛樂陪玩';
-    }
-
-    if (pending.serviceType === '技術') {
+    const serviceTypes =
+      Array.isArray(pending.serviceTypes)
+        ? pending.serviceTypes
+        : [];
+    if (
+      serviceTypes.includes('技術') ||
+      pending.serviceType === '技術'
+    ) {
       return '特戰英豪技術陪玩';
     }
-
+    if (
+      serviceTypes.includes('娛樂') ||
+      pending.serviceType === '娛樂'
+    ) {
+      return '特戰英豪娛樂陪玩';
+    }
     return '特戰英豪';
   }
 
@@ -7385,6 +7599,203 @@ async function createPlayOrderFromServicePending(pending, channelId) {
 
   return data;
 }
+function clonePendingForValorantSplit(pending, splitRole, splitPrice) {
+  return {
+    ...pending,
+    serviceType: splitRole,
+    serviceTypes: [splitRole],
+    quotedPrice: splitPrice,
+    quoteParts: null
+  };
+}
+
+async function createValorantSplitOrdersFromPending(pending, channelId) {
+  const entertainPrice =
+    Number(pending.quoteParts?.entertain || 0);
+
+  const skillPrice =
+    Number(pending.quoteParts?.skill || 0);
+
+  if (!entertainPrice || !skillPrice) {
+    throw new Error('娛樂 / 技術報價不完整');
+  }
+
+  const groupId =
+    `VG-${Date.now()}-${pending.customerId}`;
+
+  const entertainPending =
+    clonePendingForValorantSplit(
+      pending,
+      '娛樂',
+      entertainPrice
+    );
+
+  const skillPending =
+    clonePendingForValorantSplit(
+      pending,
+      '技術',
+      skillPrice
+    );
+
+  const entertainOrder =
+    await createPlayOrderFromServicePending(
+      entertainPending,
+      channelId
+    );
+
+  const skillOrder =
+    await createPlayOrderFromServicePending(
+      skillPending,
+      channelId
+    );
+
+  const totalPrice =
+    entertainPrice + skillPrice;
+
+  await supabase
+    .from('play_orders')
+    .update({
+      order_group_id: groupId,
+      split_role: '娛樂',
+      group_total_price: totalPrice
+    })
+    .eq('id', entertainOrder.id);
+
+  await supabase
+    .from('play_orders')
+    .update({
+      order_group_id: groupId,
+      split_role: '技術',
+      group_total_price: totalPrice
+    })
+    .eq('id', skillOrder.id);
+
+  const { data: orders, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('order_group_id', groupId);
+
+  if (error || !orders?.length) {
+    console.error('[特戰分單] 讀取分單失敗', error);
+    throw new Error('建立分單後讀取失敗');
+  }
+
+  return {
+    groupId,
+    totalPrice,
+    orders
+  };
+}
+async function sendServiceWalletConfirm(interaction, order, orderGroup) {
+  const isGroup =
+    !!orderGroup;
+
+  const totalAmount =
+    isGroup
+      ? Number(orderGroup.totalPrice || 0)
+      : Number(order.final_price || order.price || 0);
+
+  const confirmId =
+    isGroup
+      ? `service_confirm_wallet_group_${orderGroup.groupId}`
+      : `service_confirm_wallet_${order.id}`;
+
+  const cancelId =
+    isGroup
+      ? `service_cancel_wallet_group_${orderGroup.groupId}`
+      : `service_cancel_wallet_${order.id}`;
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(confirmId)
+          .setLabel('確認使用儲值卡付款')
+          .setEmoji('💳')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId(cancelId)
+          .setLabel('取消此付款方式')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await interaction.channel.send({
+    content: `<@${interaction.user.id}>`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ffd166')
+        .setTitle('💳 確認儲值卡付款')
+        .setDescription(
+          `請確認是否使用儲值卡 / 錢包付款。\n\n` +
+          `扣款金額：NT$${totalAmount.toLocaleString('zh-TW')}\n\n` +
+          (
+            isGroup
+              ? `此為特戰娛樂＋技術合併付款，系統會一次扣總額，扣款後分開派單。`
+              : `確認後會直接從你的 ASD 餘額扣款。`
+          )
+        )
+        .setTimestamp()
+    ],
+    components: [row]
+  });
+}
+
+async function sendServiceMonthlyConfirm(interaction, order, orderGroup) {
+  const isGroup =
+    !!orderGroup;
+
+  const totalAmount =
+    isGroup
+      ? Number(orderGroup.totalPrice || 0)
+      : Number(order.final_price || order.price || 0);
+
+  const confirmId =
+    isGroup
+      ? `service_confirm_monthly_group_${orderGroup.groupId}`
+      : `service_confirm_monthly_${order.id}`;
+
+  const cancelId =
+    isGroup
+      ? `service_cancel_monthly_group_${orderGroup.groupId}`
+      : `service_cancel_monthly_${order.id}`;
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(confirmId)
+          .setLabel('確認使用月結付款')
+          .setEmoji('🌙')
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId(cancelId)
+          .setLabel('取消此付款方式')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+  await interaction.channel.send({
+    content: `<@${interaction.user.id}>`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#66ccff')
+        .setTitle('🌙 確認月結付款')
+        .setDescription(
+          `請確認是否使用月結額度付款。\n\n` +
+          `扣額金額：NT$${totalAmount.toLocaleString('zh-TW')}\n\n` +
+          (
+            isGroup
+              ? `此為特戰娛樂＋技術合併付款，系統會一次扣總額，扣款後分開派單。`
+              : `確認後會直接扣除你的月結可用額度。`
+          )
+        )
+        .setTimestamp()
+    ],
+    components: [row]
+  });
+}
 async function handleServicePaymentMethodSelect(interaction) {
   await interaction.deferReply({
     flags: 64
@@ -7414,131 +7825,56 @@ async function handleServicePaymentMethodSelect(interaction) {
   pending.paymentMethod = paymentMethod;
   pendingServiceOrders.set(flowId, pending);
 
-  let order;
-
+  let order = null;
+  let orderGroup = null;
+  const serviceTypes =
+    Array.isArray(pending.serviceTypes)
+      ? pending.serviceTypes
+      : [];
+  const isValorantSplit =
+    pending.category === 'valorant' &&
+    serviceTypes.includes('娛樂') &&
+    serviceTypes.includes('技術') &&
+    pending.quoteParts;
   try {
-    order =
-      await createPlayOrderFromServicePending(
-        pending,
-        interaction.channel.id
-      );
+    if (isValorantSplit) {
+      orderGroup =
+        await createValorantSplitOrdersFromPending(
+          pending,
+          interaction.channel.id
+        );
+    } else {
+      order =
+        await createPlayOrderFromServicePending(
+          pending,
+          interaction.channel.id
+        );
+    }
   } catch (err) {
     console.error('[新版下單] 建立訂單失敗', err);
     return interaction.editReply({
       content: `❌ 建立訂單失敗：${err.message || err}`
     });
   }
-
   if (paymentMethod === '儲值卡') {
-    try {
-      if (!paymentHelpers.payOrderByWallet) {
-        throw new Error('儲值卡付款函式尚未接入');
-      }
-
-      const result =
-        await paymentHelpers.payOrderByWallet(order);
-      await supabase
-        .from('play_orders')
-        .update({
-          status: 'pending',
-          quote_status: 'dispatched',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', order.id);
-      const { data: paidOrder } =
-        await supabase
-          .from('play_orders')
-          .select('*')
-          .eq('id', order.id)
-          .single();
-
-      await interaction.channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#57F287')
-            .setTitle('✅ 儲值卡付款完成')
-            .setDescription(
-              `<@${order.customer_id}> 已使用儲值卡 / 錢包完成付款。\n\n` +
-              `扣款金額：${result.amount} ASD\n` +
-              `剩餘餘額：${result.finalCoins} ASD\n\n` +
-              `系統已自動派單。`
-            )
-            .setTimestamp()
-        ]
-      });
-
-      await sendOrderToStaffChannel(paidOrder || order);
-      await sendStaffOrderControlPanel(
-        interaction.channel,
-        paidOrder || order
-      );
-      pendingServiceOrders.delete(flowId);
-
-      return interaction.editReply({
-        content: '✅ 已使用儲值卡付款，並已派單。'
-      });
-    } catch (err) {
-      console.error('[新版下單] 儲值卡付款失敗', err);
-      return interaction.editReply({
-        content: `❌ 儲值卡付款失敗：${err.message || err}`
-      });
-    }
+    await sendServiceWalletConfirm(
+      interaction,
+      order,
+      orderGroup
+    );
+    return interaction.editReply({
+      content: '✅ 已選擇儲值卡 / 錢包付款，請確認是否使用此付款方式。'
+    });
   }
-
   if (paymentMethod === '月結') {
-    try {
-      if (!paymentHelpers.payOrderByMonthly) {
-        throw new Error('月結付款函式尚未接入');
-      }
-
-      const result =
-        await paymentHelpers.payOrderByMonthly(order);
-      await supabase
-        .from('play_orders')
-        .update({
-          status: 'pending',
-          quote_status: 'dispatched',
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', order.id);
-      const { data: paidOrder } =
-        await supabase
-          .from('play_orders')
-          .select('*')
-          .eq('id', order.id)
-          .single();
-
-      await interaction.channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor('#57F287')
-            .setTitle('✅ 月結付款完成')
-            .setDescription(
-              `<@${order.customer_id}> 已使用月結付款。\n\n` +
-              `本次扣額：NT$${result.amount}\n` +
-              `回饋：${result.cashback} ASD\n` +
-              `剩餘月結額度：NT$${result.availableAmount}\n\n` +
-              `系統已自動派單。`
-            )
-            .setTimestamp()
-        ]
-      });
-
-      await sendOrderToStaffChannel(paidOrder || order);
-      await sendStaffOrderControlPanel(
-        interaction.channel,
-        paidOrder || order
-      );
-      pendingServiceOrders.delete(flowId);
-      return interaction.editReply({
-        content: '✅ 已使用月結付款，並已派單。'
-      });
-    } catch (err) {
-      console.error('[新版下單] 月結付款失敗', err);
-      return interaction.editReply({
-        content: `❌ 月結付款失敗：${err.message || err}`
-      });
-    }
+    await sendServiceMonthlyConfirm(
+      interaction,
+      order,
+      orderGroup
+    );
+    return interaction.editReply({
+      content: '✅ 已選擇月結付款，請確認是否使用此付款方式。'
+    });
   }
 
   if (paymentMethod === '匯款') {
@@ -7561,16 +7897,23 @@ async function handleServicePaymentMethodSelect(interaction) {
     });
   }
 
+  const confirmCustomId =
+    orderGroup
+      ? `service_confirm_paid_group_${orderGroup.groupId}`
+      : `service_confirm_paid_${order.id}`;
+  const cancelCustomId =
+    orderGroup
+      ? `service_cancel_order_group_${orderGroup.groupId}`
+      : `service_cancel_order_${order.id}`;
   const row =
     new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
-          .setCustomId(`service_confirm_paid_${order.id}`)
+          .setCustomId(confirmCustomId)
           .setLabel('客服確認付款，派單')
           .setStyle(ButtonStyle.Success),
-
         new ButtonBuilder()
-          .setCustomId(`service_cancel_order_${order.id}`)
+          .setCustomId(cancelCustomId)
           .setLabel('取消訂單')
           .setStyle(ButtonStyle.Danger)
       );
@@ -7578,6 +7921,11 @@ async function handleServicePaymentMethodSelect(interaction) {
   await interaction.channel.send({
     content:
       `<@&${process.env.STAFF_ROLE}> 客人已選擇付款方式：${paymentMethod}\n` +
+      (
+        orderGroup
+          ? `本次為特戰娛樂＋技術合併付款，合計 NT$${orderGroup.totalPrice.toLocaleString('zh-TW')}。\n`
+          : ''
+      ) +
       `付款完成並確認明細後，請按「客服確認付款，派單」。`,
     components: [row]
   });
@@ -7586,6 +7934,517 @@ async function handleServicePaymentMethodSelect(interaction) {
 
   return interaction.editReply({
     content: `✅ 已選擇付款方式：${paymentMethod}，請依照頻道內資訊完成付款。`
+  });
+}
+async function handleServiceConfirmWallet(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const orderId =
+    interaction.customId.replace('service_confirm_wallet_', '');
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .maybeSingle();
+
+  if (error || !order) {
+    console.error('[儲值卡確認] 找不到訂單', error);
+    return interaction.editReply({
+      content: '❌ 找不到訂單'
+    });
+  }
+
+  if (interaction.user.id !== order.customer_id) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以確認付款'
+    });
+  }
+
+  try {
+    const result =
+      await paymentHelpers.payOrderByWallet(order);
+
+    await supabase
+      .from('play_orders')
+      .update({
+        status: 'pending',
+        quote_status: 'dispatched',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', order.id);
+
+    const { data: paidOrder } =
+      await supabase
+        .from('play_orders')
+        .select('*')
+        .eq('id', order.id)
+        .single();
+
+    await sendOrderToStaffChannel(paidOrder || order);
+
+    await sendStaffOrderControlPanel(
+      interaction.channel,
+      paidOrder || order
+    );
+
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('✅ 儲值卡付款完成')
+          .setDescription(
+            `<@${order.customer_id}> 已確認使用儲值卡付款。\n\n` +
+            `扣款金額：${Number(result.amount || 0).toLocaleString('zh-TW')} ASD\n` +
+            `剩餘餘額：${Number(result.finalCoins || 0).toLocaleString('zh-TW')} ASD\n\n` +
+            `系統已自動派單。`
+          )
+          .setTimestamp()
+      ]
+    });
+
+    return interaction.editReply({
+      content: '✅ 儲值卡付款成功，已派單。'
+    });
+  } catch (err) {
+    console.error('[儲值卡確認] 扣款失敗', err);
+
+    return interaction.editReply({
+      content: `❌ 儲值卡付款失敗：${err.message || err}`
+    });
+  }
+}
+async function handleServiceConfirmMonthly(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const orderId =
+    interaction.customId.replace('service_confirm_monthly_', '');
+
+  const { data: order, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('id', orderId)
+      .maybeSingle();
+
+  if (error || !order) {
+    console.error('[月結確認] 找不到訂單', error);
+    return interaction.editReply({
+      content: '❌ 找不到訂單'
+    });
+  }
+
+  if (interaction.user.id !== order.customer_id) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以確認付款'
+    });
+  }
+
+  try {
+    const result =
+      await paymentHelpers.payOrderByMonthly(order);
+
+    await supabase
+      .from('play_orders')
+      .update({
+        status: 'pending',
+        quote_status: 'dispatched',
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', order.id);
+
+    const { data: paidOrder } =
+      await supabase
+        .from('play_orders')
+        .select('*')
+        .eq('id', order.id)
+        .single();
+
+    await sendOrderToStaffChannel(paidOrder || order);
+
+    await sendStaffOrderControlPanel(
+      interaction.channel,
+      paidOrder || order
+    );
+
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('✅ 月結付款完成')
+          .setDescription(
+            `<@${order.customer_id}> 已確認使用月結付款。\n\n` +
+            `本次扣額：NT$${Number(result.amount || 0).toLocaleString('zh-TW')}\n` +
+            `剩餘月結額度：NT$${Number(result.availableAmount || 0).toLocaleString('zh-TW')}\n\n` +
+            `系統已自動派單。`
+          )
+          .setTimestamp()
+      ]
+    });
+
+    return interaction.editReply({
+      content: '✅ 月結付款成功，已派單。'
+    });
+  } catch (err) {
+    console.error('[月結確認] 扣額失敗', err);
+
+    return interaction.editReply({
+      content: `❌ 月結付款失敗：${err.message || err}`
+    });
+  }
+}
+async function handleServiceConfirmWalletGroup(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const groupId =
+    interaction.customId.replace('service_confirm_wallet_group_', '');
+
+  const { data: orders, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('order_group_id', groupId)
+      .order('id', { ascending: true });
+
+  if (error || !orders?.length) {
+    console.error('[特戰分單儲值卡] 找不到分單', error);
+    return interaction.editReply({
+      content: '❌ 找不到這組分單'
+    });
+  }
+
+  const customerId =
+    orders[0].customer_id;
+
+  if (interaction.user.id !== customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以確認付款'
+    });
+  }
+
+  const totalAmount =
+    orders.reduce(
+      (sum, order) =>
+        sum + Number(order.final_price || order.price || 0),
+      0
+    );
+
+  try {
+    const userData =
+      await getUser(customerId);
+
+    const currentCoins =
+      Number(userData.coins || 0);
+
+    if (currentCoins < totalAmount) {
+      return interaction.editReply({
+        content:
+          `❌ ASD 餘額不足。\n` +
+          `目前餘額：${currentCoins.toLocaleString('zh-TW')} ASD\n` +
+          `需要金額：${totalAmount.toLocaleString('zh-TW')} ASD`
+      });
+    }
+
+    const finalCoins =
+      await paymentHelpers.changeCoins(
+        customerId,
+        -totalAmount
+      );
+
+    await paymentHelpers.sendWalletLog(
+      customerId,
+      '訂單扣款',
+      -totalAmount,
+      finalCoins,
+      `特戰娛樂＋技術合併付款｜${groupId}`
+    );
+
+    const { data: paidOrders, error: updateError } =
+      await supabase
+        .from('play_orders')
+        .update({
+          paid: true,
+          paid_at: new Date().toISOString(),
+          status: 'pending',
+          quote_status: 'dispatched',
+          updated_at: new Date().toISOString()
+        })
+        .eq('order_group_id', groupId)
+        .select();
+
+    if (updateError || !paidOrders?.length) {
+      console.error('[特戰分單儲值卡] 更新付款狀態失敗', updateError);
+      throw new Error('更新付款狀態失敗');
+    }
+
+    for (const order of paidOrders) {
+      if (paymentHelpers.countOrderVipSpentOnce) {
+        await paymentHelpers.countOrderVipSpentOnce(
+          order,
+          '特戰分單儲值卡合併付款完成'
+        );
+      }
+
+      await sendOrderToStaffChannel(order);
+    }
+
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('✅ 特戰合併儲值卡付款完成')
+          .setDescription(
+            `已一次扣除總額：${totalAmount.toLocaleString('zh-TW')} ASD\n` +
+            `剩餘餘額：${Number(finalCoins || 0).toLocaleString('zh-TW')} ASD\n\n` +
+            `娛樂 / 技術已分開派單。`
+          )
+          .setTimestamp()
+      ]
+    });
+
+    return interaction.editReply({
+      content: '✅ 儲值卡合併付款成功，已分開派單。'
+    });
+  } catch (err) {
+    console.error('[特戰分單儲值卡] 扣款失敗', err);
+
+    return interaction.editReply({
+      content: `❌ 儲值卡合併付款失敗：${err.message || err}`
+    });
+  }
+}
+async function handleServiceConfirmMonthlyGroup(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const groupId =
+    interaction.customId.replace('service_confirm_monthly_group_', '');
+
+  const { data: orders, error } =
+    await supabase
+      .from('play_orders')
+      .select('*')
+      .eq('order_group_id', groupId)
+      .order('id', { ascending: true });
+
+  if (error || !orders?.length) {
+    console.error('[特戰分單月結] 找不到分單', error);
+    return interaction.editReply({
+      content: '❌ 找不到這組分單'
+    });
+  }
+
+  const customerId =
+    orders[0].customer_id;
+
+  if (interaction.user.id !== customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以確認付款'
+    });
+  }
+
+  const totalAmount =
+    orders.reduce(
+      (sum, order) =>
+        sum + Number(order.final_price || order.price || 0),
+      0
+    );
+
+  try {
+    const { data: account, error: accountError } =
+      await supabase
+        .from('member_monthly_accounts')
+        .select('*')
+        .eq('user_id', customerId)
+        .maybeSingle();
+
+    if (accountError || !account) {
+      throw new Error('尚未開通月結會員');
+    }
+
+    if (!account.enabled) {
+      throw new Error('月結會員目前已停用');
+    }
+
+    const monthlyLimit =
+      Number(account.monthly_limit || 0);
+
+    const usedAmount =
+      Number(account.used_amount || 0);
+
+    const availableAmount =
+      monthlyLimit - usedAmount;
+
+    if (availableAmount < totalAmount) {
+      throw new Error(
+        `月結額度不足，目前可用 NT$${availableAmount.toLocaleString('zh-TW')}`
+      );
+    }
+
+    const billingMonth =
+      getBillingMonth();
+
+    await supabase
+      .from('member_monthly_accounts')
+      .update({
+        used_amount: usedAmount + totalAmount,
+        updated_at: new Date().toISOString()
+      })
+      .eq('user_id', customerId);
+
+    for (const order of orders) {
+      const amount =
+        Number(order.final_price || order.price || 0);
+
+      const cashback =
+        Math.floor(amount * 0.03);
+
+      await supabase
+        .from('member_monthly_transactions')
+        .insert({
+          user_id: customerId,
+          source_type: 'order',
+          source_id: String(order.id),
+          item_name: order.service || order.order_item || '陪玩訂單',
+          benefit_type: order.game || '陪玩服務',
+          amount,
+          cashback,
+          billing_month: billingMonth,
+          status: 'unbilled'
+        });
+    }
+
+    const { data: paidOrders, error: updateError } =
+      await supabase
+        .from('play_orders')
+        .update({
+          paid: true,
+          paid_at: new Date().toISOString(),
+          status: 'pending',
+          quote_status: 'dispatched',
+          updated_at: new Date().toISOString()
+        })
+        .eq('order_group_id', groupId)
+        .select();
+
+    if (updateError || !paidOrders?.length) {
+      console.error('[特戰分單月結] 更新付款狀態失敗', updateError);
+      throw new Error('更新付款狀態失敗');
+    }
+
+    for (const order of paidOrders) {
+      if (paymentHelpers.countOrderVipSpentOnce) {
+        await paymentHelpers.countOrderVipSpentOnce(
+          order,
+          '特戰分單月結合併付款完成'
+        );
+      }
+
+      await sendOrderToStaffChannel(order);
+    }
+
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#57F287')
+          .setTitle('✅ 特戰合併月結付款完成')
+          .setDescription(
+            `已一次扣除月結總額：NT$${totalAmount.toLocaleString('zh-TW')}\n` +
+            `剩餘月結額度：NT$${(monthlyLimit - usedAmount - totalAmount).toLocaleString('zh-TW')}\n\n` +
+            `娛樂 / 技術已分開派單。`
+          )
+          .setTimestamp()
+      ]
+    });
+
+    return interaction.editReply({
+      content: '✅ 月結合併付款成功，已分開派單。'
+    });
+  } catch (err) {
+    console.error('[特戰分單月結] 扣額失敗', err);
+
+    return interaction.editReply({
+      content: `❌ 月結合併付款失敗：${err.message || err}`
+    });
+  }
+}
+async function handleServiceConfirmPaidGroup(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以確認付款'
+    });
+  }
+
+  const groupId =
+    interaction.customId.replace('service_confirm_paid_group_', '');
+
+  const { data: orders, error } =
+    await supabase
+      .from('play_orders')
+      .update({
+        paid: true,
+        paid_at: new Date().toISOString(),
+        status: 'pending',
+        quote_status: 'dispatched',
+        updated_at: new Date().toISOString()
+      })
+      .eq('order_group_id', groupId)
+      .select();
+
+  if (error || !orders?.length) {
+    console.error('[特戰分單] 確認付款失敗', error);
+    return interaction.editReply({
+      content: '❌ 確認付款失敗'
+    });
+  }
+
+  for (const order of orders) {
+    if (paymentHelpers.countOrderVipSpentOnce) {
+      await paymentHelpers.countOrderVipSpentOnce(
+        order,
+        '客服確認特戰分單付款完成'
+      );
+    }
+
+    await sendOrderToStaffChannel(order);
+  }
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('✅ 特戰合併付款已確認')
+        .setDescription(
+          `已分開派單：\n\n` +
+          orders.map(order => {
+            return (
+              `・${order.split_role || '分單'}：` +
+              `${order.service || '未填寫'}｜NT$${Number(order.final_price || order.price || 0).toLocaleString('zh-TW')}`
+            );
+          }).join('\n')
+        )
+        .setTimestamp()
+    ]
+  });
+
+  return interaction.editReply({
+    content: '✅ 已確認合併付款，娛樂 / 技術已分開派單。'
   });
 }
 async function handleServiceConfirmPaid(interaction) {
@@ -7640,6 +8499,44 @@ async function handleServiceConfirmPaid(interaction) {
   );
   return interaction.editReply({
     content: '✅ 已確認付款，並已派單，客服操作面板也已送出。'
+  });
+}
+async function handleServiceCancelOrderGroup(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const isStaff =
+    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
+    interaction.member.roles.cache.has(process.env.STAFF_ROLE);
+
+  if (!isStaff) {
+    return interaction.editReply({
+      content: '❌ 只有客服可以取消訂單'
+    });
+  }
+
+  const groupId =
+    interaction.customId.replace('service_cancel_order_group_', '');
+
+  const { error } =
+    await supabase
+      .from('play_orders')
+      .update({
+        status: 'cancelled',
+        updated_at: new Date().toISOString()
+      })
+      .eq('order_group_id', groupId);
+
+  if (error) {
+    console.error('[特戰分單] 取消訂單失敗', error);
+    return interaction.editReply({
+      content: '❌ 取消訂單失敗'
+    });
+  }
+
+  return interaction.editReply({
+    content: '✅ 已取消這組特戰分單'
   });
 }
 async function handleServiceCancelOrder(interaction) {
@@ -7803,6 +8700,40 @@ async function handleDispatchInteraction(interaction) {
       await openServiceQuotePriceModal(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('service_confirm_wallet_group_')) {
+      await handleServiceConfirmWalletGroup(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_confirm_monthly_group_')) {
+      await handleServiceConfirmMonthlyGroup(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_confirm_wallet_')) {
+      await handleServiceConfirmWallet(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_confirm_monthly_')) {
+      await handleServiceConfirmMonthly(interaction);
+      return true;
+    }
+    if (
+      interaction.customId.startsWith('service_cancel_wallet_') ||
+      interaction.customId.startsWith('service_cancel_monthly_')
+    ) {
+      await interaction.reply({
+        content: '已取消此付款方式，請重新選擇付款方式或聯繫客服。',
+        flags: 64
+      });
+      return true;
+    }
+    if (interaction.customId.startsWith('service_confirm_paid_group_')) {
+      await handleServiceConfirmPaidGroup(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_cancel_order_group_')) {
+      await handleServiceCancelOrderGroup(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('service_confirm_paid_')) {
       await handleServiceConfirmPaid(interaction);
       return true;
@@ -7894,6 +8825,20 @@ async function handleDispatchInteraction(interaction) {
     if (interaction.customId.startsWith('extend_order_')) {
       await openExtendOrderModal(interaction);
       return true;
+    }
+    if (interaction.customId.startsWith('confirm_extension_wallet_')) {
+      await handleConfirmExtensionWallet(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('cancel_extension_wallet_')) {
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({
+          flags: 64
+        });
+      }
+      return interaction.editReply({
+        content: '已取消加時儲值卡付款，請重新選擇付款方式或聯繫客服。'
+      });
     }
     if (interaction.customId.startsWith('staff_confirm_extension_paid_')) {
       await handleStaffConfirmExtensionPaid(interaction);
