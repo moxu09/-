@@ -27,6 +27,7 @@ function getServiceName(serviceType) {
   if (serviceType === 'valorant') return '特戰英豪';
   if (serviceType === 'steam') return 'Steam';
   if (serviceType === 'delta') return '三角洲';
+  if (serviceType === 'pubg') return '絕地求生';
   if (serviceType === 'chat') return '陪聊';
   if (serviceType === 'emotion') return '出氣包';
   return '訂單';
@@ -302,15 +303,191 @@ function matchPlayerGender(player, genderPreference) {
 
   return true;
 }
+function cleanServiceKey(text = '') {
+  return String(text || '')
+    .replace(/\s+/g, '')
+    .replace(/[｜|]/g, '')
+    .replace(/　/g, '')
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .trim();
+}
 
+function getRequiredServiceRoleIdsFromPending(pending = {}) {
+  const game =
+    cleanServiceKey(pending.game || pending.category || '');
+
+  const item =
+    cleanServiceKey(
+      pending.item ||
+      pending.serviceType ||
+      pending.service ||
+      pending.playMode ||
+      pending.deltaMode ||
+      pending.steamCategory ||
+      ''
+    );
+
+  const combined =
+    `${game}${item}`;
+
+  // ===== 特戰英豪 =====
+  if (
+    game.includes('特戰英豪') ||
+    game.includes('valorant') ||
+    pending.category === 'valorant'
+  ) {
+    if (item.includes('娛樂') || combined.includes('娛樂')) {
+      return [process.env.VALORANT_ENTERTAIN_ROLE_ID].filter(Boolean);
+    }
+
+    if (item.includes('技術') || combined.includes('技術')) {
+      return [process.env.VALORANT_SKILL_ROLE_ID].filter(Boolean);
+    }
+
+    return [process.env.VALORANT_ENTERTAIN_ROLE_ID].filter(Boolean);
+  }
+
+  // ===== 三角洲 =====
+  if (
+    game.includes('三角洲') ||
+    game.includes('delta') ||
+    pending.category === 'delta'
+  ) {
+    if (
+      item.includes('娛樂') ||
+      item.includes('一般') ||
+      combined.includes('娛樂') ||
+      combined.includes('一般')
+    ) {
+      return [process.env.DELTA_ENTERTAIN_ROLE_ID].filter(Boolean);
+    }
+
+    if (
+      item.includes('雙護') ||
+      item.includes('猛攻') ||
+      item.includes('護航') ||
+      item.includes('單護') 
+    ) {
+      return [process.env.DELTA_SKILL_ROLE_ID].filter(Boolean);
+    }
+
+    return [process.env.DELTA_ENTERTAIN_ROLE_ID].filter(Boolean);
+  }
+
+  // ===== Steam =====
+  if (
+    game.includes('Steam') ||
+    game.includes('steam') ||
+    pending.category === 'steam'
+  ) {
+    return [process.env.STEAM_ROLE_ID].filter(Boolean);
+  }
+
+  // ===== 絕地求生 PUBG =====
+  if (
+    game.includes('絕地求生') ||
+    game.includes('PUBG') ||
+    game.includes('pubg') ||
+    pending.category === 'pubg'
+  ) {
+    return [process.env.PUBG_ROLE_ID].filter(Boolean);
+  }
+
+  // ===== 陪聊 =====
+  if (
+    game.includes('陪聊') ||
+    item.includes('陪聊') ||
+    pending.category === 'chat'
+  ) {
+    return [process.env.CHAT_ROLE_ID].filter(Boolean);
+  }
+
+  // ===== 出氣包 =====
+  if (
+    game.includes('出氣') ||
+    item.includes('出氣') ||
+    pending.category === 'emotion'
+  ) {
+    return [process.env.EMOTION_ROLE_ID].filter(Boolean);
+  }
+
+  return [];
+}
+function getAllServiceRoleIds() {
+  return [
+    process.env.VALORANT_ENTERTAIN_ROLE_ID,
+    process.env.VALORANT_SKILL_ROLE_ID,
+
+    process.env.DELTA_ENTERTAIN_ROLE_ID,
+    process.env.DELTA_SKILL_ROLE_ID,
+
+    process.env.STEAM_ROLE_ID,
+    process.env.PUBG_ROLE_ID,
+
+    process.env.CHAT_ROLE_ID,
+    process.env.EMOTION_ROLE_ID
+  ].filter(Boolean);
+}
+
+function memberHasAnyServiceRole(member) {
+  const serviceRoleIds =
+    getAllServiceRoleIds();
+
+  if (!serviceRoleIds.length) {
+    return false;
+  }
+
+  return serviceRoleIds.some(roleId =>
+    member.roles.cache.has(roleId)
+  );
+}
+
+async function memberHasRequiredServiceRole(guild, userId, requiredRoleIds = []) {
+  if (!requiredRoleIds.length) {
+    return false;
+  }
+
+  const member =
+    await guild.members.fetch(userId).catch(() => null);
+
+  if (!member) return false;
+
+  return requiredRoleIds.some(roleId =>
+    member.roles.cache.has(roleId)
+  );
+}
 async function getQualifiedPlayerOptions(pending) {
-  const keyword =
-    `${pending.game || ''}${pending.item || ''}`;
+  const guildId =
+    pending.guildId || process.env.GUILD_ID;
+
+  const guild =
+    client.guilds.cache.get(guildId);
+
+  if (!guild) {
+    console.error('[新下單] 找不到 guild', guildId);
+    return [];
+  }
+
+  const requiredRoleIds =
+    getRequiredServiceRoleIdsFromPending(pending);
+
+  if (!requiredRoleIds.length) {
+    console.error('[新下單] 找不到此服務對應的身分組', {
+      game: pending.game,
+      item: pending.item,
+      category: pending.category,
+      serviceType: pending.serviceType,
+      deltaMode: pending.deltaMode,
+      steamCategory: pending.steamCategory
+    });
+    return [];
+  }
 
   const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
+      .eq('guild_id', guildId)
       .order('status', { ascending: true });
 
   if (error) {
@@ -318,10 +495,24 @@ async function getQualifiedPlayerOptions(pending) {
     return [];
   }
 
-  const filtered =
-    (players || [])
-      .filter(player => matchPlayerService(player, keyword))
-      .filter(player => matchPlayerGender(player, pending.gender));
+  const filtered = [];
+
+  for (const player of players || []) {
+    if (!player.discord_id) continue;
+
+    const hasRole =
+      await memberHasRequiredServiceRole(
+        guild,
+        String(player.discord_id),
+        requiredRoleIds
+      );
+
+    if (!hasRole) continue;
+
+    if (!matchPlayerGender(player, pending.gender || pending.genderPreference)) continue;
+
+    filtered.push(player);
+  }
 
   const onlinePlayers =
     filtered.filter(player => player.status === 'available');
@@ -446,42 +637,58 @@ async function sendPlayLog({
 }
 // 陪玩上班
 async function playerOnline(interaction) {
+  const guildId =
+    interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
+
+  if (!memberHasAnyServiceRole(interaction.member)) {
+    return interaction.editReply({
+      content: '❌ 你沒有任何可接單服務身分組，不能開始接單。'
+    });
+  }
+
   const { data: oldPlayer } =
     await supabase
       .from('players')
       .select('*')
+      .eq('guild_id', guildId)
       .eq('discord_id', interaction.user.id)
       .maybeSingle();
 
   await supabase
     .from('players')
     .upsert({
+      guild_id: guildId,
       discord_id: interaction.user.id,
-      // 不覆蓋資料庫原本設定好的陪陪名稱
       name:
         oldPlayer?.name ||
         interaction.member?.displayName ||
         interaction.user.username,
-      game: oldPlayer?.game || 'delta_force',
+      game: oldPlayer?.game || 'auto_role',
       allowed_services: oldPlayer?.allowed_services || [],
       report_channel_id: oldPlayer?.report_channel_id || null,
+      salary_rate: oldPlayer?.salary_rate || 0.8,
       status: 'available',
       online_started_at: new Date()
     }, {
-      onConflict: 'discord_id'
+      onConflict: 'guild_id,discord_id'
     });
+
   await interaction.editReply({
-    content: '🟢 你已開始接單',
+    content: '🟢 你已開始接單，系統已依照你的服務身分組開放可接項目。'
   });
 }
 
 // 陪玩下班
 async function playerOffline(interaction) {
+  const guildId =
+    interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
+
   await supabase
     .from('players')
     .update({
       status: 'offline'
     })
+    .eq('guild_id', guildId)
     .eq('discord_id', interaction.user.id);
 
   await interaction.editReply({
@@ -612,11 +819,15 @@ async function sendDailyPlayerSummary() {
 }
 // 查看狀態
 async function playerStatus(interaction) {
+  const guildId =
+    interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
+
   const { data } = await supabase
     .from('players')
     .select('*')
+    .eq('guild_id', guildId)
     .eq('discord_id', interaction.user.id)
-    .single();
+    .maybeSingle();
 
   if (!data) {
     return interaction.editReply({
@@ -624,10 +835,46 @@ async function playerStatus(interaction) {
     });
   }
 
+  const serviceRoleText = [];
+
+  if (process.env.VALORANT_ENTERTAIN_ROLE_ID && interaction.member.roles.cache.has(process.env.VALORANT_ENTERTAIN_ROLE_ID)) {
+    serviceRoleText.push('特戰娛樂');
+  }
+
+  if (process.env.VALORANT_SKILL_ROLE_ID && interaction.member.roles.cache.has(process.env.VALORANT_SKILL_ROLE_ID)) {
+    serviceRoleText.push('特戰技術');
+  }
+
+  if (process.env.STEAM_ROLE_ID && interaction.member.roles.cache.has(process.env.STEAM_ROLE_ID)) {
+    serviceRoleText.push('Steam');
+  }
+
+  if (process.env.DELTA_SKILL_ROLE_ID && interaction.member.roles.cache.has(process.env.DELTA_SKILL_ROLE_ID)) {
+    serviceRoleText.push('三角洲');
+  }
+
+  if (process.env.DELTA_ENTERTAIN_ROLE_ID && interaction.member.roles.cache.has(process.env.DELTA_ENTERTAIN_ROLE_ID)) {
+    serviceRoleText.push('三角洲娛樂');
+  }
+
+  if (process.env.PUBG_ROLE_ID && interaction.member.roles.cache.has(process.env.PUBG_ROLE_ID)) {
+    serviceRoleText.push('絕地求生');
+  }
+
+  if (process.env.CHAT_ROLE_ID && interaction.member.roles.cache.has(process.env.CHAT_ROLE_ID)) {
+    serviceRoleText.push('陪聊');
+  }
+
+  
+  if (process.env.EMOTION_ROLE_ID && interaction.member.roles.cache.has(process.env.EMOTION_ROLE_ID)) {
+    serviceRoleText.push('出氣包');
+  }
+
   await interaction.editReply({
     content:
       `📋 你的狀態：${data.status}\n` +
-      `📦 完成單數：${data.total_orders}`,
+      `📦 完成單數：${data.total_orders || 0}\n` +
+      `🎮 可接服務：${serviceRoleText.join('、') || '未偵測到服務身分組'}`
   });
 }
 function buildPreferredPlayerText(preferredPlayerIds) {
@@ -1041,6 +1288,7 @@ async function createServiceTicket(interaction, serviceType) {
 
   pendingServiceOrders.set(flowId, {
     flowId,
+    guildId: interaction.guildId || interaction.guild?.id || process.env.GUILD_ID,
     channelId: channel.id,
     customerId: interaction.user.id,
     customerUsername: interaction.user.username,
@@ -1714,6 +1962,7 @@ async function openPlayOrderModal(interaction) {
 
   pendingNewOrders.set(flowId, {
     userId: interaction.user.id,
+    guildId: interaction.guildId || interaction.guild?.id || process.env.GUILD_ID,
     channelId: interaction.channel.id,
     game: '',
     item: '',
