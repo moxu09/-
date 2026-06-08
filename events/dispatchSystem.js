@@ -37,6 +37,12 @@ function setup(supabaseInstance, clientInstance, helpers = {}) {
   client = clientInstance;
   paymentHelpers = helpers;
 }
+function getBillingMonth(date = new Date()) {
+  const taiwanDate =
+    new Date(date.getTime() + 8 * 60 * 60 * 1000);
+
+  return taiwanDate.toISOString().slice(0, 7);
+}
 function isCardPayment(text = '') {
   return (
     text.includes('刷卡') ||
