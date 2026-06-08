@@ -570,38 +570,50 @@ async function handleTipPaymentSelect(interaction) {
   });
 }
 // ===== Panel Message =====
-async function getPanelMessage(panelName) {
+async function getPanelMessage(panelName, guildId = process.env.GUILD_ID) {
   const { data, error } = await supabase
     .from('panel_messages')
     .select('*')
+    .eq('guild_id', guildId)
     .eq('panel_name', panelName)
-    .single();
-  if (error && error.code !== 'PGRST116') {
+    .maybeSingle();
+
+  if (error) {
     console.error('[Panel] 讀取失敗', error);
   }
+
   return data;
 }
-async function savePanelMessage(panelName, channelId, messageId) {
+async function savePanelMessage(
+  panelName,
+  channelId,
+  messageId,
+  guildId = process.env.GUILD_ID
+) {
   if (!channelId || !messageId) {
     console.warn('[Panel] skip save - missing data', {
       panelName,
       channelId,
-      messageId
+      messageId,
+      guildId
     });
     return;
   }
+
   const res = await supabase
     .from('panel_messages')
     .upsert(
       {
+        guild_id: guildId,
         panel_name: panelName,
         channel_id: channelId,
         message_id: messageId
       },
       {
-        onConflict: 'panel_name'
+        onConflict: 'guild_id,panel_name'
       }
     );
+
   if (res.error) {
     console.error('[Panel] 儲存失敗', res.error);
   }
