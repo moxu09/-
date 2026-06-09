@@ -3764,7 +3764,6 @@ async function sendBankTransferInfo(channel) {
     .setFooter({
       text: '請確認金額正確後再匯款'
     })
-    .setTimestamp();
 
   await channel.send({
     embeds: [embed]
