@@ -641,7 +641,7 @@ async function playerOnline(interaction) {
   const guildId =
     interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
 
-  const { data: oldPlayer } =
+  const { data: oldPlayer, error } =
     await supabase
       .from('players')
       .select('*')
@@ -649,21 +649,23 @@ async function playerOnline(interaction) {
       .eq('discord_id', interaction.user.id)
       .maybeSingle();
 
-  const hasRoleService = memberHasAnyServiceRole(interaction.member);
-  const hasDbService = hasAllowedServicesFromDb(oldPlayer);
+  if (error) {
+    console.error('[開始接單] 讀取 players 失敗:', error);
 
-  const { data: player } = await supabase
-    .from('players')
-    .select('*')
-    .eq('guild_id', interaction.guildId)
-    .eq('discord_id', interaction.user.id)
-    .maybeSingle();
-  const hasRoleService = memberHasAnyServiceRole(interaction.member);
-  const hasDbService = hasAllowedServicesFromDb(player);
+    return interaction.editReply({
+      content: '❌ 讀取陪陪資料失敗，請稍後再試。'
+    });
+  }
+
+  const hasRoleService =
+    memberHasAnyServiceRole(interaction.member);
+
+  const hasDbService =
+    hasAllowedServicesFromDb(oldPlayer);
+
   if (!hasRoleService && !hasDbService) {
-    return interaction.reply({
-      content: '❌ 你沒有任何可接單服務身分組，也沒有後台設定的可接服務。',
-      ephemeral: true
+    return interaction.editReply({
+      content: '❌ 你沒有任何可接單服務身分組，也沒有後台設定的可接服務，不能開始接單。'
     });
   }
 
@@ -681,7 +683,7 @@ async function playerOnline(interaction) {
       report_channel_id: oldPlayer?.report_channel_id || null,
       salary_rate: oldPlayer?.salary_rate || 0.8,
       status: 'available',
-      online_started_at: new Date()
+      online_started_at: new Date().toISOString()
     }, {
       onConflict: 'guild_id,discord_id'
     });
