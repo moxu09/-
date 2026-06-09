@@ -3857,12 +3857,25 @@ function getCouponDiscount(itemName = '') {
     };
   }
 
+  if (name.includes('7折')) {
+    return {
+      rate: 0.7,
+      label: '7折券'
+    };
+  }
+
+  if (name.includes('6折')) {
+    return {
+      rate: 0.6,
+      label: '6折券'
+    };
+  }
+
   return {
     rate: 1,
     label: name || '未知優惠券'
   };
 }
-
 function getCouponMaxDiscountPrice(itemName = '') {
   const name = String(itemName || '');
 
@@ -3874,7 +3887,18 @@ function getCouponMaxDiscountPrice(itemName = '') {
     return 800;
   }
 
-  // 8折券目前先不限制金額
+  if (name.includes('8折')) {
+    return 3000;
+  }
+
+  if (name.includes('7折')) {
+    return 5000;
+  }
+
+  if (name.includes('6折')) {
+    return 5000;
+  }
+
   return null;
 }
 async function handleQuoteUseCoupon(interaction) {
