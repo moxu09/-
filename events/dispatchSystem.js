@@ -664,8 +664,9 @@ async function playerOnline(interaction) {
     hasAllowedServicesFromDb(oldPlayer);
 
   if (!hasRoleService && !hasDbService) {
-    return interaction.editReply({
-      content: '❌ 你沒有任何可接單服務身分組，也沒有後台設定的可接服務，不能開始接單。'
+    console.log('[開始接單] 沒有偵測到服務權限，但允許先上班', {
+      guildId,
+      userId: interaction.user.id
     });
   }
 
