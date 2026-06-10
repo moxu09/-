@@ -6329,12 +6329,15 @@ async function acceptPlayOrder(interaction) {
     const orderId =
       interaction.customId.replace('accept_play_order_', '');
 
+    const guildId =
+      interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
     const { data: player, error: playerError } =
       await supabase
         .from('players')
         .select('*')
+        .eq('guild_id', guildId)
         .eq('discord_id', interaction.user.id)
-        .single();
+        .maybeSingle();
 
     if (playerError) {
       console.log('[接單錯誤 players]', playerError);
@@ -6511,6 +6514,7 @@ async function acceptPlayOrder(interaction) {
         await supabase
           .from('players')
           .update({ status: 'busy' })
+          .eq('guild_id', guildId)
           .eq('discord_id', playerId);
       }
     } 
