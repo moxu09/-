@@ -6329,13 +6329,13 @@ async function acceptPlayOrder(interaction) {
     const orderId =
       interaction.customId.replace('accept_play_order_', '');
 
-    const guildId =
-      interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
+    const playerGuildId =
+      interaction.guildId || interaction.guild?.id || process.env.STAFF_GUILD_ID;
     const { data: player, error: playerError } =
       await supabase
         .from('players')
         .select('*')
-        .eq('guild_id', guildId)
+        .eq('guild_id', playerGuildId)
         .eq('discord_id', interaction.user.id)
         .maybeSingle();
 
@@ -6514,7 +6514,7 @@ async function acceptPlayOrder(interaction) {
         await supabase
           .from('players')
           .update({ status: 'busy' })
-          .eq('guild_id', guildId)
+          .eq('guild_id', playerGuildId)
           .eq('discord_id', playerId);
       }
     } 
@@ -7548,6 +7548,47 @@ async function submitServiceQuotePrice(interaction) {
   pending.quotedPrice = price;
   pendingServiceOrders.set(flowId, pending);
 
+  const couponRow =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`service_use_coupon_${flowId}`)
+          .setLabel('使用優惠券')
+          .setEmoji('🎟️')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`service_no_coupon_${flowId}`)
+          .setLabel('不使用優惠券')
+          .setStyle(ButtonStyle.Secondary)
+      );
+  await interaction.channel.send({
+    content:
+      `<@${pending.customerId}> 客服已完成報價，請選擇是否使用優惠券。`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('💰 正式報價單')
+        .setDescription(
+          `服務：${getServiceName(pending.category)}\n` +
+          (
+            pending.quoteParts
+              ? `娛樂陪玩：NT$${pending.quoteParts.entertain.toLocaleString('zh-TW')}\n` +
+                `技術陪玩：NT$${pending.quoteParts.skill.toLocaleString('zh-TW')}\n` +
+                `合計金額：NT$${price.toLocaleString('zh-TW')}\n\n`
+              : `金額：NT$${price.toLocaleString('zh-TW')}\n\n`
+          ) +
+          `請先選擇是否使用優惠券，之後再選付款方式。`
+        )
+        .setTimestamp()
+    ],
+    components: [couponRow]
+  });
+
+  return interaction.editReply({
+    content: `✅ 已送出正式報價：NT$${price.toLocaleString('zh-TW')}`
+  });
+}
+async function sendServicePaymentMethodMenu(channel, flowId, pending) {
   const paymentMenu =
     new StringSelectMenuBuilder()
       .setCustomId(`service_payment_method_${flowId}`)
@@ -7579,23 +7620,25 @@ async function submitServiceQuotePrice(interaction) {
         }
       ]);
 
-  await interaction.channel.send({
+  const originalPrice =
+    Number(pending.quotedPrice || 0);
+
+  const finalPrice =
+    Number(pending.finalQuotedPrice || pending.quotedPrice || 0);
+
+  await channel.send({
     content:
-      `<@${pending.customerId}> 客服已完成報價，請選擇付款方式。`,
+      `<@${pending.customerId}> 請選擇付款方式：`,
     embeds: [
       new EmbedBuilder()
-        .setColor('#57F287')
-        .setTitle('💰 正式報價單')
+        .setColor('#66ccff')
+        .setTitle('💳 選擇付款方式')
         .setDescription(
-          `服務：${getServiceName(pending.category)}\n` +
-          (
-            pending.quoteParts
-              ? `娛樂陪玩：NT$${pending.quoteParts.entertain.toLocaleString('zh-TW')}\n` +
-                `技術陪玩：NT$${pending.quoteParts.skill.toLocaleString('zh-TW')}\n` +
-                `合計金額：NT$${price.toLocaleString('zh-TW')}\n\n`
-              : `金額：NT$${price.toLocaleString('zh-TW')}\n\n`
-          ) +
-          `請選擇付款方式，付款完成後請上傳付款證明。`
+          `原價：NT$${originalPrice.toLocaleString('zh-TW')}\n` +
+          `優惠券：${pending.couponName || '未使用'}\n` +
+          `折扣：NT$${Number(pending.discountAmount || 0).toLocaleString('zh-TW')}\n` +
+          `應付金額：NT$${finalPrice.toLocaleString('zh-TW')}\n\n` +
+          `月結付款也會使用折後金額扣額。`
         )
         .setTimestamp()
     ],
@@ -7603,9 +7646,234 @@ async function submitServiceQuotePrice(interaction) {
       new ActionRowBuilder().addComponents(paymentMenu)
     ]
   });
+}
+
+async function handleServiceNoCoupon(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_no_coupon_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  if (interaction.user.id !== pending.customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以選擇是否使用優惠券。'
+    });
+  }
+
+  pending.couponId = null;
+  pending.couponName = null;
+  pending.discountRate = 1;
+  pending.discountAmount = 0;
+  pending.finalQuotedPrice = Number(pending.quotedPrice || 0);
+
+  pendingServiceOrders.set(flowId, pending);
+
+  await sendServicePaymentMethodMenu(
+    interaction.channel,
+    flowId,
+    pending
+  );
 
   return interaction.editReply({
-    content: `✅ 已送出正式報價：NT$${price.toLocaleString('zh-TW')}`
+    content: '✅ 已選擇不使用優惠券，請繼續選擇付款方式。'
+  });
+}
+
+async function handleServiceUseCoupon(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_use_coupon_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  if (interaction.user.id !== pending.customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以選擇優惠券。'
+    });
+  }
+
+  const { data: coupons, error } =
+    await supabase
+      .from('user_items')
+      .select('*')
+      .eq('user_id', interaction.user.id)
+      .or(
+        'item_type.eq.coupon,item_name.ilike.%折券%,item_name.ilike.%優惠券%'
+      )
+      .order('created_at', { ascending: false });
+
+  if (error) {
+    console.error('[新版訂單優惠券] 讀取失敗', error);
+    return interaction.editReply({
+      content: '❌ 讀取優惠券失敗，請稍後再試。'
+    });
+  }
+
+  if (!coupons || coupons.length === 0) {
+    return interaction.editReply({
+      content: '❌ 你目前沒有可使用的優惠券，請改選「不使用優惠券」。'
+    });
+  }
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_select_coupon_${flowId}`)
+      .setPlaceholder('請選擇要使用的優惠券')
+      .addOptions(
+        coupons.slice(0, 25).map(coupon => {
+          const discount =
+            getCouponDiscount(coupon.item_name);
+
+          return {
+            label: String(coupon.item_name).slice(0, 100),
+            description:
+              `${discount.label}｜${coupon.description || '優惠券'}`
+                .slice(0, 100),
+            value: String(coupon.id)
+          };
+        })
+      );
+
+  return interaction.editReply({
+    content:
+      `🎟️ 請選擇要使用的優惠券：\n\n` +
+      `訂單金額：NT$${Number(pending.quotedPrice || 0).toLocaleString('zh-TW')}`,
+    components: [
+      new ActionRowBuilder().addComponents(menu)
+    ]
+  });
+}
+
+async function handleServiceSelectCoupon(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('service_select_coupon_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  if (interaction.user.id !== pending.customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以使用優惠券。'
+    });
+  }
+
+  const couponId =
+    interaction.values[0];
+
+  const { data: coupon, error } =
+    await supabase
+      .from('user_items')
+      .select('*')
+      .eq('id', Number(couponId))
+      .eq('user_id', interaction.user.id)
+      .maybeSingle();
+
+  if (
+    error ||
+    !coupon ||
+    !(
+      coupon.item_type === 'coupon' ||
+      String(coupon.item_name || '').includes('折券') ||
+      String(coupon.item_name || '').includes('優惠券')
+    )
+  ) {
+    return interaction.editReply({
+      content: '❌ 找不到這張優惠券，可能已經被使用。'
+    });
+  }
+
+  const originalPrice =
+    Number(pending.quotedPrice || 0);
+
+  if (!originalPrice || originalPrice <= 0) {
+    return interaction.editReply({
+      content: '❌ 訂單金額錯誤，請聯繫客服重新報價。'
+    });
+  }
+
+  const maxPrice =
+    getCouponMaxDiscountPrice(coupon.item_name);
+
+  if (maxPrice && originalPrice > maxPrice) {
+    return interaction.editReply({
+      content:
+        `❌ 這張優惠券只限 NT$${maxPrice.toLocaleString('zh-TW')} 內訂單使用。\n` +
+        `目前訂單金額：NT$${originalPrice.toLocaleString('zh-TW')}`
+    });
+  }
+
+  const discount =
+    getCouponDiscount(coupon.item_name);
+
+  const finalPrice =
+    Math.floor(originalPrice * discount.rate);
+
+  const discountAmount =
+    originalPrice - finalPrice;
+
+  pending.couponId = coupon.id;
+  pending.couponName = coupon.item_name;
+  pending.discountRate = discount.rate;
+  pending.discountAmount = discountAmount;
+  pending.finalQuotedPrice = finalPrice;
+
+  pendingServiceOrders.set(flowId, pending);
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('🎟️ 優惠券已套用')
+        .setDescription(
+          `<@${interaction.user.id}> 已使用：${coupon.item_name}\n\n` +
+          `原價：NT$${originalPrice.toLocaleString('zh-TW')}\n` +
+          `折扣：NT$${discountAmount.toLocaleString('zh-TW')}\n` +
+          `折後金額：NT$${finalPrice.toLocaleString('zh-TW')}`
+        )
+        .setTimestamp()
+    ]
+  });
+
+  await sendServicePaymentMethodMenu(
+    interaction.channel,
+    flowId,
+    pending
+  );
+
+  return interaction.editReply({
+    content: '✅ 優惠券已套用，請繼續選擇付款方式。',
+    components: []
   });
 }
 async function openServiceOrderNoteModal(interaction) {
@@ -7831,8 +8099,10 @@ function getDispatchServiceKeyFromPending(pending) {
   return getServiceName(pending.category);
 }
 async function createPlayOrderFromServicePending(pending, channelId) {
-  const amount =
+  const originalAmount =
     Number(pending.quotedPrice || 0);
+  const amount =
+    Number(pending.finalQuotedPrice || pending.quotedPrice || 0);
 
   if (!amount || amount <= 0) {
     throw new Error('尚未報價，不能建立訂單');
@@ -7889,8 +8159,12 @@ async function createPlayOrderFromServicePending(pending, channelId) {
 
         note: pending.note || '',
 
-        price: amount,
+        price: originalAmount,
+        original_price: originalAmount,
         final_price: amount,
+        discount_rate: Number(pending.discountRate || 1),
+        discount_amount: Number(pending.discountAmount || 0),
+        coupon_text: pending.couponName || '未使用優惠券',
         payment_method: pending.paymentMethod || null,
 
         paid: false,
@@ -8167,6 +8441,23 @@ async function handleServicePaymentMethodSelect(interaction) {
     return interaction.editReply({
       content: `❌ 建立訂單失敗：${err.message || err}`
     });
+  }
+  if (pending.couponId && order) {
+    await supabase
+      .from('user_items')
+      .delete()
+      .eq('id', pending.couponId);
+    await supabase
+      .from('used_coupons')
+      .insert({
+        user_id: pending.customerId,
+        item_id: pending.couponId,
+        item_name: pending.couponName,
+        order_id: order.id,
+        discount_rate: Number(pending.discountRate || 1),
+        discount_amount: Number(pending.discountAmount || 0)
+      })
+      .catch?.(() => {});
   }
   if (paymentMethod === '儲值卡') {
     await sendServiceWalletConfirm(
@@ -9019,6 +9310,14 @@ async function handleDispatchInteraction(interaction) {
       await openServiceQuotePriceModal(interaction);
       return true;
     }
+    if (interaction.customId.startsWith('service_use_coupon_')) {
+      await handleServiceUseCoupon(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_no_coupon_')) {
+      await handleServiceNoCoupon(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('service_confirm_wallet_group_')) {
       await handleServiceConfirmWalletGroup(interaction);
       return true;
@@ -9261,6 +9560,10 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId.startsWith('delta_mode_')) {
       await handleDeltaModeSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('service_select_coupon_')) {
+      await handleServiceSelectCoupon(interaction);
       return true;
     }
     if (interaction.customId.startsWith('service_payment_method_')) {
