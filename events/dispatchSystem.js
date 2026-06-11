@@ -7655,10 +7655,6 @@ async function sendServicePaymentMethodMenu(channel, flowId, pending) {
 }
 
 async function handleServiceNoCoupon(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
-
   const flowId =
     interaction.customId.replace('service_no_coupon_', '');
 
@@ -7697,10 +7693,6 @@ async function handleServiceNoCoupon(interaction) {
 }
 
 async function handleServiceUseCoupon(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
-
   const flowId =
     interaction.customId.replace('service_use_coupon_', '');
 
