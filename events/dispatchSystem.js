@@ -620,15 +620,15 @@ async function sendPlayLog({
 
 }
 async function playerOnline(interaction) {
-  const guildId =
+  const staffGuildId =
     getStaffGuildId(interaction);
-  const { data: oldPlayer, error } =
+
+  const { data: playerRows, error } =
     await supabase
       .from('players')
       .select('*')
-      .eq('guild_id', guildId)
       .eq('discord_id', interaction.user.id)
-      .maybeSingle();
+      .limit(1);
 
   if (error) {
     console.error('[開始接單] 讀取 players 失敗:', error);
@@ -638,39 +638,37 @@ async function playerOnline(interaction) {
     });
   }
 
-  const hasRoleService =
-    memberHasAnyServiceRole(interaction.member);
+  const oldPlayer =
+    playerRows?.[0];
 
-  const hasDbService =
-    hasAllowedServicesFromDb(oldPlayer);
-
-  return interaction.editReply({
-    content: '❌ 你沒有任何可接單服務身分組...'
-  });
+  if (!oldPlayer) {
+    return interaction.editReply({
+      content: '❌ 你尚未登記陪玩，請先請管理員在後台新增你的陪玩資料。'
+    });
+  }
 
   await supabase
     .from('players')
     .upsert({
-      guild_id: guildId,
+      ...oldPlayer,
+      guild_id: staffGuildId,
       discord_id: interaction.user.id,
       name:
-        oldPlayer?.name ||
+        oldPlayer.name ||
         interaction.member?.displayName ||
         interaction.user.username,
-      game: oldPlayer?.game || 'auto_role',
-      allowed_services: oldPlayer?.allowed_services || [],
-      report_channel_id: oldPlayer?.report_channel_id || null,
-      salary_rate: oldPlayer?.salary_rate || 0.8,
+      game: oldPlayer.game || 'auto',
+      allowed_services: oldPlayer.allowed_services || [],
+      report_channel_id: oldPlayer.report_channel_id || null,
+      salary_rate: oldPlayer.salary_rate || 0.8,
       status: 'available',
       online_started_at: new Date().toISOString()
     }, {
       onConflict: 'guild_id,discord_id'
     });
 
-  await interaction.editReply({
-    content: hasRoleService
-      ? '🟢 你已開始接單，系統已依照你的服務身分組開放可接項目。'
-      : '🟢 你已開始接單，系統已依照後台設定的可接服務開放可接項目。'
+  return interaction.editReply({
+    content: '🟢 你已開始接單。'
   });
 }
 function hasAllowedServicesFromDb(player) {
@@ -6437,11 +6435,18 @@ async function acceptPlayOrder(interaction) {
     } 
     if (isFull) {
       for (const playerId of assignedPlayerIds) {
-        await supabase
-          .from('players')
-          .update({ status: 'busy' })
-          .eq('guild_id', guildId)
-          .eq('discord_id', playerId);
+        let updatePlayerQuery =
+          supabase
+            .from('players')
+            .update({ status: 'busy' });
+        if (player.id) {
+          updatePlayerQuery =
+            updatePlayerQuery.eq('id', player.id);
+        } else {
+          updatePlayerQuery =
+            updatePlayerQuery.eq('discord_id', interaction.user.id);
+        }
+        await updatePlayerQuery;
       }
     } 
     const orderChannel =
