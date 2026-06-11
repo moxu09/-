@@ -3781,49 +3781,39 @@ async function sendBankTransferInfo(channel) {
     embeds: [embed]
   });
 }
-async function getAvailablePlayerOptions(service, guildId = process.env.GUILD_ID) {
+async function getAvailablePlayerOptions(service) {
   const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
-      .eq('guild_id', guildId)
-      .eq('status', 'available');
+      .eq('status', 'available')
+      .not('discord_id', 'is', null);
 
   if (error) {
     console.error('[指定陪陪] 讀取可接單陪陪失敗', error);
     return [];
   }
 
-  const targetService =
-    cleanServiceKey(service);
+  const seenPlayerIds = new Set();
 
   return (players || [])
     .filter(player => {
-      const allowedServices =
-        Array.isArray(player.allowed_services)
-          ? player.allowed_services
-          : String(player.allowed_services || '')
-              .split(',')
-              .map(s => s.trim())
-              .filter(Boolean);
+      const id = String(player.discord_id || '').trim();
 
-      if (!allowedServices.length) return false;
+      if (!id) return false;
 
-      return allowedServices.some(s => {
-        const serviceKey =
-          cleanServiceKey(s);
+      if (seenPlayerIds.has(id)) {
+        return false;
+      }
 
-        return (
-          serviceKey === targetService ||
-          serviceKey.includes(targetService) ||
-          targetService.includes(serviceKey)
-        );
-      });
+      seenPlayerIds.add(id);
+
+      return true;
     })
     .slice(0, 24)
     .map(player => ({
       label: String(player.name || player.discord_id).slice(0, 100),
-      description: formatAvailableTime(player).slice(0, 100),
+      description: '目前可接單'.slice(0, 100),
       value: player.discord_id
     }));
 }
