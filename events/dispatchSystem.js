@@ -531,47 +531,29 @@ async function getAvailablePlayerOptions(service) {
     await supabase
       .from('players')
       .select('*')
-      .eq('status', 'available');
+      .eq('status', 'available')
+      .not('discord_id', 'is', null);
 
   if (error) {
     console.error('[指定陪陪] 讀取可接單陪陪失敗', error);
     return [];
   }
 
-  function cleanServiceKey(text = '') {
-    return String(text || '')
-      .replace(/\s+/g, '')
-      .replace(/[｜|]/g, '')
-      .replace(/　/g, '')
-      .replace(/[\u200B-\u200D\uFEFF]/g, '')
-      .trim();
-  }
-
-  const targetService =
-    cleanServiceKey(service);
+  const seenPlayerIds = new Set();
 
   return (players || [])
     .filter(player => {
-      const allowedServices =
-        Array.isArray(player.allowed_services)
-          ? player.allowed_services
-          : String(player.allowed_services || '')
-              .split(',')
-              .map(s => s.trim())
-              .filter(Boolean);
+      const id = String(player.discord_id || '').trim();
 
-      if (!allowedServices.length) return false;
+      if (!id) return false;
 
-      return allowedServices.some(s => {
-        const serviceKey =
-          cleanServiceKey(s);
+      if (seenPlayerIds.has(id)) {
+        return false;
+      }
 
-        return (
-          serviceKey === targetService ||
-          serviceKey.includes(targetService) ||
-          targetService.includes(serviceKey)
-        );
-      });
+      seenPlayerIds.add(id);
+
+      return true;
     })
     .slice(0, 24)
     .map(player => ({
@@ -620,10 +602,13 @@ async function sendPlayLog({
 
 }
 async function playerOnline(interaction) {
-  const staffGuildId =
-    getStaffGuildId(interaction);
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
-  const { data: playerRows, error } =
+  const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
@@ -638,34 +623,31 @@ async function playerOnline(interaction) {
     });
   }
 
-  const oldPlayer =
-    playerRows?.[0];
+  const player =
+    players?.[0];
 
-  if (!oldPlayer) {
+  if (!player) {
     return interaction.editReply({
       content: '❌ 你尚未登記陪玩，請先請管理員在後台新增你的陪玩資料。'
     });
   }
 
-  await supabase
-    .from('players')
-    .upsert({
-      ...oldPlayer,
-      guild_id: staffGuildId,
-      discord_id: interaction.user.id,
-      name:
-        oldPlayer.name ||
-        interaction.member?.displayName ||
-        interaction.user.username,
-      game: oldPlayer.game || 'auto',
-      allowed_services: oldPlayer.allowed_services || [],
-      report_channel_id: oldPlayer.report_channel_id || null,
-      salary_rate: oldPlayer.salary_rate || 0.8,
-      status: 'available',
-      online_started_at: new Date().toISOString()
-    }, {
-      onConflict: 'guild_id,discord_id'
+  const { error: updateError } =
+    await supabase
+      .from('players')
+      .update({
+        status: 'available',
+        online_started_at: new Date().toISOString()
+      })
+      .eq('discord_id', interaction.user.id);
+
+  if (updateError) {
+    console.error('[開始接單] 更新狀態失敗:', updateError);
+
+    return interaction.editReply({
+      content: '❌ 開始接單失敗，請稍後再試。'
     });
+  }
 
   return interaction.editReply({
     content: '🟢 你已開始接單。'
@@ -688,17 +670,14 @@ function hasAllowedServicesFromDb(player) {
 }
 // 陪玩下班
 async function playerOffline(interaction) {
-  const guildId =
-    getStaffGuildId(interaction);
   await supabase
     .from('players')
     .update({
       status: 'offline'
     })
-    .eq('guild_id', guildId)
     .eq('discord_id', interaction.user.id);
 
-  await interaction.editReply({
+  return interaction.editReply({
     content: '🔴 你已停止接單'
   });
 }
@@ -826,61 +805,35 @@ async function sendDailyPlayerSummary() {
 }
 // 查看狀態
 async function playerStatus(interaction) {
-  const guildId =
-    getStaffGuildId(interaction);
-  const { data } = await supabase
-    .from('players')
-    .select('*')
-    .eq('guild_id', guildId)
-    .eq('discord_id', interaction.user.id)
-    .maybeSingle();
+  const { data: players, error } =
+    await supabase
+      .from('players')
+      .select('*')
+      .eq('discord_id', interaction.user.id)
+      .limit(1);
 
-  if (!data) {
+  if (error) {
+    console.error('[我的狀態] 讀取 players 失敗:', error);
+
     return interaction.editReply({
-      content: '你尚未登記陪玩，請先使用 /上班',
+      content: '❌ 讀取陪玩狀態失敗，請稍後再試。'
     });
   }
 
-  const serviceRoleText = [];
+  const data =
+    players?.[0];
 
-  if (process.env.VALORANT_ENTERTAIN_ROLE_ID && interaction.member.roles.cache.has(process.env.VALORANT_ENTERTAIN_ROLE_ID)) {
-    serviceRoleText.push('特戰娛樂');
+  if (!data) {
+    return interaction.editReply({
+      content: '你尚未登記陪玩，請先請管理員在後台新增你的陪玩資料。'
+    });
   }
 
-  if (process.env.VALORANT_SKILL_ROLE_ID && interaction.member.roles.cache.has(process.env.VALORANT_SKILL_ROLE_ID)) {
-    serviceRoleText.push('特戰技術');
-  }
-
-  if (process.env.STEAM_ROLE_ID && interaction.member.roles.cache.has(process.env.STEAM_ROLE_ID)) {
-    serviceRoleText.push('Steam');
-  }
-
-  if (process.env.DELTA_SKILL_ROLE_ID && interaction.member.roles.cache.has(process.env.DELTA_SKILL_ROLE_ID)) {
-    serviceRoleText.push('三角洲');
-  }
-
-  if (process.env.DELTA_ENTERTAIN_ROLE_ID && interaction.member.roles.cache.has(process.env.DELTA_ENTERTAIN_ROLE_ID)) {
-    serviceRoleText.push('三角洲娛樂');
-  }
-
-  if (process.env.PUBG_ROLE_ID && interaction.member.roles.cache.has(process.env.PUBG_ROLE_ID)) {
-    serviceRoleText.push('絕地求生');
-  }
-
-  if (process.env.CHAT_ROLE_ID && interaction.member.roles.cache.has(process.env.CHAT_ROLE_ID)) {
-    serviceRoleText.push('陪聊');
-  }
-
-  
-  if (process.env.EMOTION_ROLE_ID && interaction.member.roles.cache.has(process.env.EMOTION_ROLE_ID)) {
-    serviceRoleText.push('出氣包');
-  }
-
-  await interaction.editReply({
+  return interaction.editReply({
     content:
-      `📋 你的狀態：${data.status}\n` +
+      `📋 你的狀態：${data.status || '未設定'}\n` +
       `📦 完成單數：${data.total_orders || 0}\n` +
-      `🎮 可接服務：${serviceRoleText.join('、') || '未偵測到服務身分組'}`
+      `🎮 可接服務：不限制身分組`
   });
 }
 function buildPreferredPlayerText(preferredPlayerIds) {
@@ -6295,17 +6248,15 @@ async function acceptPlayOrder(interaction) {
   try {
     const orderId =
       interaction.customId.replace('accept_play_order_', '');
-    const guildId =
-      getStaffGuildId(interaction);
-    const playerGuildId =
-      interaction.guildId || interaction.guild?.id || process.env.STAFF_GUILD_ID;
-    const { data: player, error: playerError } =
+    const { data: playerRows, error: playerError } =
       await supabase
         .from('players')
         .select('*')
-        .eq('guild_id', guildId)
         .eq('discord_id', interaction.user.id)
-        .maybeSingle();
+        .eq('status', 'available')
+        .limit(1);
+    const player =
+      playerRows?.[0];
 
     if (playerError) {
       console.log('[接單錯誤 players]', playerError);
@@ -6321,7 +6272,7 @@ async function acceptPlayOrder(interaction) {
         .from('play_orders')
         .select('*')
         .eq('id', orderId)
-        .single();
+        .maybeSingle();
 
     if (orderError) {
       console.log('[接單錯誤 play_orders]', orderError);
@@ -6435,20 +6386,14 @@ async function acceptPlayOrder(interaction) {
     } 
     if (isFull) {
       for (const playerId of assignedPlayerIds) {
-        let updatePlayerQuery =
-          supabase
-            .from('players')
-            .update({ status: 'busy' });
-        if (player.id) {
-          updatePlayerQuery =
-            updatePlayerQuery.eq('id', player.id);
-        } else {
-          updatePlayerQuery =
-            updatePlayerQuery.eq('discord_id', interaction.user.id);
-        }
-        await updatePlayerQuery;
+        await supabase
+          .from('players')
+          .update({
+            status: 'busy'
+          })
+          .eq('discord_id', playerId);
       }
-    } 
+    }
     const orderChannel =
       await client.channels.fetch(
         order.channel_id
