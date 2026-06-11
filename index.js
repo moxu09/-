@@ -229,7 +229,7 @@ async function handleTipGiftSelect(interaction) {
   tipData.amount = gift.price;
   pendingTips.set(tipId, tipData);
 
-  const guildId = getGuildId(interaction);
+  const guildId = getStaffGuildId();
   const { data: players, error } =
     await supabase
       .from('players')
@@ -621,6 +621,12 @@ async function savePanelMessage(
 // ===== 工具函數 =====
 function getGuildId(interaction = null) {
   return interaction?.guildId || interaction?.guild?.id || process.env.GUILD_ID;
+}
+function getStaffGuildId() {
+  return (
+    process.env.STAFF_GUILD_ID ||
+    process.env.GUILD_ID
+  );
 }
 function getRarityEmoji(rarity) {
   switch (rarity) {
