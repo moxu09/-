@@ -4051,6 +4051,20 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
+      // ===== 派單 / 陪玩狀態按鈕：優先處理，避免 Unknown interaction =====
+      if (
+        interaction.customId === 'player_online' ||
+        interaction.customId === 'player_offline' ||
+        interaction.customId === 'player_status' ||
+        interaction.customId.startsWith('accept_play_order_')
+      ) {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.deferReply({
+            flags: 64
+          });
+        }
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
       const customId = interaction.customId;
       // ===== 訂單評價按鈕：會開 Modal，不能先 defer =====
       if (customId.startsWith('order_review_')) {
