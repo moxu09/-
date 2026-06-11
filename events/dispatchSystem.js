@@ -38,6 +38,14 @@ function setup(supabaseInstance, clientInstance, helpers = {}) {
   client = clientInstance;
   paymentHelpers = helpers;
 }
+function getStaffGuildId(interaction = null) {
+  return (
+    process.env.STAFF_GUILD_ID ||
+    interaction?.guildId ||
+    interaction?.guild?.id ||
+    process.env.GUILD_ID
+  );
+}
 function getBillingMonth(date = new Date()) {
   const taiwanDate =
     new Date(date.getTime() + 8 * 60 * 60 * 1000);
@@ -636,8 +644,7 @@ async function sendPlayLog({
 }
 async function playerOnline(interaction) {
   const guildId =
-    interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
-
+    getStaffGuildId(interaction);
   const { data: oldPlayer, error } =
     await supabase
       .from('players')
@@ -710,8 +717,7 @@ function hasAllowedServicesFromDb(player) {
 // 陪玩下班
 async function playerOffline(interaction) {
   const guildId =
-    interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
-
+    getStaffGuildId(interaction);
   await supabase
     .from('players')
     .update({
@@ -849,8 +855,7 @@ async function sendDailyPlayerSummary() {
 // 查看狀態
 async function playerStatus(interaction) {
   const guildId =
-    interaction.guildId || interaction.guild?.id || process.env.GUILD_ID;
-
+    getStaffGuildId(interaction);
   const { data } = await supabase
     .from('players')
     .select('*')
@@ -3792,7 +3797,7 @@ async function handleQuoteNoCoupon(interaction) {
       .from('play_orders')
       .select('*')
       .eq('id', orderId)
-      .single();
+      .maybeSingle();
 
   if (orderError || !order) {
     console.error('[報價流程] 讀取訂單失敗', orderError);
@@ -4004,7 +4009,7 @@ async function handleQuoteSelectCoupon(interaction) {
       .from('play_orders')
       .select('*')
       .eq('id', orderId)
-      .single();
+      .maybeSingle();
 
   if (orderError || !order) {
     return interaction.editReply({
@@ -4022,7 +4027,7 @@ async function handleQuoteSelectCoupon(interaction) {
     await supabase
       .from('user_items')
       .select('*')
-      .eq('id', Number(couponId))
+      .eq('id', couponId)
       .eq('user_id', interaction.user.id)
       .maybeSingle();
   if (
@@ -6328,14 +6333,15 @@ async function acceptPlayOrder(interaction) {
   try {
     const orderId =
       interaction.customId.replace('accept_play_order_', '');
-
+    const guildId =
+      getStaffGuildId(interaction);
     const playerGuildId =
       interaction.guildId || interaction.guild?.id || process.env.STAFF_GUILD_ID;
     const { data: player, error: playerError } =
       await supabase
         .from('players')
         .select('*')
-        .eq('guild_id', playerGuildId)
+        .eq('guild_id', guildId)
         .eq('discord_id', interaction.user.id)
         .maybeSingle();
 
@@ -6514,7 +6520,7 @@ async function acceptPlayOrder(interaction) {
         await supabase
           .from('players')
           .update({ status: 'busy' })
-          .eq('guild_id', playerGuildId)
+          .eq('guild_id', guildId)
           .eq('discord_id', playerId);
       }
     } 
@@ -7724,9 +7730,16 @@ async function handleServiceUseCoupon(interaction) {
       .order('created_at', { ascending: false });
 
   if (error) {
-    console.error('[新版訂單優惠券] 讀取失敗', error);
+    console.error('[新版訂單優惠券] 讀取失敗', {
+      message: error.message,
+      details: error.details,
+      hint: error.hint,
+      code: error.code
+    });
     return interaction.editReply({
-      content: '❌ 讀取優惠券失敗，請稍後再試。'
+      content:
+        '❌ 讀取優惠券失敗，請稍後再試。\n' +
+        `錯誤：${error.message || '未知錯誤'}`
     });
   }
 
@@ -7795,7 +7808,7 @@ async function handleServiceSelectCoupon(interaction) {
     await supabase
       .from('user_items')
       .select('*')
-      .eq('id', Number(couponId))
+      .eq('id', couponId)
       .eq('user_id', interaction.user.id)
       .maybeSingle();
 

@@ -2254,7 +2254,14 @@ function getTodayDateString() {
 function getTaiwanNow() {
   return new Date(Date.now() + 8 * 60 * 60 * 1000);
 }
-
+function getStaffGuildId(interaction = null) {
+  return (
+    process.env.STAFF_GUILD_ID ||
+    interaction?.guildId ||
+    interaction?.guild?.id ||
+    process.env.GUILD_ID
+  );
+}
 function getBillingMonth(date = new Date()) {
   const taiwanDate =
     new Date(date.getTime() + 8 * 60 * 60 * 1000);
