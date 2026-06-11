@@ -229,12 +229,11 @@ async function handleTipGiftSelect(interaction) {
   tipData.amount = gift.price;
   pendingTips.set(tipId, tipData);
 
-  const guildId = getStaffGuildId();
   const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
-      .eq('guild_id', guildId)
+      .not('discord_id', 'is', null)
       .order('status', { ascending: true });
 
   if (error) {

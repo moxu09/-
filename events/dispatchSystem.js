@@ -464,37 +464,11 @@ async function memberHasRequiredServiceRole(guild, userId, requiredRoleIds = [])
   );
 }
 async function getQualifiedPlayerOptions(pending) {
-  const guildId =
-    pending.guildId || process.env.GUILD_ID;
-
-  const guild =
-    client.guilds.cache.get(guildId);
-
-  if (!guild) {
-    console.error('[新下單] 找不到 guild', guildId);
-    return [];
-  }
-
-  const requiredRoleIds =
-    getRequiredServiceRoleIdsFromPending(pending);
-
-  if (!requiredRoleIds.length) {
-    console.error('[新下單] 找不到此服務對應的身分組', {
-      game: pending.game,
-      item: pending.item,
-      category: pending.category,
-      serviceType: pending.serviceType,
-      deltaMode: pending.deltaMode,
-      steamCategory: pending.steamCategory
-    });
-    return [];
-  }
-
   const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
-      .eq('guild_id', guildId)
+      .not('discord_id', 'is', null)
       .order('status', { ascending: true });
 
   if (error) {
@@ -502,24 +476,27 @@ async function getQualifiedPlayerOptions(pending) {
     return [];
   }
 
-  const filtered = [];
+  const seenPlayerIds = new Set();
 
-  for (const player of players || []) {
-    if (!player.discord_id) continue;
+  const filtered =
+    (players || [])
+      .filter(player => {
+        const id = String(player.discord_id || '').trim();
 
-    const hasRole =
-      await memberHasRequiredServiceRole(
-        guild,
-        String(player.discord_id),
-        requiredRoleIds
-      );
+        if (!id) return false;
 
-    if (!hasRole) continue;
+        if (seenPlayerIds.has(id)) {
+          return false;
+        }
 
-    if (!matchPlayerGender(player, pending.gender || pending.genderPreference)) continue;
+        seenPlayerIds.add(id);
 
-    filtered.push(player);
-  }
+        if (!matchPlayerGender(player, pending.gender || pending.genderPreference)) {
+          return false;
+        }
+
+        return true;
+      });
 
   const onlinePlayers =
     filtered.filter(player => player.status === 'available');
@@ -667,12 +644,9 @@ async function playerOnline(interaction) {
   const hasDbService =
     hasAllowedServicesFromDb(oldPlayer);
 
-  if (!hasRoleService && !hasDbService) {
-    console.log('[開始接單] 沒有偵測到服務權限，但允許先上班', {
-      guildId,
-      userId: interaction.user.id
-    });
-  }
+  return interaction.editReply({
+    content: '❌ 你沒有任何可接單服務身分組...'
+  });
 
   await supabase
     .from('players')
@@ -6405,50 +6379,6 @@ async function acceptPlayOrder(interaction) {
             `\n如果指定陪陪無法接，請客服將指定改為不指定或調整名單。`
         });
       }
-    }
-    // ===== 服務限制 =====
-    const allowedServices =
-      Array.isArray(player.allowed_services)
-        ? player.allowed_services
-        : String(player.allowed_services || '')
-            .split(',')
-            .map(s => s.trim())
-            .filter(Boolean);
-
-    function cleanServiceKey(text = '') {
-      return String(text || '')
-        .replace(/\s+/g, '')
-        .replace(/[｜|]/g, '')
-        .replace(/　/g, '')
-        .replace(/[\u200B-\u200D\uFEFF]/g, '')
-        .trim();
-    }
-    const orderServiceKey =
-      cleanServiceKey(
-        order.dispatch_service_key ||
-        order.service ||
-        `${order.game || ''}${order.order_item || ''}`
-      );
-    const canAccept =
-      allowedServices.some(service => {
-        const serviceKey =
-          cleanServiceKey(service);
-        return (
-          serviceKey === orderServiceKey ||
-          serviceKey.includes(orderServiceKey) ||
-          orderServiceKey.includes(serviceKey)
-        );
-      });
-
-    if (!canAccept) {
-      return interaction.editReply({
-        content:
-          `❌ 你沒有權限接這個項目\n` +
-          `此訂單服務：${order.service || '未填寫'}\n` +
-          `比對用服務：${order.dispatch_service_key || orderServiceKey}\n` +
-          `你的可接項目：${allowedServices.join('、') || '未設定'}\n\n` +
-          `如果畫面看起來一樣，通常是服務名稱內有隱藏空白或客服修改後欄位沒有同步。`
-      });
     }
     // ===== 多人接單邏輯 =====
     const needCount =
