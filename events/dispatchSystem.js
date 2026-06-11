@@ -973,16 +973,6 @@ async function sendOrderToStaffChannel(order) {
           inline: true
         },
         {
-          name: '💳 付款方式',
-          value: order.payment_method || '未填寫',
-          inline: true
-        },
-        {
-          name: '💰 商品金額',
-          value: `NT$${order.final_price || order.price || 0}`,
-          inline: true
-        },
-        {
           name: '📝 備註需求',
           value: order.note || '無',
           inline: false
