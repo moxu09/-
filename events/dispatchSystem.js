@@ -7771,10 +7771,6 @@ async function handleServiceUseCoupon(interaction) {
 }
 
 async function handleServiceSelectCoupon(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
-
   const flowId =
     interaction.customId.replace('service_select_coupon_', '');
 
