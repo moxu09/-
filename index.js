@@ -2649,27 +2649,27 @@ async function sendAtmPanel(client) {
     new ButtonBuilder()
       .setCustomId('transfer_menu')
       .setLabel('💸 玩家轉帳')
-      .setStyle(ButtonStyle.Success);
+      .setStyle(ButtonStyle.Primary);
   const consumeButton =
     new ButtonBuilder()
       .setCustomId('consume_info')
       .setLabel('💠 消費資訊')
-      .setStyle(ButtonStyle.Secondary);
+      .setStyle(ButtonStyle.Primary);
   const transferRecordButton =
     new ButtonBuilder()
       .setCustomId('transfer_records')
       .setLabel('📜 交易紀錄')
-      .setStyle(ButtonStyle.Secondary);
+      .setStyle(ButtonStyle.Success);
   const bagButton =
     new ButtonBuilder()
       .setCustomId('my_bag')
       .setLabel('🎒 我的背包')
-      .setStyle(ButtonStyle.Secondary);
+      .setStyle(ButtonStyle.Success);
   const switchBenefitButton =
     new ButtonBuilder()
       .setCustomId('switch_benefit')
       .setLabel('🔄 切換權益')
-      .setStyle(ButtonStyle.Primary);
+      .setStyle(ButtonStyle.Secondary);
   const monthlyInfoButton =
     new ButtonBuilder()
       .setCustomId('monthly_info')
@@ -2679,7 +2679,7 @@ async function sendAtmPanel(client) {
     new ButtonBuilder()
       .setCustomId('monthly_bill_pay')
       .setLabel('🌙 月結繳費')
-      .setStyle(ButtonStyle.Success);
+      .setStyle(ButtonStyle.Secondary);
   const row =
     new ActionRowBuilder()
       .addComponents(
