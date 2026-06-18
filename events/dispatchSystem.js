@@ -782,7 +782,7 @@ async function sendBankTransferInfo(channel) {
       `若有其他銀行之需求，請在下方告訴客服。`
 
     )
-    .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1513855523810840727/QRCode1780884218322.png?ex=6a293f52&is=6a27edd2&hm=3f9d2aa241395c189c0cb9411638fbd6dc7e0679f771a4073c776b94710023b6&')
+    .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1517290256385310782/2026-06-19_6.09.01.png?ex=6a35be2b&is=6a346cab&hm=18a672e233a7e5984ada0e257932966853a7ba2977e3323d93578be4abaf6094&')
     .setFooter({
       text: '請確認金額正確後再匯款'
     })
