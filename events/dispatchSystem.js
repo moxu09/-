@@ -15,6 +15,8 @@ let supabase;
 let client;
 let paymentHelpers = {};
 
+const STAFF_TABLE =
+  process.env.STAFF_TABLE || 'players';
 const pendingNewOrders = new Map();
 const pendingTopups = new Map();
 const pendingServiceOrders = new Map();
@@ -25,25 +27,717 @@ function createFlowId(userId) {
 
 function getServiceName(serviceType) {
   if (serviceType === 'valorant') return '特戰英豪';
+  if (serviceType === 'delta') return '三角洲行動';
+  if (serviceType === 'apex') return 'Apex';
+  if (serviceType === 'lol') return '英雄聯盟';
   if (serviceType === 'steam') return 'Steam';
-  if (serviceType === 'delta') return '三角洲';
+  if (serviceType === 'other') return '其他項目';
+
   if (serviceType === 'pubg') return '絕地求生';
+  if (serviceType === 'pubgm') return 'PUBG M';
+  if (serviceType === 'naraka') return 'NARAKA';
+  if (serviceType === 'minecraft') return 'Minecraft';
+  if (serviceType === 'voice_chat') return '語音聊天';
+  if (serviceType === 'song') return '點歌服務';
+  if (serviceType === 'custom') return '自訂輸入';
+
   if (serviceType === 'chat') return '陪聊';
   if (serviceType === 'emotion') return '出氣包';
+
   return '訂單';
 }
+const pendingPanelOrders = new Map();
 
+const GAME_ORDER_PANELS = [
+  {
+    envKey: 'VALORANT_ORDER_CHANNEL',
+    panelName: 'valorant',
+    title: '🎯 特戰英豪下單區',
+    description: '請選擇你要下單的特戰英豪項目。',
+    customId: 'game_order_select_valorant',
+    options: [
+      { label: '大神陪玩', value: 'god', description: '特戰英豪｜大神陪玩' },
+      { label: '技術陪玩', value: 'skill', description: '特戰英豪｜技術陪玩' },
+      { label: '娛樂陪玩', value: 'entertain', description: '特戰英豪｜娛樂陪玩' },
+      { label: '儲值星雨幣', value: 'topup', description: '建立儲值星雨幣頻道' }
+    ]
+  },
+  {
+    envKey: 'DELTA_ORDER_CHANNEL',
+    panelName: 'delta',
+    title: '🛡️ 三角洲行動下單區',
+    description: '請選擇你要下單的三角洲行動項目。',
+    customId: 'game_order_select_delta',
+    options: [
+      { label: '電腦版', value: 'pc', description: '三角洲行動｜電腦版' },
+      { label: '手機版', value: 'mobile', description: '三角洲行動｜手機版' },
+      { label: '儲值星雨幣', value: 'topup', description: '建立儲值星雨幣頻道' }
+    ]
+  },
+  {
+    envKey: 'APEX_ORDER_CHANNEL',
+    panelName: 'apex',
+    title: '🔺 Apex 下單區',
+    description: '請選擇你要下單的 Apex 項目。',
+    customId: 'game_order_select_apex',
+    options: [
+      { label: '大神陪玩', value: 'god', description: 'Apex｜大神陪玩' },
+      { label: '技術陪玩', value: 'skill', description: 'Apex｜技術陪玩' },
+      { label: '娛樂陪玩', value: 'entertain', description: 'Apex｜娛樂陪玩' },
+      { label: '儲值星雨幣', value: 'topup', description: '建立儲值星雨幣頻道' }
+    ]
+  },
+  {
+    envKey: 'LOL_ORDER_CHANNEL',
+    panelName: 'lol',
+    title: '🧙 英雄聯盟下單區',
+    description: '請先選擇英雄聯盟項目，下一步再選大神 / 技術 / 娛樂。',
+    customId: 'game_order_select_lol',
+    options: [
+      { label: '英雄聯盟', value: 'lol_main', description: '召喚峽谷' },
+      { label: 'ARAM', value: 'aram', description: '咆哮深淵' },
+      { label: '聯盟戰棋', value: 'tft', description: 'Teamfight Tactics' },
+      { label: '儲值星雨幣', value: 'topup', description: '建立儲值星雨幣頻道' }
+    ]
+  },
+  {
+    envKey: 'STEAM_ORDER_CHANNEL',
+    panelName: 'steam',
+    title: '🎮 Steam 下單區',
+    description: '請選擇你要下單的 Steam 遊戲類型。',
+    customId: 'game_order_select_steam',
+    options: [
+      { label: '肉鴿遊戲', value: 'roguelike', description: 'Steam｜肉鴿遊戲' },
+      { label: '生存遊戲', value: 'survival', description: 'Steam｜生存遊戲' },
+      { label: '恐怖遊戲', value: 'horror', description: 'Steam｜恐怖遊戲' },
+      { label: '派對遊戲', value: 'party', description: 'Steam｜派對遊戲' },
+      { label: '儲值星雨幣', value: 'topup', description: '建立儲值星雨幣頻道' }
+    ]
+  },
+  {
+    envKey: 'OTHER_ORDER_CHANNEL',
+    panelName: 'other',
+    title: '🌙 其他項目下單區',
+    description: '請選擇你要下單的其他服務項目。',
+    customId: 'game_order_select_other',
+    options: [
+      { label: 'PUBG M', value: 'pubgm', description: 'PUBG M' },
+      { label: 'NARAKA', value: 'naraka', description: 'NARAKA' },
+      { label: 'Minecraft', value: 'minecraft', description: 'Minecraft' },
+      { label: '語音聊天', value: 'voice_chat', description: '語音聊天' },
+      { label: '點歌服務', value: 'song', description: '點歌服務' },
+      { label: '打賞', value: 'tip', description: '建立打賞頻道' },
+      { label: '自訂輸入', value: 'custom', description: '其他項目｜自訂需求' },
+      { label: '儲值星雨幣', value: 'topup', description: '建立儲值星雨幣頻道' }
+    ]
+  }
+];
+
+function findOptionLabel(panelName, value) {
+  const panel =
+    GAME_ORDER_PANELS.find(item => item.panelName === panelName);
+
+  const option =
+    panel?.options.find(item => item.value === value);
+
+  return option?.label || value;
+}
+async function resetSelectMenuMessage(interaction) {
+  try {
+    if (!interaction.message || !interaction.message.components?.length) {
+      return;
+    }
+
+    const rows =
+      interaction.message.components
+        .map(row => {
+          const newRow =
+            new ActionRowBuilder();
+
+          for (const component of row.components) {
+            // String Select Menu
+            if (component.type === 3) {
+              const menu =
+                StringSelectMenuBuilder.from(component);
+
+              const options =
+                component.options.map(option => ({
+                  label: option.label,
+                  value: option.value,
+                  description: option.description || undefined,
+                  emoji: option.emoji || undefined,
+                  default: false
+                }));
+
+              menu.setOptions(options);
+              newRow.addComponents(menu);
+            }
+
+            // Button
+            if (component.type === 2) {
+              newRow.addComponents(
+                ButtonBuilder.from(component)
+              );
+            }
+          }
+
+          return newRow;
+        })
+        .filter(row => row.components.length > 0);
+
+    if (!rows.length) return;
+
+    await interaction.message.edit({
+      components: rows
+    });
+  } catch (err) {
+    console.error('[下拉選單重置失敗]', err);
+  }
+}
+function buildPanelInitialData(gameKey, value) {
+  const label = findOptionLabel(gameKey, value);
+
+  if (gameKey === 'valorant') {
+    return {
+      category: 'valorant',
+      gameLabel: '特戰英豪',
+      itemLabel: label,
+      serviceType: `特戰英豪｜${label}`,
+      playMode: label,
+      fromPanel: true
+    };
+  }
+
+  if (gameKey === 'delta') {
+    return {
+      category: 'delta',
+      gameLabel: '三角洲行動',
+      itemLabel: label, // 電腦版 / 手機版
+      serviceType: `三角洲行動｜${label}`,
+      deltaPlatform: label,
+      deltaMode: null,
+      fromPanel: true
+    };
+  }
+
+  if (gameKey === 'apex') {
+    return {
+      category: 'apex',
+      gameLabel: 'Apex',
+      itemLabel: label,
+      serviceType: `Apex｜${label}`,
+      playMode: label,
+      fromPanel: true
+    };
+  }
+
+  if (gameKey === 'steam') {
+    return {
+      category: 'steam',
+      gameLabel: 'Steam',
+      itemLabel: label,
+      serviceType: `Steam｜${label}`,
+      steamCategory: label,
+      fromPanel: true
+    };
+  }
+
+  if (gameKey === 'other') {
+    return {
+      category: 'other',
+      gameLabel: '其他項目',
+      itemLabel: label,
+      serviceType: `其他項目｜${label}`,
+      playMode: label,
+      fromPanel: true
+    };
+  }
+
+  return {
+    category: gameKey,
+    gameLabel: getServiceName(gameKey),
+    itemLabel: label,
+    serviceType: `${getServiceName(gameKey)}｜${label}`,
+    playMode: label,
+    fromPanel: true
+  };
+}
+
+async function upsertGameOrderPanel(panel) {
+  const channelId = process.env[panel.envKey];
+
+  if (!channelId) {
+    console.log(`[下單分區] 未設定 ${panel.envKey}`);
+    return;
+  }
+
+  const channel =
+    await client.channels.fetch(channelId).catch(() => null);
+
+  if (!channel) {
+    console.log(`[下單分區] 找不到頻道：${panel.envKey}`);
+    return;
+  }
+
+  const embed =
+    new EmbedBuilder()
+      .setColor('#cdb4db')
+      .setTitle(panel.title)
+      .setDescription(
+        `${panel.description}\n\n` +
+        `選到「儲值星雨幣」會建立儲值頻道。\n` +
+        `選到「打賞」會建立打賞頻道。\n` +
+        `選其他項目會建立專屬臨時下單頻道。`
+      )
+      .setFooter({
+        text: '深夜不關燈｜We Are Still Here'
+      })
+      .setTimestamp();
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(panel.customId)
+      .setPlaceholder('請選擇下單項目')
+      .addOptions(
+        panel.options.map(option => ({
+          label: option.label.slice(0, 100),
+          description: option.description.slice(0, 100),
+          value: option.value
+        }))
+      );
+
+  const row =
+    new ActionRowBuilder()
+      .addComponents(menu);
+
+  const messages =
+    await channel.messages.fetch({
+      limit: 10
+    }).catch(() => null);
+
+  const oldPanel =
+    messages?.find(
+      msg =>
+        msg.author.id === client.user.id &&
+        msg.embeds.length > 0 &&
+        msg.embeds[0].title === panel.title
+    );
+
+  if (oldPanel) {
+    await oldPanel.edit({
+      embeds: [embed],
+      components: [row]
+    });
+    console.log(`[下單分區] 已更新：${panel.title}`);
+    return;
+  }
+
+  await channel.send({
+    embeds: [embed],
+    components: [row]
+  });
+
+  console.log(`[下單分區] 已建立：${panel.title}`);
+}
+
+async function sendGameOrderPanels() {
+  for (const panel of GAME_ORDER_PANELS) {
+    await upsertGameOrderPanel(panel);
+  }
+}
+
+async function handleGameOrderSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const gameKey =
+    interaction.customId.replace('game_order_select_', '');
+
+  const value =
+    interaction.values[0];
+
+  await resetSelectMenuMessage(interaction);
+
+  if (value === 'topup') {
+    return await createTopupTicket(interaction);
+  }
+
+  if (value === 'tip') {
+    return await createTipTicket(interaction);
+  }
+
+  if (gameKey === 'lol') {
+    const flowId =
+      createFlowId(interaction.user.id);
+
+    pendingPanelOrders.set(flowId, {
+      userId: interaction.user.id,
+      gameKey,
+      lolMode: value
+    });
+
+    setTimeout(() => {
+      pendingPanelOrders.delete(flowId);
+    }, 15 * 60 * 1000);
+
+    const modeLabel =
+      findOptionLabel('lol', value);
+
+    const menu =
+      new StringSelectMenuBuilder()
+        .setCustomId(`lol_style_select_${flowId}`)
+        .setPlaceholder('請選擇陪玩類型')
+        .addOptions([
+          {
+            label: '大神陪玩',
+            value: 'god',
+            description: `${modeLabel}｜大神陪玩`
+          },
+          {
+            label: '技術陪玩',
+            value: 'skill',
+            description: `${modeLabel}｜技術陪玩`
+          },
+          {
+            label: '娛樂陪玩',
+            value: 'entertain',
+            description: `${modeLabel}｜娛樂陪玩`
+          }
+        ]);
+
+    const row =
+      new ActionRowBuilder()
+        .addComponents(menu);
+
+    return await interaction.editReply({
+      content:
+        `你選擇的是：${modeLabel}\n\n` +
+        `請再選擇大神陪玩 / 技術陪玩 / 娛樂陪玩：`,
+      components: [row]
+    });
+  }
+
+  const initial =
+    buildPanelInitialData(gameKey, value);
+
+  return await createServiceTicket(
+    interaction,
+    initial.category,
+    initial
+  );
+}
+
+async function handleLolStyleSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferUpdate().catch(async () => {
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({
+          flags: 64
+        });
+      }
+    });
+  }
+
+  const flowId =
+    interaction.customId.replace('lol_style_select_', '');
+
+  await resetSelectMenuMessage(interaction);
+
+  const pending =
+    pendingPanelOrders.get(flowId);
+
+  if (!pending) {
+    return await interaction.editReply({
+      content: '❌ 這個選單已過期，請回英雄聯盟下單區重新選擇。',
+      components: []
+    });
+  }
+
+  if (pending.userId !== interaction.user.id) {
+    return await interaction.editReply({
+      content: '❌ 只有剛剛選擇英雄聯盟項目的人可以操作。',
+      components: []
+    });
+  }
+
+  const modeLabel =
+    findOptionLabel('lol', pending.lolMode);
+
+  const styleMap = {
+    god: '大神陪玩',
+    skill: '技術陪玩',
+    entertain: '娛樂陪玩'
+  };
+
+  const styleLabel =
+    styleMap[interaction.values[0]] || interaction.values[0];
+
+  pendingPanelOrders.delete(flowId);
+
+  return await createServiceTicket(
+    interaction,
+    'lol',
+    {
+      category: 'lol',
+      gameLabel: '英雄聯盟',
+      itemLabel: modeLabel,
+      serviceType: `${modeLabel}｜${styleLabel}`,
+      playMode: styleLabel,
+      fromPanel: true
+    }
+  );
+}
+
+async function sendQuickServiceNeedPanel(channel, flowId, initial = {}) {
+  const countMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_player_count_${flowId}`)
+      .setPlaceholder('請選擇陪陪人數')
+      .addOptions([
+        { label: '1 位', value: '1' },
+        { label: '2 位', value: '2' },
+        { label: '3 位', value: '3' },
+        { label: '4 位', value: '4' }
+      ]);
+
+  const genderMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_gender_${flowId}`)
+      .setPlaceholder('請選擇陪陪性別偏好')
+      .addOptions([
+        { label: '不指定', value: '不指定' },
+        { label: '男陪', value: '男陪' },
+        { label: '女陪', value: '女陪' }
+      ]);
+
+  const assignMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_assign_${flowId}`)
+      .setPlaceholder('是否指定陪陪')
+      .addOptions([
+        { label: '不指定陪陪', value: '不指定' },
+        { label: '指定陪陪', value: '指定' },
+        { label: '預約指定陪陪', value: '預約指定' }
+      ]);
+
+  const durationMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_duration_${flowId}`)
+      .setPlaceholder('請選擇時間')
+      .addOptions([
+        { label: '30 分鐘', value: '0.5' },
+        { label: '1 小時', value: '1' },
+        { label: '1.5 小時', value: '1.5' },
+        { label: '2 小時', value: '2' },
+        { label: '自訂', value: 'custom' }
+      ]);
+
+  const roundsMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_rounds_${flowId}`)
+      .setPlaceholder('請選擇局數')
+      .addOptions([
+        { label: '1 局', value: '1' },
+        { label: '3 局', value: '3' },
+        { label: '5 局', value: '5' },
+        { label: '自訂', value: 'custom' }
+      ]);
+
+  const valorantRankMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`valorant_rank_${flowId}`)
+      .setPlaceholder('請選擇目前段位')
+      .addOptions([
+        { label: '鐵牌', value: '鐵牌' },
+        { label: '銅牌', value: '銅牌' },
+        { label: '銀牌', value: '銀牌' },
+        { label: '金牌', value: '金牌' },
+        { label: '白金', value: '白金' },
+        { label: '鑽石', value: '鑽石' },
+        { label: '超凡', value: '超凡' },
+        { label: '神話', value: '神話' },
+        { label: '輻能', value: '輻能' },
+        { label: '不指定 / 尚未確認', value: '不指定' }
+      ]);
+  const apexRankMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`apex_rank_${flowId}`)
+      .setPlaceholder('請選擇 Apex 目前段位')
+      .addOptions([
+        { label: '菜鳥', value: '菜鳥' },
+        { label: '青銅', value: '青銅' },
+        { label: '白銀', value: '白銀' },
+        { label: '黃金', value: '黃金' },
+        { label: '白金', value: '白金' },
+        { label: '鑽石', value: '鑽石' },
+        { label: '大師', value: '大師' },
+        { label: '頂尖獵殺者', value: '頂尖獵殺者' },
+        { label: '不指定 / 尚未確認', value: '不指定' }
+      ]);
+  const lolRankMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`lol_rank_${flowId}`)
+      .setPlaceholder('請選擇英雄聯盟段位 / 娛樂')
+      .addOptions([
+        { label: '娛樂', value: '娛樂', description: '不看段位，娛樂陪玩' },
+        { label: '黑鐵', value: '黑鐵' },
+        { label: '銅牌', value: '銅牌' },
+        { label: '銀牌', value: '銀牌' },
+        { label: '金牌', value: '金牌' },
+        { label: '白金', value: '白金' },
+        { label: '翡翠', value: '翡翠' },
+        { label: '鑽石', value: '鑽石' },
+        { label: '大師', value: '大師' },
+        { label: '宗師', value: '宗師' },
+        { label: '菁英', value: '菁英' },
+        { label: '不指定 / 尚未確認', value: '不指定' }
+      ]);
+  const deltaModeMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`delta_mode_${flowId}`)
+      .setPlaceholder('請選擇三角洲服務內容')
+      .addOptions([
+        {
+          label: '娛樂陪玩',
+          value: '娛樂陪玩',
+          description: '一般娛樂陪玩'
+        },
+        {
+          label: '基本單護',
+          value: '基本單護',
+          description: '基本單人護航'
+        },
+        {
+          label: '機密雙護',
+          value: '機密雙護',
+          description: '機密雙人護航'
+        },
+        {
+          label: '機密雙護（有保底）',
+          value: '機密雙護（有保底）',
+          description: '機密雙護含保底'
+        },
+        {
+          label: '猛攻護航',
+          value: '猛攻護航',
+          description: '猛攻模式護航'
+        },
+        {
+          label: '猛攻護航（有保底）',
+          value: '猛攻護航（有保底）',
+          description: '猛攻護航含保底'
+        }
+      ]);
+
+  const isDeltaOrder =
+    initial.category === 'delta';
+  const isTftOrder =
+    initial.category === 'lol' &&
+    initial.itemLabel === '聯盟戰棋';
+  const isApexOrder =
+    initial.category === 'apex';
+  const isLolOrder =
+    initial.category === 'lol';
+  const buttonRow =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`order_add_note_${flowId}`)
+          .setLabel('填寫備註 / 自訂需求')
+          .setStyle(ButtonStyle.Secondary),
+
+        new ButtonBuilder()
+          .setCustomId(`order_finish_need_${flowId}`)
+          .setLabel('送出訂單')
+          .setEmoji('📨')
+          .setStyle(ButtonStyle.Success)
+      );
+
+  if (initial.category === 'steam') {
+    buttonRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`steam_game_name_${flowId}`)
+        .setLabel('輸入 Steam 遊戲名稱')
+        .setStyle(ButtonStyle.Primary)
+    );
+  }
+
+  const needRows = [
+    ...(initial.category === 'valorant'
+      ? [new ActionRowBuilder().addComponents(valorantRankMenu)]
+      : []),
+
+    ...(isApexOrder
+      ? [new ActionRowBuilder().addComponents(apexRankMenu)]
+      : []),
+
+    ...(isLolOrder
+      ? [new ActionRowBuilder().addComponents(lolRankMenu)]
+      : []),
+
+    ...(isDeltaOrder
+      ? [new ActionRowBuilder().addComponents(deltaModeMenu)]
+      : []),
+
+    new ActionRowBuilder().addComponents(countMenu),
+    new ActionRowBuilder().addComponents(genderMenu),
+    new ActionRowBuilder().addComponents(assignMenu),
+
+    ...(initial.category === 'valorant'
+      ? []
+      : isTftOrder
+        ? [new ActionRowBuilder().addComponents(roundsMenu)]
+        : [new ActionRowBuilder().addComponents(durationMenu)])
+  ];
+
+  await channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#ffd166')
+        .setTitle('📋 下單需求填寫')
+        .setDescription(
+          `已選擇：${initial.serviceType || initial.itemLabel || '未填寫'}\n\n` +
+          `請依序選擇${isDeltaOrder ? '服務內容、' : ''}${isApexOrder ? '段位、' : ''}${isLolOrder ? '段位 / 娛樂、' : ''}人數、性別偏好、指定方式與${
+            isTftOrder ? '局數' : '時間'
+          }。\n` +
+          `有特殊需求可以按「填寫備註 / 自訂需求」。\n\n` +
+          `填寫完成後請按「送出訂單」，客服會協助正式報價。`
+        )
+        .setTimestamp()
+    ],
+    components: needRows.slice(0, 5)
+  });
+
+  await channel.send({
+    components: [buttonRow]
+  });
+}
 function setup(supabaseInstance, clientInstance, helpers = {}) {
   supabase = supabaseInstance;
   client = clientInstance;
   paymentHelpers = helpers;
 }
-function getStaffGuildId(interaction = null) {
+function getStaffGuildId() {
   return (
     process.env.STAFF_GUILD_ID ||
-    interaction?.guildId ||
-    interaction?.guild?.id ||
     process.env.GUILD_ID
+  );
+}
+function applyStaffGuildFilter(query) {
+  return query;
+}
+
+function getStaffDisplayName(staff) {
+  return String(
+    staff?.display_name ||
+    staff?.real_name ||
+    staff?.discord_name ||
+    staff?.name ||
+    staff?.discord_id ||
+    '未知員工'
   );
 }
 function getBillingMonth(date = new Date()) {
@@ -83,12 +777,16 @@ async function sendBankTransferInfo(channel) {
       `銀行代碼：823\n` +
       `帳號：88620979281818\n` +
       `戶名：許O星\n\n` +
+      `也可以掃描下方 QR Code 付款。\n\n` +
       `匯款完成後，請在此頻道上傳匯款截圖，等待客服確認。\n\n` +
       `若有其他銀行之需求，請在下方告訴客服。`
+
     )
+    .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1513855523810840727/QRCode1780884218322.png?ex=6a293f52&is=6a27edd2&hm=3f9d2aa241395c189c0cb9411638fbd6dc7e0679f771a4073c776b94710023b6&')
     .setFooter({
       text: '請確認金額正確後再匯款'
     })
+    .setTimestamp();
 
   await channel.send({
     embeds: [embed]
@@ -264,10 +962,24 @@ function normalizeAllowedServices(value) {
       .filter(Boolean);
   }
 
-  return String(value || '')
-    .split(',')
-    .map(item => item.trim())
-    .filter(Boolean);
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map(item => String(item).trim())
+          .filter(Boolean);
+      }
+    } catch {}
+
+    return value
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
 }
 
 function matchPlayerService(player, keyword) {
@@ -464,17 +1176,24 @@ async function memberHasRequiredServiceRole(guild, userId, requiredRoleIds = [])
   );
 }
 async function getQualifiedPlayerOptions(pending) {
-  const { data: players, error } =
-    await supabase
-      .from('players')
+  let playerQuery =
+    supabase
+      .from(STAFF_TABLE)
       .select('*')
       .not('discord_id', 'is', null)
       .order('status', { ascending: true });
+
+  playerQuery = applyStaffGuildFilter(playerQuery);
+
+  const { data: players, error } = await playerQuery;
 
   if (error) {
     console.error('[新下單] 讀取陪陪失敗', error);
     return [];
   }
+
+  const serviceKeyword =
+    getServiceKeywordFromPending(pending);
 
   const seenPlayerIds = new Set();
 
@@ -495,7 +1214,16 @@ async function getQualifiedPlayerOptions(pending) {
           return false;
         }
 
-        return true;
+        const allowedServices =
+          normalizeAllowedServices(player.allowed_services);
+
+        // 沒有設定可接服務，不顯示
+        if (!allowedServices.length) return false;
+
+        return matchAllowedServiceName(
+          allowedServices,
+          serviceKeyword
+        );
       });
 
   const onlinePlayers =
@@ -512,13 +1240,13 @@ async function getQualifiedPlayerOptions(pending) {
     },
 
     ...onlinePlayers.map(player => ({
-      label: `🟢 ${String(player.name || player.discord_id)}`.slice(0, 100),
+      label: `🟢 ${getStaffDisplayName(player)}`.slice(0, 100),
       description: '目前在線，可直接安排'.slice(0, 100),
       value: `online_${player.discord_id}`
     })),
 
     ...offlinePlayers.map(player => ({
-      label: `⚪ ${String(player.name || player.discord_id)}`.slice(0, 100),
+      label: `⚪ ${getStaffDisplayName(player)}`.slice(0, 100),
       description: formatAvailableTime(player).slice(0, 100),
       value: `reserve_${player.discord_id}`
     }))
@@ -527,17 +1255,24 @@ async function getQualifiedPlayerOptions(pending) {
   return options.slice(0, 25);
 }
 async function getAvailablePlayerOptions(service) {
-  const { data: players, error } =
-    await supabase
-      .from('players')
+  let playerQuery =
+    supabase
+      .from(STAFF_TABLE)
       .select('*')
       .eq('status', 'available')
       .not('discord_id', 'is', null);
+
+  playerQuery = applyStaffGuildFilter(playerQuery);
+
+  const { data: players, error } = await playerQuery;
 
   if (error) {
     console.error('[指定陪陪] 讀取可接單陪陪失敗', error);
     return [];
   }
+
+  const targetService =
+    cleanServiceKey(service || '');
 
   const seenPlayerIds = new Set();
 
@@ -553,17 +1288,25 @@ async function getAvailablePlayerOptions(service) {
 
       seenPlayerIds.add(id);
 
-      return true;
+      if (!targetService) return true;
+
+      const allowedServices =
+        normalizeAllowedServices(player.allowed_services);
+
+      if (!allowedServices.length) return false;
+
+      return matchAllowedServiceName(
+        allowedServices,
+        targetService
+      );
     })
     .slice(0, 24)
     .map(player => ({
-      label: String(player.name || player.discord_id).slice(0, 100),
+      label: getStaffDisplayName(player).slice(0, 100),
       description: formatAvailableTime(player).slice(0, 100),
       value: player.discord_id
     }));
 }
-
-
 // ===== 派單紀錄 =====
 async function sendPlayLog({
   title,
@@ -608,23 +1351,26 @@ async function playerOnline(interaction) {
     });
   }
 
-  const { data: players, error } =
-    await supabase
-      .from('players')
+  let playerQuery =
+    supabase
+      .from(STAFF_TABLE)
       .select('*')
       .eq('discord_id', interaction.user.id)
       .limit(1);
 
+  playerQuery = applyStaffGuildFilter(playerQuery);
+
+  const { data: players, error } = await playerQuery;
+
   if (error) {
-    console.error('[開始接單] 讀取 players 失敗:', error);
+    console.error('[開始接單] 讀取 qiunai_staff 失敗:', error);
 
     return interaction.editReply({
       content: '❌ 讀取陪陪資料失敗，請稍後再試。'
     });
   }
 
-  const player =
-    players?.[0];
+  const player = players?.[0];
 
   if (!player) {
     return interaction.editReply({
@@ -632,17 +1378,21 @@ async function playerOnline(interaction) {
     });
   }
 
-  const { error: updateError } =
-    await supabase
-      .from('players')
+  let updateQuery =
+    supabase
+      .from(STAFF_TABLE)
       .update({
         status: 'available',
         online_started_at: new Date().toISOString()
       })
       .eq('discord_id', interaction.user.id);
 
+  updateQuery = applyStaffGuildFilter(updateQuery);
+
+  const { error: updateError } = await updateQuery;
+
   if (updateError) {
-    console.error('[開始接單] 更新狀態失敗:', updateError);
+    console.error('[開始接單] 更新 qiunai_staff 狀態失敗:', updateError);
 
     return interaction.editReply({
       content: '❌ 開始接單失敗，請稍後再試。'
@@ -670,12 +1420,17 @@ function hasAllowedServicesFromDb(player) {
 }
 // 陪玩下班
 async function playerOffline(interaction) {
-  await supabase
-    .from('players')
-    .update({
-      status: 'offline'
-    })
-    .eq('discord_id', interaction.user.id);
+  let updateQuery =
+    supabase
+      .from(STAFF_TABLE)
+      .update({
+        status: 'offline'
+      })
+      .eq('discord_id', interaction.user.id);
+
+  updateQuery = applyStaffGuildFilter(updateQuery);
+
+  await updateQuery;
 
   return interaction.editReply({
     content: '🔴 你已停止接單'
@@ -710,10 +1465,13 @@ async function sendDailyPlayerSummary() {
     end
   } = getTodayRangeTW();
 
-  const { data: players, error: playerError } =
-    await supabase
-      .from('players')
+  const guildId = getStaffGuildId();
+  let playerQuery =
+    supabase
+      .from(STAFF_TABLE)
       .select('*');
+  playerQuery = applyStaffGuildFilter(playerQuery);
+  const { data: players, error: playerError } = await playerQuery;
 
   if (playerError) {
     console.log('[每日陪玩總結] 讀取陪玩失敗', playerError);
@@ -724,13 +1482,17 @@ async function sendDailyPlayerSummary() {
     return;
   }
 
-  const { data: orders, error: orderError } =
-    await supabase
+  let orderQuery =
+    supabase
       .from('play_orders')
       .select('*')
       .eq('status', 'completed')
       .gte('completed_at', start)
       .lte('completed_at', end);
+  if (guildId) {
+    orderQuery = orderQuery.eq('guild_id', guildId);
+  }
+  const { data: orders, error: orderError } = await orderQuery;
 
   if (orderError) {
     console.log('[每日陪玩總結] 讀取訂單失敗', orderError);
@@ -805,12 +1567,14 @@ async function sendDailyPlayerSummary() {
 }
 // 查看狀態
 async function playerStatus(interaction) {
-  const { data: players, error } =
-    await supabase
-      .from('players')
+  let playerQuery =
+    supabase
+      .from(STAFF_TABLE)
       .select('*')
       .eq('discord_id', interaction.user.id)
       .limit(1);
+  playerQuery = applyStaffGuildFilter(playerQuery);
+  const { data: players, error } = await playerQuery;
 
   if (error) {
     console.error('[我的狀態] 讀取 players 失敗:', error);
@@ -895,6 +1659,16 @@ async function sendOrderToStaffChannel(order) {
         {
           name: '🕒 預約時間',
           value: order.reserved_time || order.duration_text || '未填寫',
+          inline: true
+        },
+        {
+          name: '💳 付款方式',
+          value: order.payment_method || '未填寫',
+          inline: true
+        },
+        {
+          name: '💰 商品金額',
+          value: `NT$${order.final_price || order.price || 0}`,
           inline: true
         },
         {
@@ -1191,7 +1965,7 @@ async function createTipTicket(interaction) {
     content: `✅ 已建立打賞頻道：<#${channel.id}>`
   });
 }
-async function createServiceTicket(interaction, serviceType) {
+async function createServiceTicket(interaction, serviceType, initial = {}) {
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({
       flags: 64
@@ -1235,64 +2009,106 @@ async function createServiceTicket(interaction, serviceType) {
       ]
     });
 
-  pendingServiceOrders.set(flowId, {
-    flowId,
-    guildId: interaction.guildId || interaction.guild?.id || process.env.GUILD_ID,
-    channelId: channel.id,
-    customerId: interaction.user.id,
-    customerUsername: interaction.user.username,
-    category: serviceType,
+    pendingServiceOrders.set(flowId, {
+      flowId,
+      guildId: interaction.guildId || interaction.guild?.id || process.env.GUILD_ID,
+      channelId: channel.id,
+      customerId: interaction.user.id,
+      customerUsername: interaction.user.username,
+      category: serviceType,
 
-    serviceType: null,
-    serviceTypes: [],
-    playMode: null,
-    rank: null,
-    steamCategory: null,
-    steamGameName: null,
-    deltaMode: null,
+      gameLabel: initial.gameLabel || getServiceName(serviceType),
+      itemLabel: initial.itemLabel || null,
 
-    playerCount: null,
-    genderPreference: null,
-    assignMode: null,
-    selectedPlayerIds: [],
+      serviceType: initial.serviceType || null,
+      serviceTypes: initial.serviceTypes || [],
+      playMode: initial.playMode || null,
+      rank: initial.rank || null,
+      steamCategory: initial.steamCategory || null,
+      steamGameName: initial.steamGameName || null,
+      deltaPlatform: initial.deltaPlatform || null,
+      deltaMode: initial.deltaMode || null,
 
-    duration: null,
-    rounds: null,
-    note: '',
-    quotedPrice: null,
-    paymentMethod: null,
-    timeSelectShown: false,
-    finishButtonShown: false
-  });
+      playerCount: null,
+      genderPreference: null,
+      assignMode: null,
+      selectedPlayerIds: [],
+
+      duration: null,
+      rounds: null,
+      note: '',
+      quotedPrice: null,
+      paymentMethod: null,
+      timeSelectShown: false,
+
+      // 新分區入口會先把「送出訂單」按鈕直接放進臨時頻道，避免重複出現
+      finishButtonShown: Boolean(initial.fromPanel)
+    });
 
   setTimeout(() => {
     pendingServiceOrders.delete(flowId);
   }, 60 * 60 * 1000);
 
-  await channel.send({
-    content: `<@${interaction.user.id}> <@&${process.env.STAFF_ROLE}>`,
-    embeds: [
-      new EmbedBuilder()
-        .setColor('#ffd166')
-        .setTitle(`🌙 ${serviceName} 下單頻道`)
-        .setDescription(
-          `請依照下方選項填寫需求。\n\n` +
-          `填寫完成後，客服會依照需求輸入正式報價。`
-        )
-        .setTimestamp()
-    ],
-    components: [
-      new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('owner_cancel_ticket')
-            .setLabel('我按錯了，關閉頻道')
-            .setEmoji('🗑️')
-            .setStyle(ButtonStyle.Danger)
-        )
-    ]
-  });
+  if (initial.fromPanel) {
+    await channel.send({
+      content: `<@${interaction.user.id}> <@&${process.env.STAFF_ROLE}>`,
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#ffd166')
+          .setTitle(`🌙 ${serviceName} 下單頻道`)
+          .setDescription(
+            `請依照下方選項填寫需求。\n\n` +
+            `填寫完成後，客服會依照需求輸入正式報價。`
+          )
+          .setTimestamp()
+      ],
+      components: [
+        new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              .setCustomId('owner_cancel_ticket')
+              .setLabel('我按錯了，關閉頻道')
+              .setEmoji('🗑️')
+              .setStyle(ButtonStyle.Danger)
+          )
+      ]
+    });
+    await sendQuickServiceNeedPanel(
+      channel,
+    flowId,
+    initial
+  );
 
+  return interaction.editReply({
+    content:
+      `✅ 已建立臨時下單頻道：<#${channel.id}>\n` +
+      `項目：${initial.serviceType || initial.itemLabel || getServiceName(serviceType)}`
+  });
+}
+
+await channel.send({
+  content: `<@${interaction.user.id}> <@&${process.env.STAFF_ROLE}>`,
+  embeds: [
+    new EmbedBuilder()
+      .setColor('#ffd166')
+      .setTitle(`🌙 ${serviceName} 下單頻道`)
+      .setDescription(
+        `請依照下方選項填寫需求。\n\n` +
+        `填寫完成後，客服會依照需求輸入正式報價。`
+      )
+      .setTimestamp()
+  ],
+  components: [
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('owner_cancel_ticket')
+          .setLabel('我按錯了，關閉頻道')
+          .setEmoji('🗑️')
+          .setStyle(ButtonStyle.Danger)
+      )
+  ]
+});
   if (serviceType === 'valorant') {
     await showValorantStart(channel, flowId);
   }
@@ -1751,6 +2567,15 @@ function isValorantGoldOrBelow(rank) {
   return ['鐵牌', '銅牌', '銀牌', '金牌', '金牌含以下', '不指定'].includes(
     String(rank || '')
   );
+}
+function isValorantAboveGold(rank) {
+  return [
+    '白金',
+    '鑽石',
+    '超凡',
+    '神話',
+    '輻能'
+  ].includes(String(rank || ''));
 }
 async function showValorantTimeOrRoundOnce(channel, flowId, pending) {
   if (pending.timeSelectShown) {
@@ -2559,11 +3384,13 @@ async function handleNewOrderPlayerSelect(interaction) {
   if (reserveIds.length > 0) {
     pending.selectedPlayerType = 'reserve';
     pendingNewOrders.set(flowId, pending);
-    const { data: players } =
-      await supabase
-        .from('players')
+    let reserveQuery =
+      supabase
+        .from(STAFF_TABLE)
         .select('*')
         .in('discord_id', reserveIds);
+    reserveQuery = applyStaffGuildFilter(reserveQuery);
+    const { data: players } = await reserveQuery;
     const availableText =
       (players || [])
         .map(player => {
@@ -3712,7 +4539,7 @@ async function handleQuoteNoCoupon(interaction) {
       .from('play_orders')
       .select('*')
       .eq('id', orderId)
-      .maybeSingle();
+      .single();
 
   if (orderError || !order) {
     console.error('[報價流程] 讀取訂單失敗', orderError);
@@ -3924,7 +4751,7 @@ async function handleQuoteSelectCoupon(interaction) {
       .from('play_orders')
       .select('*')
       .eq('id', orderId)
-      .maybeSingle();
+      .single();
 
   if (orderError || !order) {
     return interaction.editReply({
@@ -3942,7 +4769,7 @@ async function handleQuoteSelectCoupon(interaction) {
     await supabase
       .from('user_items')
       .select('*')
-      .eq('id', couponId)
+      .eq('id', Number(couponId))
       .eq('user_id', interaction.user.id)
       .maybeSingle();
   if (
@@ -5576,9 +6403,15 @@ async function openDispatchPlayerMenu(interaction) {
       content: '❌ 這張訂單目前狀態不能再選擇陪陪'
     });
   }
-  const playerOptions =
-    await getAvailablePlayerOptions(service, getGuildId(interaction));
+  const service =
+    order.dispatch_service_key ||
+    order.service ||
+    order.order_item ||
+    order.game ||
+    '';
 
+  const playerOptions =
+    await getAvailablePlayerOptions(service);
   if (!playerOptions.length) {
     return interaction.editReply({
       content: '❌ 目前沒有可接單陪陪'
@@ -6248,13 +7081,19 @@ async function acceptPlayOrder(interaction) {
   try {
     const orderId =
       interaction.customId.replace('accept_play_order_', '');
-    const { data: playerRows, error: playerError } =
-      await supabase
-        .from('players')
+
+    let playerQuery =
+      supabase
+        .from(STAFF_TABLE)
         .select('*')
         .eq('discord_id', interaction.user.id)
         .eq('status', 'available')
         .limit(1);
+
+    playerQuery = applyStaffGuildFilter(playerQuery);
+
+    const { data: playerRows, error: playerError } = await playerQuery;
+
     const player =
       playerRows?.[0];
 
@@ -6262,11 +7101,12 @@ async function acceptPlayOrder(interaction) {
       console.log('[接單錯誤 players]', playerError);
     }
 
-    if (!player || player.status !== 'available') {
+    if (!player) {
       return interaction.editReply({
         content: '❌ 你目前不是可接單狀態，請先按「開始接單」',
       });
     }
+
     const { data: order, error: orderError } =
       await supabase
         .from('play_orders')
@@ -6278,37 +7118,43 @@ async function acceptPlayOrder(interaction) {
       console.log('[接單錯誤 play_orders]', orderError);
     }
 
-    if (!order || order.status !== 'pending') {
+    if (!order || !['pending', 'accepted'].includes(order.status)) {
       return interaction.editReply({
-        content: '❌ 這張訂單已經被接走了',
+        content: '❌ 這張訂單已經被接走了，或目前不能接單',
       });
     }
+
     // ===== 指定陪陪限制 =====
-    // 如果指定人數已經等於需求人數：只有指定名單可以接。
-    // 如果指定人數小於需求人數：指定的人可以接，剩下名額開放符合服務的陪陪補位。
     if (order.preferred_player) {
       const preferredPlayers =
         String(order.preferred_player)
           .split(',')
           .map(id => id.trim())
           .filter(Boolean);
+
       const needCount =
         Number(order.player_count || 1) || 1;
+
       const assignedPlayerIdsNow =
         String(order.assigned_player || '')
           .split(',')
           .map(id => id.trim())
           .filter(Boolean);
+
       const preferredFull =
         preferredPlayers.length >= needCount;
+
       const isPreferredPlayer =
         preferredPlayers.includes(interaction.user.id);
+
       const alreadyAssignedPreferredCount =
         assignedPlayerIdsNow
           .filter(id => preferredPlayers.includes(id))
           .length;
+
       const stillWaitingPreferred =
         preferredPlayers.length > alreadyAssignedPreferredCount;
+
       if (preferredFull && !isPreferredPlayer) {
         return interaction.editReply({
           content:
@@ -6316,6 +7162,7 @@ async function acceptPlayOrder(interaction) {
             preferredPlayers.map(id => `<@${id}>`).join('、')
         });
       }
+
       if (
         !preferredFull &&
         !isPreferredPlayer &&
@@ -6329,42 +7176,50 @@ async function acceptPlayOrder(interaction) {
         });
       }
     }
+
     // ===== 多人接單邏輯 =====
     const needCount =
       Number(order.player_count || 1) || 1;
+
     let assignedPlayerIds =
       String(order.assigned_player || '')
         .split(',')
         .map(id => id.trim())
         .filter(Boolean);
-    // 避免同一個人重複接
+
     if (assignedPlayerIds.includes(interaction.user.id)) {
       return interaction.editReply({
         content: '❌ 你已經接過這張訂單了'
       });
     }
-    // 加入這次按接單的人
+
     assignedPlayerIds.push(interaction.user.id);
-    // 如果超過需求人數，擋掉
+
     if (assignedPlayerIds.length > needCount) {
       return interaction.editReply({
         content:
           `❌ 這張訂單需要 ${needCount} 位陪玩，目前名額已滿。`
       });
     }
+
     const assignedPlayerValue =
       assignedPlayerIds.join(',');
+
     const isFull =
       assignedPlayerIds.length >= needCount;
+
     const nextStatus =
       isFull ? 'accepted' : 'pending';
+
     const updatePayload = {
       status: nextStatus,
       assigned_player: assignedPlayerValue
     };
+
     if (isFull) {
-      updatePayload.accepted_at = new Date();
+      updatePayload.accepted_at = new Date().toISOString();
     }
+
     const { data: updated, error: updateError } =
       await supabase
         .from('play_orders')
@@ -6372,37 +7227,47 @@ async function acceptPlayOrder(interaction) {
         .eq('id', orderId)
         .in('status', ['pending', 'accepted'])
         .select()
-        .single();
+        .maybeSingle();
+
     if (updateError) {
       console.log('[接單更新錯誤]', updateError);
+
       return interaction.editReply({
         content: '❌ 接單更新失敗，請查看 Railway Logs',
       });
     }
+
     if (!updated) {
       return interaction.editReply({
         content: '❌ 這張訂單目前無法接單，可能已被接滿或狀態已變更',
       });
-    } 
+    }
+
     if (isFull) {
       for (const playerId of assignedPlayerIds) {
-        await supabase
-          .from('players')
-          .update({
-            status: 'busy'
-          })
-          .eq('discord_id', playerId);
+        let busyQuery =
+          supabase
+            .from(STAFF_TABLE)
+            .update({
+              status: 'busy'
+            })
+            .eq('discord_id', playerId);
+
+        busyQuery = applyStaffGuildFilter(busyQuery);
+
+        await busyQuery;
       }
     }
+
     const orderChannel =
-      await client.channels.fetch(
-        order.channel_id
-      );
+      await client.channels.fetch(order.channel_id);
+
     if (!orderChannel) {
       return interaction.editReply({
         content: '❌ 找不到客人訂單頻道'
       });
     }
+
     for (const playerId of assignedPlayerIds) {
       await orderChannel.permissionOverwrites.edit(playerId, {
         ViewChannel: true,
@@ -6410,42 +7275,49 @@ async function acceptPlayOrder(interaction) {
         ReadMessageHistory: true
       });
     }
+
     await supabase
       .from('play_orders')
-      .update({ channel_id: orderChannel.id })
+      .update({
+        channel_id: orderChannel.id
+      })
       .eq('id', orderId);
-    const embed = new EmbedBuilder()
-      .setColor(isFull ? '#00ff99' : '#ffd166')
-      .setTitle(
-        isFull
-          ? '✅ 陪玩訂單已接單'
-          : '⏳ 陪玩接單中'
-      )
-      .setDescription(
-        `訂單編號：${order.order_no}\n` +
-        `客人：<@${order.customer_id}>\n` +
-        `目前陪玩：${assignedPlayerIds.map(id => `<@${id}>`).join('、')}\n` +
-        `需要人數：${needCount} 位\n` +
-        `目前人數：${assignedPlayerIds.length} 位\n` +
-        `服務：${order.service}\n` +
-        `商品金額（折前）：NT$${order.price}`
-    );
+
+    const embed =
+      new EmbedBuilder()
+        .setColor(isFull ? '#00ff99' : '#ffd166')
+        .setTitle(
+          isFull
+            ? '✅ 陪玩訂單已接單'
+            : '⏳ 陪玩接單中'
+        )
+        .setDescription(
+          `訂單編號：${order.order_no || order.id}\n` +
+          `客人：<@${order.customer_id}>\n` +
+          `目前陪玩：${assignedPlayerIds.map(id => `<@${id}>`).join('、')}\n` +
+          `需要人數：${needCount} 位\n` +
+          `目前人數：${assignedPlayerIds.length} 位\n` +
+          `服務：${order.service || order.order_item || '未填寫'}\n` +
+          `商品金額：NT$${order.final_price || order.price || 0}`
+        );
+
     await orderChannel.send({
       content: isFull
         ? `<@${order.customer_id}> ${assignedPlayerIds.map(id => `<@${id}>`).join(' ')}`
         : `${assignedPlayerIds.map(id => `<@${id}>`).join(' ')} 已接單，目前還差 ${needCount - assignedPlayerIds.length} 位陪玩。`,
       embeds: [embed],
     });
+
     await sendPlayLog({
       title: '✅ 訂單已接取',
       description:
-        `訂單編號：${order.order_no}\n` +
+        `訂單編號：${order.order_no || order.id}\n` +
         `陪玩：${assignedPlayerIds.map(id => `<@${id}>`).join('、')}\n` +
-        `服務：${order.service}\n` +
-        `商品金額（折前）：NT$${order.price}`,
+        `服務：${order.service || order.order_item || '未填寫'}\n` +
+        `商品金額：NT$${order.final_price || order.price || 0}`,
     });
 
-    await interaction.editReply({
+    return interaction.editReply({
       embeds: [
         new EmbedBuilder()
           .setColor('#57F287')
@@ -6455,10 +7327,11 @@ async function acceptPlayOrder(interaction) {
           )
       ]
     });
+
   } catch (err) {
     console.log('[接單系統錯誤]', err);
 
-    await interaction.editReply({
+    return interaction.editReply({
       content:
         `❌ 接單失敗：${err.message || '未知錯誤'}`
     }).catch(() => {});
@@ -6680,21 +7553,99 @@ async function handleValorantRankSelect(interaction) {
   const flowId =
     interaction.customId.replace('valorant_rank_', '');
 
-  const pending = pendingServiceOrders.get(flowId);
+  const pending =
+    pendingServiceOrders.get(flowId);
 
   if (!pending) {
     return interaction.editReply({
       content: '❌ 這筆訂單流程已過期，請重新下單。'
     });
   }
+
   pending.rank = interaction.values[0];
-  pending.timeSelectShown = false;
+
+  // 重新選段位時，清掉之前選過的時間 / 局數，避免資料混在一起
+  pending.duration = null;
+  pending.rounds = null;
+  pending.timeSelectShown = true;
+
   pendingServiceOrders.set(flowId, pending);
+
+  if (isValorantAboveGold(pending.rank)) {
+    await showServiceRoundSelect(
+      interaction.channel,
+      flowId
+    );
+
+    return interaction.editReply({
+      content:
+        `✅ 已選擇段位：${pending.rank}\n` +
+        `此段位屬於金牌以上，不含金牌，請改用「局數制」。`
+    });
+  }
+
+  await showServiceDurationSelect(
+    interaction.channel,
+    flowId,
+    'hour'
+  );
+
   return interaction.editReply({
-    content: `✅ 已選擇段位：${pending.rank}`
+    content:
+      `✅ 已選擇段位：${pending.rank}\n` +
+      `此段位屬於金牌以下，含金牌，請使用「時間制」。`
   });
 }
+async function handleApexRankSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
 
+  const flowId =
+    interaction.customId.replace('apex_rank_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  pending.rank = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇 Apex 段位：${pending.rank}`
+  });
+}
+async function handleLolRankSelect(interaction) {
+  await interaction.deferReply({
+    flags: 64
+  });
+
+  const flowId =
+    interaction.customId.replace('lol_rank_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  pending.rank = interaction.values[0];
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: `✅ 已選擇英雄聯盟段位 / 類型：${pending.rank}`
+  });
+}
 async function handleServicePlayerCountSelect(interaction) {
   await interaction.deferReply({
     flags: 64
@@ -6750,52 +7701,131 @@ async function handleServiceGenderSelect(interaction) {
     content: `✅ 已選擇性別偏好：${pending.genderPreference}`
   });
 }
-function getServiceKeywordFromPending(pending) {
-  if (pending.category === 'valorant') {
-    const serviceTypes =
-      Array.isArray(pending.serviceTypes)
-        ? pending.serviceTypes
-        : [];
-    if (
-      serviceTypes.includes('技術') ||
-      pending.serviceType === '技術'
-    ) {
-      return '特戰英豪技術陪玩';
-    }
-    if (
-      serviceTypes.includes('娛樂') ||
-      pending.serviceType === '娛樂'
-    ) {
-      return '特戰英豪娛樂陪玩';
-    }
+function getServiceKeywordFromPending(pending = {}) {
+  const text = [
+    pending.serviceType,
+    pending.gameLabel,
+    pending.itemLabel,
+    pending.playMode,
+    pending.deltaMode,
+    pending.steamCategory,
+    pending.game,
+    pending.item
+  ]
+    .map(value => String(value || '').trim())
+    .filter(Boolean)
+    .join('｜');
+
+  if (pending.category === 'valorant' || text.includes('特戰英豪')) {
+    if (text.includes('大神')) return '特戰英豪大神陪玩';
+    if (text.includes('技術')) return '特戰英豪技術陪玩';
+    if (text.includes('娛樂')) return '特戰英豪娛樂陪玩';
     return '特戰英豪';
   }
 
-  if (pending.category === 'steam') {
-    return 'Steam';
+  if (pending.category === 'apex' || text.includes('Apex')) {
+    if (text.includes('大神')) return 'Apex大神陪玩';
+    if (text.includes('技術')) return 'Apex技術陪玩';
+    if (text.includes('娛樂')) return 'Apex娛樂陪玩';
+    return 'Apex';
   }
 
-  if (pending.category === 'delta') {
+  if (pending.category === 'delta' || text.includes('三角洲')) {
+    if (text.includes('娛樂陪玩')) return '三角洲行動娛樂陪玩';
+    if (text.includes('基本單護')) return '三角洲行動基本單護';
+    if (text.includes('機密雙護') && text.includes('保底')) return '三角洲行動機密雙護保底';
+    if (text.includes('機密雙護')) return '三角洲行動機密雙護';
+    if (text.includes('猛攻') && text.includes('保底')) return '三角洲行動猛攻護航保底';
+    if (text.includes('猛攻')) return '三角洲行動猛攻護航';
     return '三角洲行動';
   }
 
-  if (pending.category === 'chat') {
-    return '陪聊';
+  if (
+    pending.category === 'lol' ||
+    text.includes('英雄聯盟') ||
+    text.includes('ARAM') ||
+    text.includes('聯盟戰棋')
+  ) {
+    if (text.includes('聯盟戰棋')) return '聯盟戰棋';
+
+    if (text.includes('ARAM')) {
+      if (text.includes('大神')) return 'ARAM大神陪玩';
+      if (text.includes('技術')) return 'ARAM技術陪玩';
+      if (text.includes('娛樂')) return 'ARAM娛樂陪玩';
+      return 'ARAM';
+    }
+
+    if (text.includes('大神')) return '英雄聯盟大神陪玩';
+    if (text.includes('技術')) return '英雄聯盟技術陪玩';
+    if (text.includes('娛樂')) return '英雄聯盟娛樂陪玩';
+    return '英雄聯盟';
   }
 
-  if (pending.category === 'emotion') {
-    return '出氣包';
+  if (pending.category === 'steam' || text.includes('Steam')) {
+    if (text.includes('肉鴿')) return 'Steam肉鴿遊戲';
+    if (text.includes('生存')) return 'Steam生存遊戲';
+    if (text.includes('恐怖')) return 'Steam恐怖遊戲';
+    if (text.includes('派對')) return 'Steam派對遊戲';
+    return 'Steam';
   }
 
-  return getServiceName(pending.category);
+  if (pending.category === 'other') {
+    if (text.includes('語音聊天')) return '語音聊天';
+    if (text.includes('點歌')) return '點歌服務';
+    if (text.includes('PUBG M')) return 'PUBG M';
+    if (text.includes('NARAKA')) return 'NARAKA';
+    if (text.includes('Minecraft')) return 'Minecraft';
+  }
+
+  return '';
+}
+function getServiceGroupName(targetService) {
+  const target =
+    cleanServiceKey(targetService);
+
+  if (target.includes('特戰英豪')) return '特戰英豪';
+  if (target.includes('三角洲行動')) return '三角洲行動';
+  if (target.includes('Apex')) return 'Apex';
+  if (target.includes('英雄聯盟')) return '英雄聯盟';
+  if (target.includes('ARAM')) return 'ARAM';
+  if (target.includes('聯盟戰棋')) return '聯盟戰棋';
+  if (target.includes('Steam')) return 'Steam';
+
+  return target;
 }
 
+function matchAllowedServiceName(allowedServices, targetService) {
+  const target =
+    cleanServiceKey(targetService);
+
+  if (!target) return false;
+
+  const services =
+    normalizeAllowedServices(allowedServices)
+      .map(service => cleanServiceKey(service))
+      .filter(Boolean);
+
+  if (!services.length) return false;
+
+  const group =
+    getServiceGroupName(target);
+
+  return (
+    services.includes(target) ||
+    services.includes('全部服務') ||
+    services.includes(`${group}全部`)
+  );
+}
 async function showServicePlayerSelect(channel, flowId, pending) {
-  const { data: players, error } =
-    await supabase
-      .from('players')
+  let playerQuery =
+    supabase
+      .from(STAFF_TABLE)
       .select('*')
       .order('status', { ascending: true });
+
+  playerQuery = applyStaffGuildFilter(playerQuery);
+
+  const { data: players, error } = await playerQuery;
 
   if (error) {
     console.error('[新版指定陪陪] 讀取陪陪失敗', error);
@@ -6813,30 +7843,13 @@ async function showServicePlayerSelect(channel, flowId, pending) {
         const allowedServices =
           normalizeAllowedServices(player.allowed_services);
 
-        // 沒填 allowed_services 的先顯示，避免陪陪資料沒補完整時完全沒人可選
-        if (!allowedServices.length) return true;
+        // 沒有設定可接服務，就不要顯示，避免誤接錯項目
+        if (!allowedServices.length) return false;
 
-        const clean = text =>
-          String(text || '')
-            .replace(/\s+/g, '')
-            .replace(/[｜|]/g, '')
-            .replace(/　/g, '')
-            .replace(/[\u200B-\u200D\uFEFF]/g, '')
-            .trim();
-
-        const target =
-          clean(serviceKeyword);
-
-        return allowedServices.some(service => {
-          const serviceText =
-            clean(service);
-
-          return (
-            serviceText === target ||
-            serviceText.includes(target) ||
-            target.includes(serviceText)
-          );
-        });
+        return matchAllowedServiceName(
+          allowedServices,
+          serviceKeyword
+        );
       });
 
   const onlinePlayers =
@@ -6847,13 +7860,13 @@ async function showServicePlayerSelect(channel, flowId, pending) {
 
   const options = [
     ...onlinePlayers.map(player => ({
-      label: `🟢 ${String(player.name || player.discord_id)}`.slice(0, 100),
+      label: `🟢 ${getStaffDisplayName(player)}`.slice(0, 100),
       description: '目前在線，可直接安排'.slice(0, 100),
       value: `online_${player.discord_id}`
     })),
 
     ...offlinePlayers.map(player => ({
-      label: `⚪ ${String(player.name || player.discord_id)}`.slice(0, 100),
+      label: `⚪ ${getStaffDisplayName(player)}`.slice(0, 100),
       description: formatAvailableTime(player).slice(0, 100),
       value: `reserve_${player.discord_id}`
     }))
@@ -6978,11 +7991,13 @@ async function handleServiceSelectedPlayersSelect(interaction) {
   pendingServiceOrders.set(flowId, pending);
 
   if (reserveIds.length > 0) {
-    const { data: players } =
-      await supabase
-        .from('players')
+    let reserveQuery =
+      supabase
+        .from(STAFF_TABLE)
         .select('*')
         .in('discord_id', reserveIds);
+    reserveQuery = applyStaffGuildFilter(reserveQuery);
+    const { data: players } = await reserveQuery;
 
     const availableText =
       (players || [])
@@ -7118,16 +8133,15 @@ async function handleDeltaModeSelect(interaction) {
 
   pending.deltaMode = interaction.values[0];
 
+  pending.serviceType =
+    `三角洲行動｜${pending.deltaPlatform || pending.itemLabel || '未選平台'}｜${pending.deltaMode}`;
+
   pendingServiceOrders.set(flowId, pending);
 
-  await showFinishNeedButtons(
-    interaction.channel,
-    flowId
-  );
   return interaction.editReply({
     content:
-      `✅ 已選擇三角洲玩法：${pending.deltaMode}\n` +
-      `如果需求都填好了，可以按下方「送出訂單」。`
+      `✅ 已選擇三角洲服務：${pending.deltaMode}\n` +
+      `平台：${pending.deltaPlatform || pending.itemLabel || '未選平台'}`
   });
 }
 async function showFinishNeedButtons(channel, flowId) {
@@ -7424,47 +8438,6 @@ async function submitServiceQuotePrice(interaction) {
   pending.quotedPrice = price;
   pendingServiceOrders.set(flowId, pending);
 
-  const couponRow =
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`service_use_coupon_${flowId}`)
-          .setLabel('使用優惠券')
-          .setEmoji('🎟️')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId(`service_no_coupon_${flowId}`)
-          .setLabel('不使用優惠券')
-          .setStyle(ButtonStyle.Secondary)
-      );
-  await interaction.channel.send({
-    content:
-      `<@${pending.customerId}> 客服已完成報價，請選擇是否使用優惠券。`,
-    embeds: [
-      new EmbedBuilder()
-        .setColor('#57F287')
-        .setTitle('💰 正式報價單')
-        .setDescription(
-          `服務：${getServiceName(pending.category)}\n` +
-          (
-            pending.quoteParts
-              ? `娛樂陪玩：NT$${pending.quoteParts.entertain.toLocaleString('zh-TW')}\n` +
-                `技術陪玩：NT$${pending.quoteParts.skill.toLocaleString('zh-TW')}\n` +
-                `合計金額：NT$${price.toLocaleString('zh-TW')}\n\n`
-              : `金額：NT$${price.toLocaleString('zh-TW')}\n\n`
-          ) +
-          `請先選擇是否使用優惠券，之後再選付款方式。`
-        )
-        .setTimestamp()
-    ],
-    components: [couponRow]
-  });
-
-  return interaction.editReply({
-    content: `✅ 已送出正式報價：NT$${price.toLocaleString('zh-TW')}`
-  });
-}
-async function sendServicePaymentMethodMenu(channel, flowId, pending) {
   const paymentMenu =
     new StringSelectMenuBuilder()
       .setCustomId(`service_payment_method_${flowId}`)
@@ -7496,25 +8469,23 @@ async function sendServicePaymentMethodMenu(channel, flowId, pending) {
         }
       ]);
 
-  const originalPrice =
-    Number(pending.quotedPrice || 0);
-
-  const finalPrice =
-    Number(pending.finalQuotedPrice || pending.quotedPrice || 0);
-
-  await channel.send({
+  await interaction.channel.send({
     content:
-      `<@${pending.customerId}> 請選擇付款方式：`,
+      `<@${pending.customerId}> 客服已完成報價，請選擇付款方式。`,
     embeds: [
       new EmbedBuilder()
-        .setColor('#66ccff')
-        .setTitle('💳 選擇付款方式')
+        .setColor('#57F287')
+        .setTitle('💰 正式報價單')
         .setDescription(
-          `原價：NT$${originalPrice.toLocaleString('zh-TW')}\n` +
-          `優惠券：${pending.couponName || '未使用'}\n` +
-          `折扣：NT$${Number(pending.discountAmount || 0).toLocaleString('zh-TW')}\n` +
-          `應付金額：NT$${finalPrice.toLocaleString('zh-TW')}\n\n` +
-          `月結付款也會使用折後金額扣額。`
+          `服務：${getServiceName(pending.category)}\n` +
+          (
+            pending.quoteParts
+              ? `娛樂陪玩：NT$${pending.quoteParts.entertain.toLocaleString('zh-TW')}\n` +
+                `技術陪玩：NT$${pending.quoteParts.skill.toLocaleString('zh-TW')}\n` +
+                `合計金額：NT$${price.toLocaleString('zh-TW')}\n\n`
+              : `金額：NT$${price.toLocaleString('zh-TW')}\n\n`
+          ) +
+          `請選擇付款方式，付款完成後請上傳付款證明。`
         )
         .setTimestamp()
     ],
@@ -7522,229 +8493,9 @@ async function sendServicePaymentMethodMenu(channel, flowId, pending) {
       new ActionRowBuilder().addComponents(paymentMenu)
     ]
   });
-}
-
-async function handleServiceNoCoupon(interaction) {
-  const flowId =
-    interaction.customId.replace('service_no_coupon_', '');
-
-  const pending =
-    pendingServiceOrders.get(flowId);
-
-  if (!pending) {
-    return interaction.editReply({
-      content: '❌ 這筆訂單流程已過期，請重新下單。'
-    });
-  }
-
-  if (interaction.user.id !== pending.customerId) {
-    return interaction.editReply({
-      content: '❌ 只有下單的闆闆可以選擇是否使用優惠券。'
-    });
-  }
-
-  pending.couponId = null;
-  pending.couponName = null;
-  pending.discountRate = 1;
-  pending.discountAmount = 0;
-  pending.finalQuotedPrice = Number(pending.quotedPrice || 0);
-
-  pendingServiceOrders.set(flowId, pending);
-
-  await sendServicePaymentMethodMenu(
-    interaction.channel,
-    flowId,
-    pending
-  );
 
   return interaction.editReply({
-    content: '✅ 已選擇不使用優惠券，請繼續選擇付款方式。'
-  });
-}
-
-async function handleServiceUseCoupon(interaction) {
-  const flowId =
-    interaction.customId.replace('service_use_coupon_', '');
-
-  const pending =
-    pendingServiceOrders.get(flowId);
-
-  if (!pending) {
-    return interaction.editReply({
-      content: '❌ 這筆訂單流程已過期，請重新下單。'
-    });
-  }
-
-  if (interaction.user.id !== pending.customerId) {
-    return interaction.editReply({
-      content: '❌ 只有下單的闆闆可以選擇優惠券。'
-    });
-  }
-
-  const { data: coupons, error } =
-    await supabase
-      .from('user_items')
-      .select('*')
-      .eq('user_id', interaction.user.id)
-      .or(
-        'item_type.eq.coupon,item_name.ilike.%折券%,item_name.ilike.%優惠券%'
-      )
-      .order('created_at', { ascending: false });
-
-  if (error) {
-    console.error('[新版訂單優惠券] 讀取失敗', {
-      message: error.message,
-      details: error.details,
-      hint: error.hint,
-      code: error.code
-    });
-    return interaction.editReply({
-      content:
-        '❌ 讀取優惠券失敗，請稍後再試。\n' +
-        `錯誤：${error.message || '未知錯誤'}`
-    });
-  }
-
-  if (!coupons || coupons.length === 0) {
-    return interaction.editReply({
-      content: '❌ 你目前沒有可使用的優惠券，請改選「不使用優惠券」。'
-    });
-  }
-
-  const menu =
-    new StringSelectMenuBuilder()
-      .setCustomId(`service_select_coupon_${flowId}`)
-      .setPlaceholder('請選擇要使用的優惠券')
-      .addOptions(
-        coupons.slice(0, 25).map(coupon => {
-          const discount =
-            getCouponDiscount(coupon.item_name);
-
-          return {
-            label: String(coupon.item_name).slice(0, 100),
-            description:
-              `${discount.label}｜${coupon.description || '優惠券'}`
-                .slice(0, 100),
-            value: String(coupon.id)
-          };
-        })
-      );
-
-  return interaction.editReply({
-    content:
-      `🎟️ 請選擇要使用的優惠券：\n\n` +
-      `訂單金額：NT$${Number(pending.quotedPrice || 0).toLocaleString('zh-TW')}`,
-    components: [
-      new ActionRowBuilder().addComponents(menu)
-    ]
-  });
-}
-
-async function handleServiceSelectCoupon(interaction) {
-  const flowId =
-    interaction.customId.replace('service_select_coupon_', '');
-
-  const pending =
-    pendingServiceOrders.get(flowId);
-
-  if (!pending) {
-    return interaction.editReply({
-      content: '❌ 這筆訂單流程已過期，請重新下單。'
-    });
-  }
-
-  if (interaction.user.id !== pending.customerId) {
-    return interaction.editReply({
-      content: '❌ 只有下單的闆闆可以使用優惠券。'
-    });
-  }
-
-  const couponId =
-    interaction.values[0];
-
-  const { data: coupon, error } =
-    await supabase
-      .from('user_items')
-      .select('*')
-      .eq('id', couponId)
-      .eq('user_id', interaction.user.id)
-      .maybeSingle();
-
-  if (
-    error ||
-    !coupon ||
-    !(
-      coupon.item_type === 'coupon' ||
-      String(coupon.item_name || '').includes('折券') ||
-      String(coupon.item_name || '').includes('優惠券')
-    )
-  ) {
-    return interaction.editReply({
-      content: '❌ 找不到這張優惠券，可能已經被使用。'
-    });
-  }
-
-  const originalPrice =
-    Number(pending.quotedPrice || 0);
-
-  if (!originalPrice || originalPrice <= 0) {
-    return interaction.editReply({
-      content: '❌ 訂單金額錯誤，請聯繫客服重新報價。'
-    });
-  }
-
-  const maxPrice =
-    getCouponMaxDiscountPrice(coupon.item_name);
-
-  if (maxPrice && originalPrice > maxPrice) {
-    return interaction.editReply({
-      content:
-        `❌ 這張優惠券只限 NT$${maxPrice.toLocaleString('zh-TW')} 內訂單使用。\n` +
-        `目前訂單金額：NT$${originalPrice.toLocaleString('zh-TW')}`
-    });
-  }
-
-  const discount =
-    getCouponDiscount(coupon.item_name);
-
-  const finalPrice =
-    Math.floor(originalPrice * discount.rate);
-
-  const discountAmount =
-    originalPrice - finalPrice;
-
-  pending.couponId = coupon.id;
-  pending.couponName = coupon.item_name;
-  pending.discountRate = discount.rate;
-  pending.discountAmount = discountAmount;
-  pending.finalQuotedPrice = finalPrice;
-
-  pendingServiceOrders.set(flowId, pending);
-
-  await interaction.channel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor('#57F287')
-        .setTitle('🎟️ 優惠券已套用')
-        .setDescription(
-          `<@${interaction.user.id}> 已使用：${coupon.item_name}\n\n` +
-          `原價：NT$${originalPrice.toLocaleString('zh-TW')}\n` +
-          `折扣：NT$${discountAmount.toLocaleString('zh-TW')}\n` +
-          `折後金額：NT$${finalPrice.toLocaleString('zh-TW')}`
-        )
-        .setTimestamp()
-    ]
-  });
-
-  await sendServicePaymentMethodMenu(
-    interaction.channel,
-    flowId,
-    pending
-  );
-
-  return interaction.editReply({
-    content: '✅ 優惠券已套用，請繼續選擇付款方式。',
-    components: []
+    content: `✅ 已送出正式報價：NT$${price.toLocaleString('zh-TW')}`
   });
 }
 async function openServiceOrderNoteModal(interaction) {
@@ -7878,102 +8629,148 @@ async function submitSteamGameName(interaction) {
   });
 }
 function buildServiceTextFromPending(pending) {
+  const timeText =
+    pending.duration
+      ? `${pending.duration}小時`
+      : pending.rounds
+        ? `${pending.rounds}局`
+        : '';
+
   if (pending.category === 'valorant') {
-    const typeText =
-      Array.isArray(pending.serviceTypes) && pending.serviceTypes.length
-        ? pending.serviceTypes.join('＋')
-        : pending.serviceType;
     return [
       '特戰英豪',
-      typeText,
-      pending.playMode,
+      pending.itemLabel || pending.playMode || pending.serviceType,
       pending.rank,
-      pending.duration ? `${pending.duration}小時` : '',
-      pending.rounds ? `${pending.rounds}局` : ''
+      timeText
+    ].filter(Boolean).join('｜');
+  }
+
+  if (pending.category === 'apex') {
+    return [
+      'Apex',
+      pending.itemLabel || pending.playMode || pending.serviceType,
+      pending.rank,
+      timeText
+    ].filter(Boolean).join('｜');
+  }
+  if (pending.category === 'lol') {
+    return [
+      '英雄聯盟',
+      pending.itemLabel || '未選擇模式',
+      pending.playMode || '未選擇陪玩類型',
+      pending.rank,
+      timeText
     ].filter(Boolean).join('｜');
   }
 
   if (pending.category === 'steam') {
     return [
       'Steam',
-      pending.steamCategory,
+      pending.steamCategory || pending.itemLabel,
       pending.steamGameName,
-      pending.duration ? `${pending.duration}小時` : ''
+      timeText
     ].filter(Boolean).join('｜');
   }
 
   if (pending.category === 'delta') {
     return [
-      '三角洲',
+      '三角洲行動',
+      pending.deltaPlatform || pending.itemLabel,
       pending.deltaMode,
-      pending.duration ? `${pending.duration}小時` : '',
-      pending.rounds ? `${pending.rounds}局` : ''
+      timeText
+    ].filter(Boolean).join('｜');
+  }
+
+  if (pending.category === 'other') {
+    return [
+      '其他項目',
+      pending.itemLabel || pending.playMode || pending.serviceType,
+      timeText
     ].filter(Boolean).join('｜');
   }
 
   if (pending.category === 'chat') {
     return [
       '陪聊',
-      pending.duration ? `${pending.duration}小時` : ''
+      timeText
     ].filter(Boolean).join('｜');
   }
 
   if (pending.category === 'emotion') {
     return [
       '出氣包',
-      pending.duration ? `${pending.duration}小時` : ''
+      timeText
     ].filter(Boolean).join('｜');
   }
 
-  return '陪玩訂單';
+  return [
+    getServiceName(pending.category),
+    pending.itemLabel,
+    pending.playMode,
+    timeText
+  ].filter(Boolean).join('｜') || '陪玩訂單';
 }
 function getDispatchServiceKeyFromPending(pending) {
+  const text =
+    [
+      pending.serviceType,
+      pending.itemLabel,
+      pending.playMode,
+      pending.steamCategory,
+      pending.deltaMode
+    ]
+      .filter(Boolean)
+      .join('');
+
   if (pending.category === 'valorant') {
-    const serviceTypes =
-      Array.isArray(pending.serviceTypes)
-        ? pending.serviceTypes
-        : [];
-    if (
-      serviceTypes.includes('技術') ||
-      pending.serviceType === '技術'
-    ) {
-      return '特戰英豪技術陪玩';
-    }
-    if (
-      serviceTypes.includes('娛樂') ||
-      pending.serviceType === '娛樂'
-    ) {
-      return '特戰英豪娛樂陪玩';
-    }
+    if (text.includes('大神')) return '特戰英豪大神陪玩';
+    if (text.includes('技術')) return '特戰英豪技術陪玩';
+    if (text.includes('娛樂')) return '特戰英豪娛樂陪玩';
     return '特戰英豪';
   }
 
+  if (pending.category === 'apex') {
+    if (text.includes('大神')) return 'Apex大神陪玩';
+    if (text.includes('技術')) return 'Apex技術陪玩';
+    if (text.includes('娛樂')) return 'Apex娛樂陪玩';
+    return 'Apex';
+  }
+  if (pending.category === 'lol') {
+    if (text.includes('大神')) return '英雄聯盟大神陪玩';
+    if (text.includes('技術')) return '英雄聯盟技術陪玩';
+    if (text.includes('娛樂')) return '英雄聯盟娛樂陪玩';
+    return '英雄聯盟';
+  }
+
   if (pending.category === 'steam') {
-    if (pending.steamCategory === '恐怖遊戲') {
-      return 'STEAM恐怖遊戲陪玩';
-    }
-    return 'STEAM一般遊戲陪玩';
+    return pending.steamCategory
+      ? `Steam${pending.steamCategory}`
+      : 'Steam';
   }
 
   if (pending.category === 'delta') {
-    return '三角洲行動';
+    return pending.deltaMode
+      ? `三角洲行動${pending.deltaMode}`
+      : '三角洲行動';
+  }
+
+  if (pending.category === 'other') {
+    return pending.itemLabel || pending.playMode || '其他項目';
   }
 
   if (pending.category === 'chat') {
-    return '陪聊服務聊天陪伴';
+    return '語音聊天';
   }
 
   if (pending.category === 'emotion') {
-    return '陪聊服務出氣服務';
+    return '出氣包';
   }
 
   return getServiceName(pending.category);
 }
 async function createPlayOrderFromServicePending(pending, channelId) {
-  const originalAmount =
-    Number(pending.quotedPrice || 0);
   const amount =
-    Number(pending.finalQuotedPrice || pending.quotedPrice || 0);
+    Number(pending.quotedPrice || 0);
 
   if (!amount || amount <= 0) {
     throw new Error('尚未報價，不能建立訂單');
@@ -8030,12 +8827,8 @@ async function createPlayOrderFromServicePending(pending, channelId) {
 
         note: pending.note || '',
 
-        price: originalAmount,
-        original_price: originalAmount,
+        price: amount,
         final_price: amount,
-        discount_rate: Number(pending.discountRate || 1),
-        discount_amount: Number(pending.discountAmount || 0),
-        coupon_text: pending.couponName || '未使用優惠券',
         payment_method: pending.paymentMethod || null,
 
         paid: false,
@@ -8312,23 +9105,6 @@ async function handleServicePaymentMethodSelect(interaction) {
     return interaction.editReply({
       content: `❌ 建立訂單失敗：${err.message || err}`
     });
-  }
-  if (pending.couponId && order) {
-    await supabase
-      .from('user_items')
-      .delete()
-      .eq('id', pending.couponId);
-    await supabase
-      .from('used_coupons')
-      .insert({
-        user_id: pending.customerId,
-        item_id: pending.couponId,
-        item_name: pending.couponName,
-        order_id: order.id,
-        discount_rate: Number(pending.discountRate || 1),
-        discount_amount: Number(pending.discountAmount || 0)
-      })
-      .catch?.(() => {});
   }
   if (paymentMethod === '儲值卡') {
     await sendServiceWalletConfirm(
@@ -9181,14 +9957,6 @@ async function handleDispatchInteraction(interaction) {
       await openServiceQuotePriceModal(interaction);
       return true;
     }
-    if (interaction.customId.startsWith('service_use_coupon_')) {
-      await handleServiceUseCoupon(interaction);
-      return true;
-    }
-    if (interaction.customId.startsWith('service_no_coupon_')) {
-      await handleServiceNoCoupon(interaction);
-      return true;
-    }
     if (interaction.customId.startsWith('service_confirm_wallet_group_')) {
       await handleServiceConfirmWalletGroup(interaction);
       return true;
@@ -9386,6 +10154,14 @@ async function handleDispatchInteraction(interaction) {
     }
   }
   if (interaction.isStringSelectMenu()) {
+    if (interaction.customId.startsWith('game_order_select_')) {
+      await handleGameOrderSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('lol_style_select_')) {
+      await handleLolStyleSelect(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('quote_select_coupon_')) {
       await handleQuoteSelectCoupon(interaction);
       return true;
@@ -9398,7 +10174,14 @@ async function handleDispatchInteraction(interaction) {
       await handleValorantRankSelect(interaction);
       return true;
     }
-
+    if (interaction.customId.startsWith('apex_rank_')) {
+      await handleApexRankSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('lol_rank_')) {
+      await handleLolRankSelect(interaction);
+      return true;
+    }
     if (interaction.customId.startsWith('service_player_count_')) {
       await handleServicePlayerCountSelect(interaction);
       return true;
@@ -9431,10 +10214,6 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId.startsWith('delta_mode_')) {
       await handleDeltaModeSelect(interaction);
-      return true;
-    }
-    if (interaction.customId.startsWith('service_select_coupon_')) {
-      await handleServiceSelectCoupon(interaction);
       return true;
     }
     if (interaction.customId.startsWith('service_payment_method_')) {
@@ -9489,6 +10268,7 @@ module.exports = {
   setup,
   handleDispatchInteraction,
   sendPlayerPanel,
+  sendGameOrderPanels,
   startNewOrderFlow,
   sendDailyPlayerSummary,
   submitTopupForm,
