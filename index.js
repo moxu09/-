@@ -89,22 +89,40 @@ async function getStaffByDiscordId(discordId) {
 }
 
 async function listActiveStaff() {
-  let query = supabase
-    .from(STAFF_TABLE)
-    .select('*');
+  const tableName = process.env.SALARY_STAFF_TABLE || 'players';
 
-  if (CURRENT_GUILD_ID) {
-    query = query.eq('guild_id', CURRENT_GUILD_ID);
-  }
-
-  const { data, error } = await query;
+  let { data, error } = await supabase
+    .from(tableName)
+    .select('*')
+    .not('discord_id', 'is', null);
 
   if (error) {
-    console.error('[深夜薪資] 讀取員工清單失敗', error);
-    return [];
+    console.error('[讀取員工清單失敗]', error);
+
+    if (tableName !== 'players') {
+      const fallback = await supabase
+        .from('players')
+        .select('*')
+        .not('discord_id', 'is', null);
+
+      if (fallback.error) {
+        console.error('[讀取 players 備援員工清單失敗]', fallback.error);
+        return [];
+      }
+
+      data = fallback.data || [];
+    } else {
+      return [];
+    }
   }
 
-  return data || [];
+  return (data || []).filter(staff => {
+    if (!staff.discord_id) return false;
+    if (staff.is_active === false) return false;
+    if (staff.can_take_order === false) return false;
+
+    return true;
+  });
 }
 
 async function listStaffByService(serviceKey) {
@@ -5502,12 +5520,33 @@ async function replySuccess(interaction, message) {
     flags: 64
   }).catch(() => {});
 }
+function parseRoleIdList(value) {
+  return String(value || '')
+    .split(',')
+    .map(v => v.trim())
+    .filter(Boolean);
+}
+
 function isAdminOrStaff(interaction) {
-  return (
-    interaction.guild.ownerId === interaction.user.id ||
-    interaction.member.permissions.has(PermissionFlagsBits.Administrator) ||
-    interaction.member.roles.cache.has(process.env.STAFF_ROLE)
-  );
+  const member = interaction.member;
+
+  if (!interaction.guild || !member) return false;
+
+  if (interaction.guild.ownerId === interaction.user.id) return true;
+
+  if (member.permissions?.has(PermissionFlagsBits.Administrator)) {
+    return true;
+  }
+
+  const roleIds = [
+    process.env.STAFF_ROLE,
+    process.env.ADMIN_ROLE,
+    process.env.ADMIN_ROLE_ID,
+    ...parseRoleIdList(process.env.STAFF_ROLE_IDS),
+    ...parseRoleIdList(process.env.ADMIN_ROLE_IDS),
+  ].filter(Boolean);
+
+  return roleIds.some(roleId => member.roles.cache.has(roleId));
 }
 async function handleSlashCommand(interaction) {
   // ping
