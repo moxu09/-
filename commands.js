@@ -17,6 +17,10 @@ module.exports = [
     .setDescription('查看我的商品'),
 
   new SlashCommandBuilder()
+    .setName('批量刪除頻道')
+    .setDescription('一次選擇多個文字頻道並刪除'),
+
+  new SlashCommandBuilder()
     .setName('single')
     .setDescription('單抽'),
 

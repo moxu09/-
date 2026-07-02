@@ -4190,6 +4190,7 @@ async function createWaitingQuoteOrder(interaction, flowId, pending) {
     await supabase
       .from('play_orders')
       .insert({
+        guild_id: pending.guildId || interaction.guildId || interaction.guild?.id || process.env.GUILD_ID,
         order_no: orderNo,
         customer_id: pending.userId,
         customer_username: pending.username || interaction.user.username,
@@ -9335,6 +9336,7 @@ async function createPlayOrderFromServicePending(pending, channelId) {
     await supabase
       .from('play_orders')
       .insert({
+        guild_id: pending.guildId || process.env.GUILD_ID,
         order_no: `ORD-${Date.now()}`,
 
         customer_id: pending.customerId,
