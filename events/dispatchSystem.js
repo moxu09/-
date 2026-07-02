@@ -56,9 +56,10 @@ const GAME_ORDER_PANELS = [
     description: '請選擇你要下單的特戰英豪項目。',
     customId: 'game_order_select_valorant',
     options: [
-      { label: '大神陪玩', value: 'god', description: '特戰英豪｜大神陪玩' },
-      { label: '技術陪玩', value: 'skill', description: '特戰英豪｜技術陪玩' },
-      { label: '娛樂陪玩', value: 'entertain', description: '特戰英豪｜娛樂陪玩' },
+      { label: '大神', value: 'god', description: '特戰英豪｜大神' },
+      { label: '技術', value: 'skill', description: '特戰英豪｜技術' },
+      { label: '娛樂', value: 'entertain', description: '特戰英豪｜娛樂' },
+      { label: '技術+娛樂', value: 'skill_entertain', description: '特戰英豪｜技術+娛樂，至少 2 位陪陪' },
       { label: '儲值星雨幣', value: 'topup', description: '建立儲值星雨幣頻道' }
     ]
   },
@@ -198,12 +199,20 @@ function buildPanelInitialData(gameKey, value) {
   const label = findOptionLabel(gameKey, value);
 
   if (gameKey === 'valorant') {
+    const valorantSelection =
+      getValorantTypeSelection(value);
+
     return {
       category: 'valorant',
       gameLabel: '特戰英豪',
-      itemLabel: label,
-      serviceType: `特戰英豪｜${label}`,
-      playMode: label,
+      itemLabel: valorantSelection?.label || label,
+      serviceType: valorantSelection?.label || label,
+      serviceTypes: valorantSelection?.serviceTypes || [],
+      playMode: valorantSelection?.label || label,
+      playerCount:
+        value === 'skill_entertain'
+          ? 2
+          : null,
       fromPanel: true
     };
   }
@@ -2029,7 +2038,7 @@ async function createServiceTicket(interaction, serviceType, initial = {}) {
       deltaPlatform: initial.deltaPlatform || null,
       deltaMode: initial.deltaMode || null,
 
-      playerCount: null,
+      playerCount: initial.playerCount || null,
       genderPreference: null,
       assignMode: null,
       selectedPlayerIds: [],
@@ -2038,8 +2047,16 @@ async function createServiceTicket(interaction, serviceType, initial = {}) {
       rounds: null,
       note: '',
       quotedPrice: null,
+      originalPrice: null,
+      finalPrice: null,
+      discountRate: 1,
+      discountAmount: 0,
+      couponText: '未使用優惠券',
+      usedCouponItemId: null,
+      usedCouponName: null,
       paymentMethod: null,
       timeSelectShown: false,
+      fromPanel: Boolean(initial.fromPanel),
 
       // 新分區入口會先把「送出訂單」按鈕直接放進臨時頻道，避免重複出現
       finishButtonShown: Boolean(initial.fromPanel)
@@ -2129,19 +2146,36 @@ await channel.send({
   });
 }
 async function showValorantStart(channel, flowId) {
-  const row1 =
-    new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(`valorant_type_entertain_${flowId}`)
-          .setLabel('娛樂')
-          .setStyle(ButtonStyle.Primary),
-
-        new ButtonBuilder()
-          .setCustomId(`valorant_type_skill_${flowId}`)
-          .setLabel('技術')
-          .setStyle(ButtonStyle.Secondary)
-      );
+  const pending =
+    pendingServiceOrders.get(flowId);
+  const hasPresetType =
+    Boolean(pending?.serviceType);
+  const typeMenu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`valorant_type_select_${flowId}`)
+      .setPlaceholder('請選擇服務內容')
+      .addOptions([
+        {
+          label: '大神',
+          value: 'god',
+          description: '大神陪玩'
+        },
+        {
+          label: '娛樂',
+          value: 'entertain',
+          description: '娛樂陪玩'
+        },
+        {
+          label: '技術',
+          value: 'skill',
+          description: '技術陪玩'
+        },
+        {
+          label: '技術+娛樂',
+          value: 'skill_entertain',
+          description: '技術與娛樂同時下單，至少 2 位陪陪'
+        }
+      ]);
 
   const row2 =
     new ActionRowBuilder()
@@ -2318,7 +2352,12 @@ async function showValorantStart(channel, flowId) {
         .setColor('#ff6b6b')
         .setTitle('🎯 特戰英豪需求')
         .setDescription(
-          `請依序選擇服務內容。\n\n` +
+          (
+            hasPresetType
+              ? `已選擇服務內容：${pending.serviceType}\n\n`
+              : `請依序選擇服務內容。\n\n`
+          ) +
+          `若選擇「技術+娛樂」，陪陪人數至少需要 2 位。\n\n` +
           `**客服價格參考**\n` +
           `娛樂陪玩：NT$250、250、260、270、310\n` +
           `技術陪玩：金牌以下以時長報價，金牌以上以局數報價\n\n` +
@@ -2326,7 +2365,11 @@ async function showValorantStart(channel, flowId) {
         )
     ],
     components: [
-      row1,
+      ...(
+        hasPresetType
+          ? []
+          : [new ActionRowBuilder().addComponents(typeMenu)]
+      ),
       row2,
       new ActionRowBuilder().addComponents(rankMenu),
       new ActionRowBuilder().addComponents(countMenu),
@@ -4937,6 +4980,7 @@ async function handleQuotePaymentMethodSelect(interaction) {
       flags: 64
     });
   }
+  await resetSelectMenuMessage(interaction);
 
   const orderId =
     interaction.customId.replace('quote_payment_method_', '');
@@ -5832,6 +5876,7 @@ async function handleExtensionPaymentMethodSelect(interaction) {
       flags: 64
     });
   }
+  await resetSelectMenuMessage(interaction);
 
   const extensionId =
     interaction.customId.replace('extension_payment_method_', '');
@@ -6579,6 +6624,7 @@ async function handleTopupPaymentMethodSelect(interaction) {
       flags: 64
     });
   }
+  await resetSelectMenuMessage(interaction);
 
   const topupId =
     interaction.customId.replace('topup_payment_method_', '');
@@ -7453,11 +7499,127 @@ async function checkGrowthVip(client, guildId, userId, singleTopup = 0) {
 function getFlowIdFromCustomId(customId, prefix = '') {
   return String(customId || '').replace(prefix, '');
 }
+function getValorantTypeSelection(value) {
+  const selections = {
+    god: {
+      label: '大神',
+      serviceTypes: ['大神']
+    },
+    skill: {
+      label: '技術',
+      serviceTypes: ['技術']
+    },
+    entertain: {
+      label: '娛樂',
+      serviceTypes: ['娛樂']
+    },
+    skill_entertain: {
+      label: '技術+娛樂',
+      serviceTypes: ['技術', '娛樂']
+    }
+  };
+
+  return selections[value] || null;
+}
+function getValorantServiceTypes(pending) {
+  return Array.isArray(pending?.serviceTypes)
+    ? pending.serviceTypes
+    : [];
+}
+function isValorantEntertainmentSkillOrder(pending) {
+  const serviceTypes =
+    getValorantServiceTypes(pending);
+
+  return (
+    pending?.category === 'valorant' &&
+    serviceTypes.includes('娛樂') &&
+    serviceTypes.includes('技術')
+  );
+}
+function enforceValorantMinimumPlayerCount(pending) {
+  if (!isValorantEntertainmentSkillOrder(pending)) {
+    return false;
+  }
+
+  const currentCount =
+    Number(pending.playerCount || 0);
+
+  if (currentCount >= 2) {
+    return false;
+  }
+
+  pending.playerCount = 2;
+  return true;
+}
+function getValorantTypeReply(pending, adjusted = false) {
+  const serviceTypes =
+    getValorantServiceTypes(pending);
+
+  if (!serviceTypes.length) {
+    return '✅ 已取消選擇，目前尚未選擇特戰服務';
+  }
+
+  return (
+    `✅ 目前已選擇特戰服務：${serviceTypes.join('＋')}` +
+    (
+      isValorantEntertainmentSkillOrder(pending)
+        ? `\n同時選擇娛樂＋技術時，陪陪人數至少需要 2 位。` +
+          (adjusted ? '\n已自動把陪陪人數調整為 2 位。' : '')
+        : ''
+    )
+  );
+}
+async function handleValorantTypeSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+  await resetSelectMenuMessage(interaction);
+
+  const flowId =
+    interaction.customId.replace('valorant_type_select_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  const selected =
+    getValorantTypeSelection(interaction.values[0]);
+
+  if (!selected) {
+    return interaction.editReply({
+      content: '❌ 找不到這個特戰服務選項，請重新選擇。'
+    });
+  }
+
+  pending.itemLabel = selected.label;
+  pending.playMode = selected.label;
+  pending.serviceTypes = selected.serviceTypes;
+  pending.serviceType =
+    selected.label;
+
+  const adjusted =
+    enforceValorantMinimumPlayerCount(pending);
+
+  pendingServiceOrders.set(flowId, pending);
+
+  return interaction.editReply({
+    content: getValorantTypeReply(pending, adjusted)
+  });
+}
 
 async function handleValorantTypeButton(interaction) {
-  await interaction.deferReply({
-    flags: 64
-  });
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
 
   const isEntertainment =
     interaction.customId.includes('valorant_type_entertain_');
@@ -7488,9 +7650,7 @@ async function handleValorantTypeButton(interaction) {
       : '技術';
 
   const serviceTypes =
-    Array.isArray(pending.serviceTypes)
-      ? pending.serviceTypes
-      : [];
+    getValorantServiceTypes(pending);
 
   if (serviceTypes.includes(selectedType)) {
     pending.serviceTypes =
@@ -7503,13 +7663,13 @@ async function handleValorantTypeButton(interaction) {
   pending.serviceType =
     pending.serviceTypes.join('＋') || null;
 
+  const adjusted =
+    enforceValorantMinimumPlayerCount(pending);
+
   pendingServiceOrders.set(flowId, pending);
 
   return interaction.editReply({
-    content:
-      pending.serviceTypes.length
-        ? `✅ 目前已選擇特戰服務：${pending.serviceTypes.join('＋')}`
-        : '✅ 已取消選擇，目前尚未選擇特戰服務'
+    content: getValorantTypeReply(pending, adjusted)
   });
 }
 
@@ -7549,6 +7709,7 @@ async function handleValorantRankSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('valorant_rank_', '');
@@ -7600,6 +7761,7 @@ async function handleApexRankSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('apex_rank_', '');
@@ -7625,6 +7787,7 @@ async function handleLolRankSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('lol_rank_', '');
@@ -7650,6 +7813,7 @@ async function handleServicePlayerCountSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('service_player_count_', '');
@@ -7662,7 +7826,21 @@ async function handleServicePlayerCountSelect(interaction) {
     });
   }
 
-  pending.playerCount = Number(interaction.values[0]);
+  const selectedCount =
+    Number(interaction.values[0]);
+
+  if (
+    isValorantEntertainmentSkillOrder(pending) &&
+    selectedCount < 2
+  ) {
+    return interaction.editReply({
+      content:
+        '❌ 同時選擇娛樂＋技術時，陪陪人數至少需要 2 位。\n' +
+        '請重新選擇 2 位以上。'
+    });
+  }
+
+  pending.playerCount = selectedCount;
 
   pendingServiceOrders.set(flowId, pending);
 
@@ -7681,6 +7859,7 @@ async function handleServiceGenderSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('service_gender_', '');
@@ -7908,6 +8087,7 @@ async function handleServiceAssignSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('service_assign_', '');
@@ -7948,6 +8128,7 @@ async function handleServiceSelectedPlayersSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('service_selected_players_', '');
@@ -8025,6 +8206,7 @@ async function handleServiceDurationSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('service_duration_', '');
@@ -8056,6 +8238,7 @@ async function handleServiceRoundsSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('service_rounds_', '');
@@ -8087,6 +8270,7 @@ async function handleSteamCategorySelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('steam_category_', '');
@@ -8118,6 +8302,7 @@ async function handleDeltaModeSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('delta_mode_', '');
@@ -8193,6 +8378,17 @@ async function finishServiceNeed(interaction) {
   if (!pending) {
     return interaction.editReply({
       content: '❌ 這筆訂單流程已過期。'
+    });
+  }
+
+  if (
+    isValorantEntertainmentSkillOrder(pending) &&
+    Number(pending.playerCount || 0) < 2
+  ) {
+    return interaction.editReply({
+      content:
+        '❌ 這筆特戰訂單同時選擇了娛樂＋技術，陪陪人數至少需要 2 位。\n' +
+        '請先把陪陪人數改成 2 位以上，再送出訂單。'
     });
   }
 
@@ -8436,8 +8632,112 @@ async function submitServiceQuotePrice(interaction) {
     pending.quoteParts = null;
   }
   pending.quotedPrice = price;
+  pending.originalPrice = price;
+  pending.finalPrice = price;
+  pending.discountRate = 1;
+  pending.discountAmount = 0;
+  pending.couponText = '未使用優惠券';
+  pending.usedCouponItemId = null;
+  pending.usedCouponName = null;
+  pending.serviceCouponRecorded = false;
   pendingServiceOrders.set(flowId, pending);
 
+  await sendServiceCouponPrompt(
+    interaction.channel,
+    flowId,
+    pending
+  );
+
+  return interaction.editReply({
+    content: `✅ 已送出正式報價：NT$${price.toLocaleString('zh-TW')}`
+  });
+}
+function getServiceOriginalPrice(pending) {
+  return Number(
+    pending?.originalPrice ||
+    pending?.quotedPrice ||
+    0
+  );
+}
+function getServiceFinalPrice(pending) {
+  const originalPrice =
+    getServiceOriginalPrice(pending);
+
+  if (
+    pending &&
+    pending.finalPrice !== null &&
+    pending.finalPrice !== undefined &&
+    pending.finalPrice !== ''
+  ) {
+    const finalPrice =
+      Number(pending.finalPrice);
+
+    if (Number.isFinite(finalPrice) && finalPrice >= 0) {
+      return finalPrice;
+    }
+  }
+
+  return originalPrice;
+}
+function buildServiceQuoteAmountText(pending) {
+  const originalPrice =
+    getServiceOriginalPrice(pending);
+  const finalPrice =
+    getServiceFinalPrice(pending);
+  const discountAmount =
+    Number(pending?.discountAmount || 0);
+
+  const quoteText =
+    pending?.quoteParts
+      ? `娛樂陪玩：NT$${Number(pending.quoteParts.entertain || 0).toLocaleString('zh-TW')}\n` +
+        `技術陪玩：NT$${Number(pending.quoteParts.skill || 0).toLocaleString('zh-TW')}\n` +
+        `合計金額：NT$${originalPrice.toLocaleString('zh-TW')}`
+      : `金額：NT$${originalPrice.toLocaleString('zh-TW')}`;
+
+  if (!discountAmount) {
+    return quoteText;
+  }
+
+  return (
+    `${quoteText}\n` +
+    `優惠券：${pending.couponText || '已使用優惠券'}\n` +
+    `折扣：NT$${discountAmount.toLocaleString('zh-TW')}\n` +
+    `應付金額：NT$${finalPrice.toLocaleString('zh-TW')}`
+  );
+}
+async function sendServiceCouponPrompt(channel, flowId, pending) {
+  const row =
+    new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`service_use_coupon_${flowId}`)
+          .setLabel('使用優惠券')
+          .setEmoji('🎟️')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`service_no_coupon_${flowId}`)
+          .setLabel('不使用優惠券')
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+  await channel.send({
+    content:
+      `<@${pending.customerId}> 客服已完成報價，請選擇是否使用優惠券。`,
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('💰 正式報價單')
+        .setDescription(
+          `服務：${getServiceName(pending.category)}\n` +
+          `${buildServiceQuoteAmountText(pending)}\n\n` +
+          `請先選擇是否使用優惠券，再選擇付款方式。`
+        )
+        .setTimestamp()
+    ],
+    components: [row]
+  });
+}
+async function sendServicePaymentMethodSelect(channel, flowId, pending) {
   const paymentMenu =
     new StringSelectMenuBuilder()
       .setCustomId(`service_payment_method_${flowId}`)
@@ -8469,23 +8769,17 @@ async function submitServiceQuotePrice(interaction) {
         }
       ]);
 
-  await interaction.channel.send({
+  await channel.send({
     content:
-      `<@${pending.customerId}> 客服已完成報價，請選擇付款方式。`,
+      `<@${pending.customerId}> 請選擇付款方式。`,
     embeds: [
       new EmbedBuilder()
         .setColor('#57F287')
-        .setTitle('💰 正式報價單')
+        .setTitle('💳 選擇付款方式')
         .setDescription(
           `服務：${getServiceName(pending.category)}\n` +
-          (
-            pending.quoteParts
-              ? `娛樂陪玩：NT$${pending.quoteParts.entertain.toLocaleString('zh-TW')}\n` +
-                `技術陪玩：NT$${pending.quoteParts.skill.toLocaleString('zh-TW')}\n` +
-                `合計金額：NT$${price.toLocaleString('zh-TW')}\n\n`
-              : `金額：NT$${price.toLocaleString('zh-TW')}\n\n`
-          ) +
-          `請選擇付款方式，付款完成後請上傳付款證明。`
+          `${buildServiceQuoteAmountText(pending)}\n\n` +
+          `付款完成後請上傳付款證明。`
         )
         .setTimestamp()
     ],
@@ -8493,9 +8787,260 @@ async function submitServiceQuotePrice(interaction) {
       new ActionRowBuilder().addComponents(paymentMenu)
     ]
   });
+}
+function resetServiceCouponSelection(pending) {
+  const originalPrice =
+    getServiceOriginalPrice(pending);
+
+  pending.finalPrice = originalPrice;
+  pending.discountRate = 1;
+  pending.discountAmount = 0;
+  pending.couponText = '未使用優惠券';
+  pending.usedCouponItemId = null;
+  pending.usedCouponName = null;
+  pending.serviceCouponRecorded = false;
+}
+async function handleServiceNoCoupon(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const flowId =
+    interaction.customId.replace('service_no_coupon_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  if (interaction.user.id !== pending.customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以選擇優惠券。'
+    });
+  }
+
+  resetServiceCouponSelection(pending);
+  pendingServiceOrders.set(flowId, pending);
+
+  await sendServicePaymentMethodSelect(
+    interaction.channel,
+    flowId,
+    pending
+  );
 
   return interaction.editReply({
-    content: `✅ 已送出正式報價：NT$${price.toLocaleString('zh-TW')}`
+    content: '✅ 已選擇不使用優惠券，請繼續選擇付款方式。'
+  });
+}
+async function handleServiceUseCoupon(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+
+  const flowId =
+    interaction.customId.replace('service_use_coupon_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  if (interaction.user.id !== pending.customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以選擇優惠券。'
+    });
+  }
+
+  const { data: coupons, error: couponError } =
+    await supabase
+      .from('user_items')
+      .select('*')
+      .eq('user_id', interaction.user.id)
+      .or(
+        'item_type.eq.coupon,item_name.ilike.%折券%,item_name.ilike.%優惠券%'
+      )
+      .order('created_at', { ascending: false });
+
+  if (couponError) {
+    console.error('[新版下單優惠券] 讀取優惠券失敗', couponError);
+    return interaction.editReply({
+      content: '❌ 讀取優惠券失敗，請稍後再試。'
+    });
+  }
+
+  if (!coupons?.length) {
+    return interaction.editReply({
+      content:
+        '❌ 你目前沒有可使用的優惠券。\n' +
+        '請改選「不使用優惠券」。'
+    });
+  }
+
+  const menu =
+    new StringSelectMenuBuilder()
+      .setCustomId(`service_select_coupon_${flowId}`)
+      .setPlaceholder('請選擇要使用的優惠券')
+      .addOptions(
+        coupons.slice(0, 25).map(coupon => {
+          const discount =
+            getCouponDiscount(coupon.item_name);
+
+          return {
+            label: String(coupon.item_name).slice(0, 100),
+            description:
+              `${discount.label}｜${coupon.description || '優惠券'}`
+                .slice(0, 100),
+            value: String(coupon.id)
+          };
+        })
+      );
+
+  return interaction.editReply({
+    content:
+      `🎟️ 請選擇要使用的優惠券：\n\n` +
+      `訂單金額：NT$${getServiceOriginalPrice(pending).toLocaleString('zh-TW')}`,
+    components: [
+      new ActionRowBuilder().addComponents(menu)
+    ]
+  });
+}
+async function handleServiceSelectCoupon(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({
+      flags: 64
+    });
+  }
+  await resetSelectMenuMessage(interaction);
+
+  const flowId =
+    interaction.customId.replace('service_select_coupon_', '');
+
+  const pending =
+    pendingServiceOrders.get(flowId);
+
+  if (!pending) {
+    return interaction.editReply({
+      content: '❌ 這筆訂單流程已過期，請重新下單。'
+    });
+  }
+
+  if (interaction.user.id !== pending.customerId) {
+    return interaction.editReply({
+      content: '❌ 只有下單的闆闆可以使用優惠券。'
+    });
+  }
+
+  const couponId =
+    interaction.values[0];
+
+  const { data: coupon, error: couponError } =
+    await supabase
+      .from('user_items')
+      .select('*')
+      .eq('id', Number(couponId))
+      .eq('user_id', interaction.user.id)
+      .maybeSingle();
+
+  if (
+    couponError ||
+    !coupon ||
+    !(
+      coupon.item_type === 'coupon' ||
+      String(coupon.item_name || '').includes('折券') ||
+      String(coupon.item_name || '').includes('優惠券')
+    )
+  ) {
+    return interaction.editReply({
+      content: '❌ 找不到這張優惠券，可能已經被使用。'
+    });
+  }
+
+  const originalPrice =
+    getServiceOriginalPrice(pending);
+
+  if (!originalPrice || originalPrice <= 0) {
+    return interaction.editReply({
+      content: '❌ 訂單金額錯誤，請聯繫客服重新報價。'
+    });
+  }
+
+  const maxPrice =
+    getCouponMaxDiscountPrice(coupon.item_name);
+
+  if (maxPrice && originalPrice > maxPrice) {
+    return interaction.editReply({
+      content:
+        `❌ 這張優惠券只限 NT$${maxPrice} 內訂單使用。\n` +
+        `目前訂單金額：NT$${originalPrice.toLocaleString('zh-TW')}`
+    });
+  }
+
+  const discount =
+    getCouponDiscount(coupon.item_name);
+  const finalPrice =
+    Math.floor(originalPrice * discount.rate);
+  const discountAmount =
+    originalPrice - finalPrice;
+
+  const { error: deleteError } =
+    await supabase
+      .from('user_items')
+      .delete()
+      .eq('id', coupon.id)
+      .eq('user_id', interaction.user.id);
+
+  if (deleteError) {
+    console.error('[新版下單優惠券] 刪除優惠券失敗', deleteError);
+    return interaction.editReply({
+      content: '❌ 套用優惠券失敗，無法從背包移除這張券。'
+    });
+  }
+
+  pending.finalPrice = finalPrice;
+  pending.discountRate = discount.rate;
+  pending.discountAmount = discountAmount;
+  pending.couponText = coupon.item_name;
+  pending.usedCouponItemId = coupon.id;
+  pending.usedCouponName = coupon.item_name;
+  pending.serviceCouponRecorded = false;
+  pendingServiceOrders.set(flowId, pending);
+
+  await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor('#57F287')
+        .setTitle('🎟️ 優惠券已套用')
+        .setDescription(
+          `<@${interaction.user.id}> 已使用：${coupon.item_name}\n\n` +
+          `原價：NT$${originalPrice.toLocaleString('zh-TW')}\n` +
+          `折扣：NT$${discountAmount.toLocaleString('zh-TW')}\n` +
+          `折後金額：NT$${finalPrice.toLocaleString('zh-TW')}`
+        )
+        .setTimestamp()
+    ]
+  });
+
+  await sendServicePaymentMethodSelect(
+    interaction.channel,
+    flowId,
+    pending
+  );
+
+  return interaction.editReply({
+    content: '✅ 優惠券已套用，請繼續選擇付款方式。',
+    components: []
   });
 }
 async function openServiceOrderNoteModal(interaction) {
@@ -8769,10 +9314,12 @@ function getDispatchServiceKeyFromPending(pending) {
   return getServiceName(pending.category);
 }
 async function createPlayOrderFromServicePending(pending, channelId) {
+  const originalAmount =
+    getServiceOriginalPrice(pending);
   const amount =
-    Number(pending.quotedPrice || 0);
+    getServiceFinalPrice(pending);
 
-  if (!amount || amount <= 0) {
+  if (!originalAmount || originalAmount <= 0) {
     throw new Error('尚未報價，不能建立訂單');
   }
 
@@ -8827,8 +9374,12 @@ async function createPlayOrderFromServicePending(pending, channelId) {
 
         note: pending.note || '',
 
-        price: amount,
+        price: originalAmount,
+        original_price: originalAmount,
         final_price: amount,
+        discount_rate: Number(pending.discountRate || 1),
+        discount_amount: Number(pending.discountAmount || 0),
+        coupon_text: pending.couponText || '未使用優惠券',
         payment_method: pending.paymentMethod || null,
 
         paid: false,
@@ -8849,12 +9400,23 @@ async function createPlayOrderFromServicePending(pending, channelId) {
 
   return data;
 }
-function clonePendingForValorantSplit(pending, splitRole, splitPrice) {
+function clonePendingForValorantSplit(
+  pending,
+  splitRole,
+  splitPrice,
+  splitFinalPrice,
+  splitDiscountAmount,
+  splitPlayerCount
+) {
   return {
     ...pending,
     serviceType: splitRole,
     serviceTypes: [splitRole],
     quotedPrice: splitPrice,
+    originalPrice: splitPrice,
+    finalPrice: splitFinalPrice,
+    discountAmount: splitDiscountAmount,
+    playerCount: splitPlayerCount,
     quoteParts: null
   };
 }
@@ -8873,18 +9435,57 @@ async function createValorantSplitOrdersFromPending(pending, channelId) {
   const groupId =
     `VG-${Date.now()}-${pending.customerId}`;
 
+  const originalTotal =
+    entertainPrice + skillPrice;
+  const finalTotal =
+    getServiceFinalPrice(pending);
+  const totalDiscount =
+    Math.max(0, originalTotal - finalTotal);
+  const totalPlayerCount =
+    Math.max(2, Number(pending.playerCount || 2));
+  const entertainPlayerCount =
+    Math.max(1, Math.floor(totalPlayerCount / 2));
+  const skillPlayerCount =
+    Math.max(1, totalPlayerCount - entertainPlayerCount);
+
+  let entertainFinal =
+    entertainPrice;
+  let skillFinal =
+    skillPrice;
+  let entertainDiscount =
+    0;
+  let skillDiscount =
+    0;
+
+  if (totalDiscount > 0 && originalTotal > 0) {
+    entertainFinal =
+      Math.floor(entertainPrice * finalTotal / originalTotal);
+    skillFinal =
+      finalTotal - entertainFinal;
+    entertainDiscount =
+      entertainPrice - entertainFinal;
+    skillDiscount =
+      skillPrice - skillFinal;
+  }
+
   const entertainPending =
     clonePendingForValorantSplit(
       pending,
       '娛樂',
-      entertainPrice
+      entertainPrice,
+      entertainFinal,
+      entertainDiscount,
+      entertainPlayerCount
     );
 
   const skillPending =
     clonePendingForValorantSplit(
       pending,
       '技術',
-      skillPrice
+      skillPrice,
+      skillFinal,
+      skillDiscount,
+      skillPlayerCount
     );
 
   const entertainOrder =
@@ -8900,7 +9501,7 @@ async function createValorantSplitOrdersFromPending(pending, channelId) {
     );
 
   const totalPrice =
-    entertainPrice + skillPrice;
+    finalTotal;
 
   await supabase
     .from('play_orders')
@@ -8936,6 +9537,39 @@ async function createValorantSplitOrdersFromPending(pending, channelId) {
     totalPrice,
     orders
   };
+}
+async function recordServiceUsedCoupon(pending, orderOrOrders) {
+  if (
+    !pending?.usedCouponItemId ||
+    pending.serviceCouponRecorded
+  ) {
+    return;
+  }
+
+  const orders =
+    Array.isArray(orderOrOrders)
+      ? orderOrOrders
+      : [orderOrOrders].filter(Boolean);
+  const firstOrder =
+    orders[0] || null;
+
+  const { error: usedCouponError } =
+    await supabase
+      .from('used_coupons')
+      .insert({
+        user_id: pending.customerId,
+        item_id: pending.usedCouponItemId,
+        item_name: pending.usedCouponName || pending.couponText,
+        order_id: firstOrder?.id || null,
+        discount_rate: Number(pending.discountRate || 1),
+        discount_amount: Number(pending.discountAmount || 0)
+      });
+
+  if (usedCouponError) {
+    console.log('[新版下單優惠券紀錄失敗]', usedCouponError.message);
+  }
+
+  pending.serviceCouponRecorded = true;
 }
 async function sendServiceWalletConfirm(interaction, order, orderGroup) {
   const isGroup =
@@ -9050,6 +9684,7 @@ async function handleServicePaymentMethodSelect(interaction) {
   await interaction.deferReply({
     flags: 64
   });
+  await resetSelectMenuMessage(interaction);
 
   const flowId =
     interaction.customId.replace('service_payment_method_', '');
@@ -9086,23 +9721,27 @@ async function handleServicePaymentMethodSelect(interaction) {
     serviceTypes.includes('娛樂') &&
     serviceTypes.includes('技術') &&
     pending.quoteParts;
-  try {
-    if (isValorantSplit) {
-      orderGroup =
-        await createValorantSplitOrdersFromPending(
-          pending,
-          interaction.channel.id
-        );
-    } else {
-      order =
-        await createPlayOrderFromServicePending(
-          pending,
-          interaction.channel.id
-        );
-    }
-  } catch (err) {
-    console.error('[新版下單] 建立訂單失敗', err);
-    return interaction.editReply({
+	  try {
+	    if (isValorantSplit) {
+	      orderGroup =
+	        await createValorantSplitOrdersFromPending(
+	          pending,
+	          interaction.channel.id
+	        );
+	    } else {
+	      order =
+	        await createPlayOrderFromServicePending(
+	          pending,
+	          interaction.channel.id
+	        );
+	    }
+	    await recordServiceUsedCoupon(
+	      pending,
+	      orderGroup ? orderGroup.orders : order
+	    );
+	  } catch (err) {
+	    console.error('[新版下單] 建立訂單失敗', err);
+	    return interaction.editReply({
       content: `❌ 建立訂單失敗：${err.message || err}`
     });
   }
@@ -9953,13 +10592,21 @@ async function handleDispatchInteraction(interaction) {
       await finishServiceNeed(interaction);
       return true;
     }
-    if (interaction.customId.startsWith('service_quote_price_')) {
-      await openServiceQuotePriceModal(interaction);
-      return true;
-    }
-    if (interaction.customId.startsWith('service_confirm_wallet_group_')) {
-      await handleServiceConfirmWalletGroup(interaction);
-      return true;
+	    if (interaction.customId.startsWith('service_quote_price_')) {
+	      await openServiceQuotePriceModal(interaction);
+	      return true;
+	    }
+	    if (interaction.customId.startsWith('service_no_coupon_')) {
+	      await handleServiceNoCoupon(interaction);
+	      return true;
+	    }
+	    if (interaction.customId.startsWith('service_use_coupon_')) {
+	      await handleServiceUseCoupon(interaction);
+	      return true;
+	    }
+	    if (interaction.customId.startsWith('service_confirm_wallet_group_')) {
+	      await handleServiceConfirmWalletGroup(interaction);
+	      return true;
     }
     if (interaction.customId.startsWith('service_confirm_monthly_group_')) {
       await handleServiceConfirmMonthlyGroup(interaction);
@@ -10170,13 +10817,17 @@ async function handleDispatchInteraction(interaction) {
       await handleQuotePaymentMethodSelect(interaction);
       return true;
     }
-    if (interaction.customId.startsWith('valorant_rank_')) {
-      await handleValorantRankSelect(interaction);
-      return true;
-    }
-    if (interaction.customId.startsWith('apex_rank_')) {
-      await handleApexRankSelect(interaction);
-      return true;
+	    if (interaction.customId.startsWith('valorant_rank_')) {
+	      await handleValorantRankSelect(interaction);
+	      return true;
+	    }
+	    if (interaction.customId.startsWith('valorant_type_select_')) {
+	      await handleValorantTypeSelect(interaction);
+	      return true;
+	    }
+	    if (interaction.customId.startsWith('apex_rank_')) {
+	      await handleApexRankSelect(interaction);
+	      return true;
     }
     if (interaction.customId.startsWith('lol_rank_')) {
       await handleLolRankSelect(interaction);
@@ -10204,13 +10855,17 @@ async function handleDispatchInteraction(interaction) {
       await handleServiceDurationSelect(interaction);
       return true;
     }
-    if (interaction.customId.startsWith('service_rounds_')) {
-      await handleServiceRoundsSelect(interaction);
-      return true;
-    }
-    if (interaction.customId.startsWith('steam_category_')) {
-      await handleSteamCategorySelect(interaction);
-      return true;
+	    if (interaction.customId.startsWith('service_rounds_')) {
+	      await handleServiceRoundsSelect(interaction);
+	      return true;
+	    }
+	    if (interaction.customId.startsWith('service_select_coupon_')) {
+	      await handleServiceSelectCoupon(interaction);
+	      return true;
+	    }
+	    if (interaction.customId.startsWith('steam_category_')) {
+	      await handleSteamCategorySelect(interaction);
+	      return true;
     }
     if (interaction.customId.startsWith('delta_mode_')) {
       await handleDeltaModeSelect(interaction);

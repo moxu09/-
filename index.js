@@ -1609,7 +1609,7 @@ async function changeCoins(userId, amount) {
 
   if (error) {
     console.error('[DB] 原子更新金額失敗:', error);
-    throw new Error('無法更新金額');
+    throw new Error(error.message || '無法更新金額');
   }
 
   return Number(data || 0);
@@ -2281,6 +2281,111 @@ async function grantVipLevelReward(
     }).catch(() => {});
   }
 }
+async function getUserVipRecord(userId, guildId = process.env.GUILD_ID) {
+  if (!userId || !guildId) {
+    return {
+      data: null,
+      error: null
+    };
+  }
+
+  return supabase
+    .from('user_vips')
+    .select('*')
+    .eq('guild_id', guildId)
+    .eq('user_id', userId)
+    .maybeSingle();
+}
+async function saveUserVipRecord(payload, existingVip = null) {
+  const dataToSave = {
+    ...payload,
+    updated_at: payload.updated_at || new Date().toISOString()
+  };
+
+  if (existingVip?.id) {
+    const updateByIdResult =
+      await supabase
+        .from('user_vips')
+        .update(dataToSave)
+        .eq('id', existingVip.id)
+        .eq('guild_id', dataToSave.guild_id)
+        .select()
+        .maybeSingle();
+
+    if (!updateByIdResult.error && updateByIdResult.data) {
+      return updateByIdResult;
+    }
+
+    console.error('[VIP] 依 id 更新累積資料失敗', updateByIdResult.error);
+  }
+
+  if (existingVip) {
+    const updateExistingResult =
+      await supabase
+        .from('user_vips')
+        .update(dataToSave)
+        .eq('guild_id', dataToSave.guild_id)
+        .eq('user_id', dataToSave.user_id)
+        .select()
+        .maybeSingle();
+
+    if (!updateExistingResult.error && updateExistingResult.data) {
+      return updateExistingResult;
+    }
+
+    console.error('[VIP] 依 guild_id/user_id 更新累積資料失敗', updateExistingResult.error);
+  }
+
+  return supabase
+    .from('user_vips')
+    .upsert(
+      dataToSave,
+      {
+        onConflict: 'guild_id,user_id'
+      }
+    )
+    .select()
+    .maybeSingle();
+}
+async function getLegacyUserVipCandidates(userId) {
+  if (!userId) {
+    return {
+      data: [],
+      error: null
+    };
+  }
+
+  return supabase
+    .from('user_vips')
+    .select('id,guild_id,user_id,level_key,level_name,total_spent,total_topup,highest_single_topup,updated_at')
+    .eq('user_id', userId)
+    .order('updated_at', { ascending: false });
+}
+async function explainUserVipSaveFailure(userId, guildId, error) {
+  const { data: candidates, error: candidateError } =
+    await getLegacyUserVipCandidates(userId);
+
+  if (candidateError) {
+    console.error('[VIP] 查詢可能衝突的累積資料失敗', candidateError);
+    return;
+  }
+
+  const otherGuildRows =
+    (candidates || [])
+      .filter(row => row.guild_id !== guildId);
+
+  if (otherGuildRows.length) {
+    console.error(
+      '[VIP] 儲存失敗，且同 user_id 在其他 guild 已有 VIP 資料。因兩個 bot 的 VIP/累積資料需分開，程式不會自動沿用另一個 guild 的資料。',
+      {
+        userId,
+        guildId,
+        otherGuildRows,
+        originalError: error
+      }
+    );
+  }
+}
 async function checkAndUpgradeVip(userId, triggerType, amount, guildId = process.env.GUILD_ID) {
   const triggerAmount =
     Number(amount || 0);
@@ -2289,13 +2394,13 @@ async function checkAndUpgradeVip(userId, triggerType, amount, guildId = process
     return null;
   }
 
-  const { data: currentVip } =
-    await supabase
-      .from('user_vips')
-      .select('*')
-      .eq('guild_id', guildId)
-      .eq('user_id', userId)
-      .maybeSingle();
+  const { data: currentVip, error: vipReadError } =
+    await getUserVipRecord(userId, guildId);
+
+  if (vipReadError) {
+    console.error('[VIP] 讀取累積資料失敗', vipReadError);
+    return null;
+  }
 
   const oldTotalSpent =
     Number(currentVip?.total_spent || 0);
@@ -2357,21 +2462,25 @@ async function checkAndUpgradeVip(userId, triggerType, amount, guildId = process
     });
 
   if (!availableLevels.length) {
-    await supabase
-      .from('user_vips')
-      .upsert(
+    const { error: saveError } =
+      await saveUserVipRecord(
         {
           guild_id: guildId,
           user_id: userId,
+          level_key: currentVip?.level_key || null,
+          level_name: currentVip?.level_name || null,
           total_spent: newTotalSpent,
           total_topup: newTotalTopup,
           highest_single_topup: newHighestTopup,
           updated_at: new Date().toISOString()
         },
-        {
-          onConflict: 'guild_id,user_id'
-        }
+        currentVip
       );
+
+    if (saveError) {
+      console.error('[VIP] 更新累積資料失敗', saveError);
+      await explainUserVipSaveFailure(userId, guildId, saveError);
+    }
 
     return null;
   }
@@ -2382,9 +2491,8 @@ async function checkAndUpgradeVip(userId, triggerType, amount, guildId = process
   const newSortOrder =
     Number(newLevel.sort_order || 0);
 
-  await supabase
-    .from('user_vips')
-    .upsert(
+  const { error: saveError } =
+    await saveUserVipRecord(
       {
         guild_id: guildId,
         user_id: userId,
@@ -2395,10 +2503,14 @@ async function checkAndUpgradeVip(userId, triggerType, amount, guildId = process
         highest_single_topup: newHighestTopup,
         updated_at: new Date().toISOString()
       },
-      {
-        onConflict: 'guild_id,user_id'
-      }
+      currentVip
     );
+
+  if (saveError) {
+    console.error('[VIP] 更新等級資料失敗', saveError);
+    await explainUserVipSaveFailure(userId, guildId, saveError);
+    return null;
+  }
 
   if (newSortOrder <= oldSortOrder) {
     return null;
@@ -2514,13 +2626,13 @@ async function countOrderVipSpentOnce(order, reason = '付款完成') {
   };
 }
 async function checkVvipMonthlyKeep(userId, billingMonth = getBillingMonth(), guildId = process.env.GUILD_ID) {
-  const { data: vip } =
-    await supabase
-      .from('user_vips')
-      .select('*')
-      .eq('guild_id', guildId)
-      .eq('user_id', userId)
-      .maybeSingle();
+  const { data: vip, error: vipError } =
+    await getUserVipRecord(userId, guildId);
+
+  if (vipError) {
+    console.error('[VVIP保級] 讀取會員累積資料失敗', vipError);
+    return null;
+  }
 
   if (!vip?.level_key) {
     return null;
@@ -2624,13 +2736,13 @@ async function applyVipOrderCashback(order, guildId = process.env.GUILD_ID) {
     return;
   }
 
-  const { data: vip } =
-    await supabase
-      .from('user_vips')
-      .select('*')
-      .eq('guild_id', guildId)
-      .eq('user_id', userId)
-      .maybeSingle();
+  const { data: vip, error: vipError } =
+    await getUserVipRecord(userId, guildId);
+
+  if (vipError) {
+    console.error('[VIP消費回饋] 讀取會員累積資料失敗', vipError);
+    return;
+  }
 
   if (!vip?.level_key) {
     return;
@@ -2997,6 +3109,230 @@ async function removeUserItem(itemId) {
     console.error('[DB] 刪除玩家商品失敗:', error);
     throw new Error('刪除玩家商品失敗');
   }
+}
+function isCouponInventoryItem(item) {
+  const itemName =
+    String(item?.item_name || '');
+
+  return (
+    item?.item_type === 'coupon' ||
+    itemName.includes('折券') ||
+    itemName.includes('優惠券')
+  );
+}
+
+function formatCouponChoiceName(coupon) {
+  const itemName =
+    String(coupon?.item_name || '未知優惠券');
+
+  return `${itemName}｜#${coupon.id}`.slice(0, 100);
+}
+
+function findCouponFromSelection(items, couponValue) {
+  const selectedId =
+    Number(couponValue);
+
+  if (Number.isInteger(selectedId)) {
+    const byId =
+      items.find(item =>
+        Number(item.id) === selectedId &&
+        isCouponInventoryItem(item)
+      );
+
+    if (byId) return byId;
+  }
+
+  const normalizedValue =
+    String(couponValue || '')
+      .replace(/\s+/g, '')
+      .toLowerCase();
+
+  return items.find(item => {
+    const normalizedName =
+      String(item.item_name || '')
+        .replace(/\s+/g, '')
+        .toLowerCase();
+
+    return (
+      isCouponInventoryItem(item) &&
+      normalizedName === normalizedValue
+    );
+  });
+}
+
+async function handleUseCouponAutocomplete(interaction) {
+  if (interaction.commandName !== '使用優惠券') return false;
+
+  const focused =
+    interaction.options.getFocused(true);
+
+  if (focused.name !== '優惠券') {
+    await interaction.respond([]);
+    return true;
+  }
+
+  const customerId =
+    String(
+      interaction.options.get('客人')?.value || ''
+    ).trim();
+
+  if (!customerId) {
+    await interaction.respond([
+      {
+        name: '請先選擇客人',
+        value: '__no_customer__'
+      }
+    ]);
+    return true;
+  }
+
+  const keyword =
+    String(focused.value || '')
+      .trim()
+      .toLowerCase();
+
+  const coupons =
+    (await getUserItems(customerId))
+      .filter(isCouponInventoryItem)
+      .filter(coupon => {
+        if (!keyword) return true;
+
+        return String(coupon.item_name || '')
+          .toLowerCase()
+          .includes(keyword);
+      })
+      .slice(0, 25)
+      .map(coupon => ({
+        name: formatCouponChoiceName(coupon),
+        value: String(coupon.id)
+      }));
+
+  if (coupons.length === 0) {
+    await interaction.respond([
+      {
+        name: '這位客人目前沒有符合的優惠券',
+        value: '__no_coupon__'
+      }
+    ]);
+    return true;
+  }
+
+  await interaction.respond(coupons);
+  return true;
+}
+
+async function handleUseCouponCommand(interaction) {
+  if (!isAdminOrStaff(interaction)) {
+    return interaction.editReply({
+      content: '❌ 只有客服或管理員可以使用這個指令'
+    });
+  }
+
+  const target =
+    interaction.options.getUser('客人');
+  const couponValue =
+    interaction.options.getString('優惠券');
+
+  if (!target) {
+    return interaction.editReply({
+      content: '❌ 找不到客人'
+    });
+  }
+
+  if (target.bot) {
+    return interaction.editReply({
+      content: '❌ 不能對機器人使用優惠券'
+    });
+  }
+
+  if (
+    !couponValue ||
+    couponValue === '__no_customer__' ||
+    couponValue === '__no_coupon__'
+  ) {
+    return interaction.editReply({
+      content: '❌ 請選擇客人持有的優惠券'
+    });
+  }
+
+  const items =
+    await getUserItems(target.id);
+  const coupon =
+    findCouponFromSelection(
+      items,
+      couponValue
+    );
+
+  if (!coupon) {
+    const ownedCoupons =
+      items
+        .filter(isCouponInventoryItem)
+        .slice(0, 10)
+        .map(item => `- ${item.item_name}`)
+        .join('\n');
+
+    return interaction.editReply({
+      content:
+        `❌ <@${target.id}> 沒有這張優惠券。\n` +
+        (
+          ownedCoupons
+            ? `目前持有：\n${ownedCoupons}`
+            : '目前沒有任何優惠券。'
+        )
+    });
+  }
+
+  try {
+    await removeUserItem(coupon.id);
+  } catch (deleteError) {
+    console.error('[手動使用優惠券] 刪除優惠券失敗', deleteError);
+    return interaction.editReply({
+      content: '❌ 使用優惠券失敗，無法從客人背包移除這張券'
+    });
+  }
+
+  const { error: usedError } =
+    await supabase
+      .from('used_coupons')
+      .insert({
+        user_id: target.id,
+        item_name: coupon.item_name,
+        item_id: coupon.id
+      });
+
+  if (usedError) {
+    console.error('[手動使用優惠券] 使用紀錄寫入失敗', usedError);
+  }
+
+  const user =
+    await client.users.fetch(target.id).catch(() => null);
+
+  if (user) {
+    await user.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor('#ffd166')
+          .setTitle('🎟️ 優惠券已使用')
+          .setDescription(
+            `你的優惠券已由客服使用：**${coupon.item_name}**`
+          )
+          .setTimestamp()
+      ]
+    }).catch(() => {});
+  }
+
+  return interaction.editReply({
+    content:
+      `✅ 已使用優惠券\n\n` +
+      `客人：<@${target.id}>\n` +
+      `優惠券：${coupon.item_name}\n` +
+      `操作人：<@${interaction.user.id}>` +
+      (
+        usedError
+          ? '\n⚠️ 優惠券已移除，但使用紀錄寫入失敗，請稍後確認 used_coupons。'
+          : ''
+      )
+  });
 }
 // 安全轉帳函數
 async function safeTransfer(
@@ -4136,6 +4472,22 @@ const commands = [
         .setRequired(false)
     ),
   new SlashCommandBuilder()
+    .setName('使用優惠券')
+    .setDescription('替客人手動使用一張持有的優惠券')
+    .addUserOption(option =>
+      option
+        .setName('客人')
+        .setDescription('選擇要使用優惠券的客人')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('優惠券')
+        .setDescription('先選客人，再選擇客人持有的優惠券')
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
+  new SlashCommandBuilder()
     .setName('給與身份組')
     .setDescription('給指定成員、多位成員或所有人發放身份組')
     .addRoleOption(option =>
@@ -4906,6 +5258,17 @@ async function getAvailablePlayerOptions(service, guildId = process.env.GUILD_ID
 client.on(Events.InteractionCreate, async interaction => {
   try {
 
+    // ===== Autocomplete =====
+    if (interaction.isAutocomplete()) {
+      const handled =
+        await handleUseCouponAutocomplete(interaction);
+
+      if (handled) return;
+
+      await interaction.respond([]);
+      return;
+    }
+
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
       // ===== 月結繳費金額輸入 =====
@@ -5344,20 +5707,22 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('new_order_player_') ||
         interaction.customId.startsWith('new_order_duration_') ||
 
-        // ===== 新版服務下單流程 =====
-        interaction.customId.startsWith('valorant_rank_') ||
-        interaction.customId.startsWith('apex_rank_') ||
-        interaction.customId.startsWith('lol_rank_') ||
-        interaction.customId.startsWith('service_player_count_') ||
-        interaction.customId.startsWith('service_gender_') ||
-        interaction.customId.startsWith('service_assign_') ||
-        interaction.customId.startsWith('service_selected_players_') ||
-        interaction.customId.startsWith('service_duration_') ||
-        interaction.customId.startsWith('service_rounds_') || 
-        interaction.customId.startsWith('steam_category_') ||
-        interaction.customId.startsWith('delta_mode_') ||
-        interaction.customId.startsWith('service_payment_method_') ||
-        interaction.customId.startsWith('game_order_select_') ||
+	        // ===== 新版服務下單流程 =====
+	        interaction.customId.startsWith('valorant_type_select_') ||
+	        interaction.customId.startsWith('valorant_rank_') ||
+	        interaction.customId.startsWith('apex_rank_') ||
+	        interaction.customId.startsWith('lol_rank_') ||
+	        interaction.customId.startsWith('service_player_count_') ||
+	        interaction.customId.startsWith('service_gender_') ||
+	        interaction.customId.startsWith('service_assign_') ||
+	        interaction.customId.startsWith('service_selected_players_') ||
+	        interaction.customId.startsWith('service_duration_') ||
+	        interaction.customId.startsWith('service_rounds_') ||
+	        interaction.customId.startsWith('steam_category_') ||
+	        interaction.customId.startsWith('delta_mode_') ||
+	        interaction.customId.startsWith('service_select_coupon_') ||
+	        interaction.customId.startsWith('service_payment_method_') ||
+	        interaction.customId.startsWith('game_order_select_') ||
         interaction.customId.startsWith('lol_style_select_') ||
 
         interaction.customId.startsWith('quote_select_coupon_') ||
@@ -5404,9 +5769,10 @@ client.on(Events.InteractionCreate, async interaction => {
         interaction.customId.startsWith('new_order_item_') ||
         interaction.customId.startsWith('new_order_count_') ||
         interaction.customId.startsWith('new_order_gender_') ||
-        interaction.customId.startsWith('new_order_player_') ||
-        interaction.customId.startsWith('new_order_duration_') ||
-        interaction.customId.startsWith('quote_select_coupon_') ||
+	        interaction.customId.startsWith('new_order_player_') ||
+	        interaction.customId.startsWith('new_order_duration_') ||
+	        interaction.customId.startsWith('service_select_coupon_') ||
+	        interaction.customId.startsWith('quote_select_coupon_') ||
         interaction.customId.startsWith('quote_payment_method_') ||
         interaction.customId.startsWith('submit_dispatch_players_') ||
         interaction.customId.startsWith('extension_payment_method_')
@@ -5862,6 +6228,16 @@ async function handleSlashCommand(interaction) {
           if (isNaN(amount) || amount <= 0) {
             return replyError(interaction, '金額錯誤');
           }
+          const userData =
+            await getUser(target.id);
+          const currentCoins =
+            Number(userData.coins || 0);
+          if (currentCoins < amount) {
+            return replyError(
+              interaction,
+              `餘額不足，目前餘額 ${currentCoins.toLocaleString('zh-TW')} 星雨幣，需要 ${amount.toLocaleString('zh-TW')} 星雨幣`
+            );
+          }
           const finalCoins =
             await changeCoins(target.id, -amount);
           await sendWalletLog(
@@ -5878,6 +6254,10 @@ async function handleSlashCommand(interaction) {
         }
         if (interaction.commandName === '給與身份組') {
           await handleGiveRoleCommand(interaction);
+          return;
+        }
+        if (interaction.commandName === '使用優惠券') {
+          await handleUseCouponCommand(interaction);
           return;
         }
         if (interaction.commandName === '發送優惠券') {
@@ -5976,12 +6356,7 @@ async function handleSlashCommand(interaction) {
             return replyError(interaction, '金額格式錯誤');
           }
           const { data: oldVip, error: readError } =
-            await supabase
-              .from('user_vips')
-              .select('*')
-              .eq('guild_id', guildId)
-              .eq('user_id', target.id)
-              .maybeSingle();
+            await getUserVipRecord(target.id, guildId);
           if (readError) {
             console.error('[調整累積消費] 讀取失敗', readError);
             return replyError(interaction, '讀取會員累積資料失敗');
@@ -6021,31 +6396,13 @@ async function handleSlashCommand(interaction) {
             highest_single_topup: Number(oldVip?.highest_single_topup || 0),
             updated_at: new Date().toISOString()
           };
-          let updatedVip = null;
-          let saveError = null;
-          if (oldVip) {
-            const { data, error } =
-              await supabase
-                .from('user_vips')
-                .update(payload)
-                .eq('guild_id', guildId)
-                .eq('user_id', target.id)
-                .select()
-                .maybeSingle();
-            updatedVip = data;
-            saveError = error;
-          } else {
-            const { data, error } =
-              await supabase
-                .from('user_vips')
-                .insert(payload)
-                .select()
-                .maybeSingle();
-            updatedVip = data;
-            saveError = error;
-          }
+          const { data: updatedVip, error: saveError } =
+            await saveUserVipRecord(payload, oldVip);
           if (saveError || !updatedVip) {
             console.error('[調整累積消費] 更新失敗', saveError);
+            if (saveError) {
+              await explainUserVipSaveFailure(target.id, guildId, saveError);
+            }
             return replyError(
               interaction,
               `更新累積消費失敗：${saveError?.message || '未知錯誤'}`
@@ -6104,6 +6461,10 @@ async function handleSlashCommand(interaction) {
           const note =
             interaction.options.getString('備註') || '手動調整累積儲值';
 
+          if (!guildId) {
+            return replyError(interaction, '找不到群組 ID，無法調整累積儲值');
+          }
+
           if (!target) {
             return replyError(interaction, '找不到玩家');
           }
@@ -6113,12 +6474,7 @@ async function handleSlashCommand(interaction) {
           }
 
           const { data: oldVip, error: readError } =
-            await supabase
-              .from('user_vips')
-              .select('*')
-              .eq('guild_id', guildId)
-              .eq('user_id', target.id)
-              .maybeSingle();
+            await getUserVipRecord(target.id, guildId);
 
           if (readError) {
             console.error('[調整累積儲值] 讀取失敗', readError);
@@ -6166,8 +6522,6 @@ async function handleSlashCommand(interaction) {
               ? Math.max(oldHighestSingleTopup, amount)
               : oldHighestSingleTopup;
 
-          let updatedVip = null;
-          let saveError = null;
           const payload = {
             guild_id: guildId,
             user_id: target.id,
@@ -6178,29 +6532,13 @@ async function handleSlashCommand(interaction) {
             highest_single_topup: newHighestSingleTopup,
             updated_at: new Date().toISOString()
           };
-          if (oldVip) {
-            const { data, error } =
-              await supabase
-                .from('user_vips')
-                .update(payload)
-                .eq('guild_id', guildId)
-                .eq('user_id', target.id)
-                .select()
-                .maybeSingle();
-            updatedVip = data;
-            saveError = error;
-          } else {
-            const { data, error } =
-              await supabase
-                .from('user_vips')
-                .insert(payload)
-                .select()
-                .maybeSingle();
-            updatedVip = data;
-            saveError = error;
-          }
+          const { data: updatedVip, error: saveError } =
+            await saveUserVipRecord(payload, oldVip);
           if (saveError || !updatedVip) {
             console.error('[調整累積儲值] 更新失敗', saveError);
+            if (saveError) {
+              await explainUserVipSaveFailure(target.id, guildId, saveError);
+            }
             return replyError(interaction, '更新累積儲值失敗');
           }
           // 重新檢查 VIP 升級：失敗不要擋掉累積儲值調整
@@ -6297,12 +6635,7 @@ async function handleSlashCommand(interaction) {
             interaction.user;
 
           const { data: vipData, error: vipError } =
-            await supabase
-              .from('user_vips')
-              .select('*')
-              .eq('guild_id', guildId)
-              .eq('user_id', target.id)
-              .maybeSingle();
+            await getUserVipRecord(target.id, guildId);
 
           if (vipError) {
             console.error('[查詢累積] 讀取 user_vips 失敗', vipError);
@@ -7710,12 +8043,7 @@ async function handleButtonInteraction(interaction) {
       const userData = await getUser(interaction.user.id);
       const guildId = getGuildId(interaction);
       const { data: vipData, error: vipError } =
-        await supabase
-          .from('user_vips')
-          .select('*')
-          .eq('guild_id', guildId)
-          .eq('user_id', interaction.user.id)
-          .maybeSingle();
+        await getUserVipRecord(interaction.user.id, guildId);
       if (vipError) {
         console.error('[ATM 消費資訊] 查詢 VIP 累積資料失敗', vipError);
       }

@@ -83,6 +83,23 @@ module.exports = [
     ),
 
   new SlashCommandBuilder()
+    .setName('使用優惠券')
+    .setDescription('替客人手動使用一張持有的優惠券')
+    .addUserOption(option =>
+      option
+        .setName('客人')
+        .setDescription('選擇要使用優惠券的客人')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('優惠券')
+        .setDescription('先選客人，再選擇客人持有的優惠券')
+        .setRequired(true)
+        .setAutocomplete(true)
+    ),
+
+  new SlashCommandBuilder()
     .setName('removeshop')
     .setDescription('刪除商品')
     .addIntegerOption(option =>
