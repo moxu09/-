@@ -257,7 +257,7 @@ client.on('messageCreate', async (message) => {
   if (dropCooldown.has(channelId)) return;
   const random = Math.floor(Math.random() * 100);
   if (message.content.length < 5 || random >= 5) return;
-  const reward = Math.floor(Math.random() * 50) + 1;
+  const reward = Math.floor(Math.random() * 20) + 1;
   const button = new ButtonBuilder().setCustomId(`claim_${reward}`).setLabel('☔ 領取星雨幣').setStyle(ButtonStyle.Success);
   const row = new ActionRowBuilder().addComponents(button);
   const embed = new EmbedBuilder().setColor('#57F287').setTitle('☔ 星雨幣掉落').setDescription(`有人掉了 ${reward} 星雨幣！\n\n快點擊下方按鈕領取 ✨`);

@@ -11380,7 +11380,7 @@ client.on('messageCreate', async (message) => {
   if (message.content.replace(/\s/g, '').length < 5) return;  
   // 0.5% 掉落機率
   if (random >= 0.5) return;
-  const reward = Math.floor(Math.random() * 50) + 1;
+  const reward = Math.floor(Math.random() * 20) + 1;
   const button = new ButtonBuilder()
     .setCustomId(`claim_${reward}`)
     .setLabel('☔ 領取星雨幣')
