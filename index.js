@@ -150,6 +150,7 @@ dispatchSystem.setup(supabase, client, {
   payOrderByWallet,
   payOrderByMonthly,
   sendWalletLog,
+  getUser,
   checkAndUpgradeVip,
   changeCoins,
   startTipFlowInChannel,
@@ -5191,6 +5192,27 @@ const commands = [
         .setRequired(true)
     ),
   new SlashCommandBuilder()
+    .setName('月結餘額扣款')
+    .setDescription('手動扣除會員月結可用額度')
+    .addUserOption(option =>
+      option
+        .setName('玩家')
+        .setDescription('選擇要扣除月結額度的會員')
+        .setRequired(true)
+    )
+    .addIntegerOption(option =>
+      option
+        .setName('金額')
+        .setDescription('要扣除的月結額度金額')
+        .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('備註')
+        .setDescription('例如：補登月結消費、人工扣款原因')
+        .setRequired(false)
+    ),
+  new SlashCommandBuilder()
     .setName('標記月結已繳')
     .setDescription('標記會員月結帳單已繳款，並發放回饋')
     .addUserOption(option =>
@@ -7169,6 +7191,159 @@ async function handleSlashCommand(interaction) {
               `保證金：NT$${guarantee}\n` +
               `月結額度：NT$${guarantee}\n` +
               `目前已使用：NT$${Number(oldAccount?.used_amount || 0)}`
+          });
+        }
+        if (interaction.commandName === '月結餘額扣款') {
+          if (!isAdminOrStaff(interaction)) {
+            return replyError(interaction, '你沒有權限');
+          }
+
+          const target =
+            interaction.options.getUser('玩家');
+          const amount =
+            interaction.options.getInteger('金額');
+          const rawNote =
+            interaction.options.getString('備註');
+          const note =
+            (
+              rawNote && rawNote.trim()
+                ? rawNote.trim()
+                : '客服手動扣除月結額度'
+            ).slice(0, 180);
+
+          if (!target) {
+            return replyError(interaction, '找不到玩家');
+          }
+
+          if (!amount || amount <= 0) {
+            return replyError(interaction, '扣款金額必須大於 0');
+          }
+
+          const { data: account, error: accountError } =
+            await supabase
+              .from('member_monthly_accounts')
+              .select('*')
+              .eq('user_id', target.id)
+              .maybeSingle();
+
+          if (accountError) {
+            console.error('[月結餘額扣款] 查詢帳戶失敗', accountError);
+            return replyError(interaction, '查詢月結帳戶失敗');
+          }
+
+          if (!account) {
+            return replyError(interaction, '找不到會員月結帳戶');
+          }
+
+          if (!account.enabled) {
+            return replyError(interaction, '月結會員目前已停用');
+          }
+
+          const monthlyLimit =
+            Number(account.monthly_limit || 0);
+          const oldUsedAmount =
+            Number(account.used_amount || 0);
+          const oldAvailableAmount =
+            Math.max(0, monthlyLimit - oldUsedAmount);
+
+          if (oldAvailableAmount < amount) {
+            return replyError(
+              interaction,
+              `月結可用額度不足，目前可用 NT$${oldAvailableAmount.toLocaleString('zh-TW')}`
+            );
+          }
+
+          const newUsedAmount =
+            oldUsedAmount + amount;
+          const newAvailableAmount =
+            Math.max(0, monthlyLimit - newUsedAmount);
+          const billingMonth =
+            getBillingMonth();
+
+          const { error: updateError } =
+            await supabase
+              .from('member_monthly_accounts')
+              .update({
+                used_amount: newUsedAmount,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', target.id);
+
+          if (updateError) {
+            console.error('[月結餘額扣款] 更新帳戶失敗', updateError);
+            return replyError(interaction, '扣除月結額度失敗');
+          }
+
+          const { error: txError } =
+            await supabase
+              .from('member_monthly_transactions')
+              .insert({
+                user_id: target.id,
+                source_type: 'manual_monthly_deduct',
+                source_id: interaction.id,
+                item_name: note,
+                benefit_type: '月結餘額扣款',
+                amount,
+                cashback: 0,
+                billing_month: billingMonth,
+                status: 'unbilled'
+              });
+
+          if (txError) {
+            console.error('[月結餘額扣款] 建立交易失敗', txError);
+            await supabase
+              .from('member_monthly_accounts')
+              .update({
+                used_amount: oldUsedAmount,
+                updated_at: new Date().toISOString()
+              })
+              .eq('user_id', target.id);
+
+            return replyError(interaction, '建立月結扣款紀錄失敗，已嘗試回復額度');
+          }
+
+          const targetUser =
+            await client.users
+              .fetch(target.id)
+              .catch(() => null);
+
+          if (targetUser) {
+            await targetUser.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor('#ffd166')
+                  .setTitle('🌙 月結額度已扣除')
+                  .setDescription(
+                    `扣除金額：NT$${amount.toLocaleString('zh-TW')}\n` +
+                    `目前已使用：NT$${newUsedAmount.toLocaleString('zh-TW')}\n` +
+                    `剩餘可用額度：NT$${newAvailableAmount.toLocaleString('zh-TW')}\n\n` +
+                    `備註：${note}\n\n` +
+                    `繳費確認後，月結可用額度才會恢復。`
+                  )
+                  .setTimestamp()
+              ]
+            }).catch(() => {});
+          }
+
+          return interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setColor('#57F287')
+                .setTitle('✅ 已扣除月結可用額度')
+                .setDescription(
+                  `會員：<@${target.id}>\n` +
+                  `扣除金額：NT$${amount.toLocaleString('zh-TW')}\n` +
+                  `帳單月份：${billingMonth}\n\n` +
+                  `已使用額度：NT$${oldUsedAmount.toLocaleString('zh-TW')} → NT$${newUsedAmount.toLocaleString('zh-TW')}\n` +
+                  `剩餘可用額度：NT$${oldAvailableAmount.toLocaleString('zh-TW')} → NT$${newAvailableAmount.toLocaleString('zh-TW')}\n\n` +
+                  `備註：${note}\n` +
+                  `這筆額度會等到月結繳費確認後才恢復。`
+                )
+                .setFooter({
+                  text: `操作人員：${interaction.user.tag}`
+                })
+                .setTimestamp()
+            ]
           });
         }
         if (interaction.commandName === '查詢累積') {

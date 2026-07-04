@@ -10029,7 +10029,7 @@ async function handleServiceConfirmWalletGroup(interaction) {
 
   try {
     const userData =
-      await getUser(customerId);
+      await paymentHelpers.getUser(customerId);
 
     const currentCoins =
       Number(userData.coins || 0);
@@ -10077,10 +10077,14 @@ async function handleServiceConfirmWalletGroup(interaction) {
 
     for (const order of paidOrders) {
       if (paymentHelpers.countOrderVipSpentOnce) {
-        await paymentHelpers.countOrderVipSpentOnce(
-          order,
-          '特戰分單儲值卡合併付款完成'
-        );
+        try {
+          await paymentHelpers.countOrderVipSpentOnce(
+            order,
+            '特戰分單儲值卡合併付款完成'
+          );
+        } catch (vipError) {
+          console.error('[特戰分單儲值卡] 累積消費寫入失敗', vipError);
+        }
       }
       await sendOrderToStaffChannel(order);
       await sendStaffOrderControlPanel(
