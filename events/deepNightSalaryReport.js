@@ -8,10 +8,10 @@ const STAFF_TABLE =
   process.env.SALARY_STAFF_TABLE || "players";
 
 const ORDER_TABLE =
-  process.env.SALARY_ORDER_TABLE || "salary_orders";
+  process.env.SALARY_ORDER_TABLE || "play_orders";
 
 const BONUS_TABLE =
-  process.env.SALARY_BONUS_TABLE || "staff_bonus";
+  process.env.SALARY_BONUS_TABLE || "players_bonus";
 
 const SETTINGS_TABLE =
   process.env.SALARY_SETTINGS_TABLE || "salary_settings";
@@ -122,7 +122,16 @@ function getOrderBonus(order) {
 }
 
 function getOrderTimeColumn() {
-  return process.env.SALARY_ORDER_TIME_COLUMN || "created_at";
+  return process.env.SALARY_ORDER_TIME_COLUMN || "order_finished_at";
+}
+
+function getDeepNightGuildId() {
+  return (
+    process.env.SALARY_GUILD_ID ||
+    process.env.STAFF_GUILD_ID ||
+    process.env.GUILD_ID ||
+    "1501098191813214312"
+  );
 }
 
 function buildPersonalReport({ dateText, staff, orders, extraBonuses }) {
@@ -384,13 +393,20 @@ async function readStaffList(supabase) {
 
 async function readTodaySalaryOrders(supabase, startIso, endIso) {
   const timeColumn = getOrderTimeColumn();
+  const guildId = getDeepNightGuildId();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from(ORDER_TABLE)
     .select("*")
     .gte(timeColumn, startIso)
     .lte(timeColumn, endIso)
     .order(timeColumn, { ascending: true });
+
+  if (guildId && ORDER_TABLE === "play_orders") {
+    query = query.or(`guild_id.eq.${guildId},guild_id.is.null`);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error(`[DEEP_NIGHT_REPORT] 讀取 ${ORDER_TABLE} 失敗`, error);

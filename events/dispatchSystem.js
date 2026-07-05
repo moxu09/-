@@ -1491,34 +1491,81 @@ async function sendDailyPlayerSummary() {
     return;
   }
 
-  let orderQuery =
-    supabase
-      .from('play_orders')
-      .select('*')
-      .eq('status', 'completed')
-      .gte('completed_at', start)
-      .lte('completed_at', end);
-  if (guildId) {
-    orderQuery = orderQuery.eq('guild_id', guildId);
-  }
-  const { data: orders, error: orderError } = await orderQuery;
+  const buildOrderQuery = (timeColumn) => {
+    let query =
+      supabase
+        .from('play_orders')
+        .select('*')
+        .gte(timeColumn, start)
+        .lte(timeColumn, end);
+
+    if (guildId) {
+      query = query.or(`guild_id.eq.${guildId},guild_id.is.null`);
+    }
+
+    return query;
+  };
+
+  const [
+    { data: finishedOrders, error: finishedOrderError },
+    { data: completedOrders, error: completedOrderError }
+  ] = await Promise.all([
+    buildOrderQuery('order_finished_at'),
+    buildOrderQuery('completed_at').eq('status', 'completed')
+  ]);
+
+  const orderError =
+    finishedOrderError || completedOrderError;
 
   if (orderError) {
     console.log('[每日陪玩總結] 讀取訂單失敗', orderError);
     return;
   }
 
+  const orderMap = new Map();
+
+  for (const order of [
+    ...(finishedOrders || []),
+    ...(completedOrders || [])
+  ]) {
+    if (order.is_deleted) continue;
+    orderMap.set(String(order.id), order);
+  }
+
+  const orders = Array.from(orderMap.values());
+
+  const getOrderPlayerIds = (order) => {
+    const ids = [];
+    const assignedPlayer = order.assigned_player;
+
+    if (Array.isArray(assignedPlayer)) {
+      ids.push(...assignedPlayer);
+    } else if (assignedPlayer) {
+      ids.push(
+        ...String(assignedPlayer)
+          .split(',')
+          .map(id => id.trim())
+      );
+    }
+
+    ids.push(
+      order.discord_id,
+      order.staff_id,
+      order.player_id
+    );
+
+    return new Set(
+      ids
+        .map(id => String(id || '').replace(/[<@!>]/g, '').trim())
+        .filter(Boolean)
+    );
+  };
+
   for (const player of players) {
     const playerOrders =
-      (orders || []).filter(order => {
-        const assignedPlayers =
-          String(order.assigned_player || '')
-            .split(',')
-            .map(id => id.trim())
-            .filter(Boolean);
-
-        return assignedPlayers.includes(player.discord_id);
-      });
+      orders.filter(order =>
+        getOrderPlayerIds(order).has(String(player.discord_id))
+      );
 
     const totalOrders =
       playerOrders.length;
@@ -1526,7 +1573,13 @@ async function sendDailyPlayerSummary() {
     const totalPrice =
       playerOrders.reduce(
         (sum, order) =>
-          sum + Number(order.final_price || order.price || 0),
+          sum + Number(
+            order.final_price ||
+            order.order_amount ||
+            order.group_total_price ||
+            order.price ||
+            0
+          ),
         0
       );
 
@@ -1535,9 +1588,9 @@ async function sendDailyPlayerSummary() {
         ? playerOrders
             .map((order, index) => {
               return (
-                `${index + 1}. ${order.service || '未填寫'}\n` +
+                `${index + 1}. ${order.service || order.service_name || order.order_item || '未填寫'}\n` +
                 `訂單編號：${order.order_no || order.id}\n` +
-                `金額：NT$${order.final_price || order.price || 0}\n` +
+                `金額：NT$${order.final_price || order.order_amount || order.group_total_price || order.price || 0}\n` +
                 `內容：${order.note || '無'}`
               );
             })
