@@ -531,7 +531,7 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
       return bonusStaffId === staffId;
     });
 
-    if (personalOrders.length === 0 && personalBonuses.length === 0) {
+    if (personalOrders.length === 0) {
       continue;
     }
 
