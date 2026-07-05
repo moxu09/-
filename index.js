@@ -11,6 +11,7 @@ process.on('unhandledRejection', err => {
   console.error('[Unhandled Rejection]', err);
 });
 const { createClient } = require('@supabase/supabase-js');
+const { createAccountingLedger } = require('./utils/accounting');
 const {
   Client,
   GatewayIntentBits,
@@ -33,6 +34,9 @@ const {
 } = require('discord.js');
 // ===== 初始化 =====
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+const { recordAccountingLedger } = createAccountingLedger(supabase, {
+  appKey: process.env.ACCOUNTING_APP_KEY || 'deepnight'
+});
 const STAFF_TABLE =
   process.env.STAFF_TABLE || 'players';
 
@@ -153,6 +157,7 @@ dispatchSystem.setup(supabase, client, {
   getUser,
   checkAndUpgradeVip,
   changeCoins,
+  recordAccountingLedger,
   startTipFlowInChannel,
   countOrderVipSpentOnce
 });
@@ -2332,6 +2337,25 @@ async function payOrderByWallet(order) {
     paidOrder,
     '儲值卡 / 錢包付款完成'
   );
+
+  await recordAccountingLedger({
+    entry_type: 'customer_spend_wallet',
+    entry_label: '客人消費',
+    amount,
+    revenue_amount: amount,
+    liability_amount: -amount,
+    payment_method: '儲值卡 / 錢包',
+    customer_id: userId,
+    customer_name: paidOrder.customer_name || paidOrder.customer_username || null,
+    staff_id: paidOrder.discord_id || paidOrder.assigned_player || null,
+    staff_name: paidOrder.staff_name || null,
+    order_id: String(paidOrder.id),
+    order_no: paidOrder.order_no || paidOrder.order_id || null,
+    source_table: 'play_orders',
+    source_id: String(paidOrder.id),
+    dedupe_key: `play_orders:${paidOrder.id}:customer_spend_wallet`,
+    note: paidOrder.service || paidOrder.service_name || '陪玩訂單'
+  });
   return {
     amount,
     finalCoins
@@ -2422,6 +2446,25 @@ async function payOrderByMonthly(order) {
     paidOrder,
     '月結付款完成'
   );
+
+  await recordAccountingLedger({
+    entry_type: 'customer_spend_monthly',
+    entry_label: '客人消費',
+    amount,
+    revenue_amount: amount,
+    receivable_amount: amount,
+    payment_method: '月結',
+    customer_id: userId,
+    customer_name: paidOrder.customer_name || paidOrder.customer_username || null,
+    staff_id: paidOrder.discord_id || paidOrder.assigned_player || null,
+    staff_name: paidOrder.staff_name || null,
+    order_id: String(paidOrder.id),
+    order_no: paidOrder.order_no || paidOrder.order_id || null,
+    source_table: 'play_orders',
+    source_id: String(paidOrder.id),
+    dedupe_key: `play_orders:${paidOrder.id}:customer_spend_monthly`,
+    note: paidOrder.service || paidOrder.service_name || '陪玩訂單'
+  });
   return {
     amount,
     cashback,
@@ -7303,7 +7346,7 @@ async function handleSlashCommand(interaction) {
             return replyError(interaction, '扣除月結額度失敗');
           }
 
-          const { error: txError } =
+          const { data: monthlyTx, error: txError } =
             await supabase
               .from('member_monthly_transactions')
               .insert({
@@ -7316,7 +7359,9 @@ async function handleSlashCommand(interaction) {
                 cashback: 0,
                 billing_month: billingMonth,
                 status: 'unbilled'
-              });
+              })
+              .select()
+              .single();
 
           if (txError) {
             console.error('[月結餘額扣款] 建立交易失敗', txError);
@@ -7330,6 +7375,21 @@ async function handleSlashCommand(interaction) {
 
             return replyError(interaction, '建立月結扣款紀錄失敗，已嘗試回復額度');
           }
+
+          await recordAccountingLedger({
+            entry_type: 'manual_monthly_charge',
+            entry_label: '月結應收',
+            amount,
+            revenue_amount: amount,
+            receivable_amount: amount,
+            payment_method: '月結',
+            customer_id: target.id,
+            source_table: 'member_monthly_transactions',
+            source_id: String(monthlyTx?.id || interaction.id),
+            dedupe_key: `member_monthly_transactions:${monthlyTx?.id || interaction.id}:manual_monthly_charge`,
+            note,
+            created_by: interaction.user.id
+          });
 
           const targetUser =
             await client.users
@@ -8299,6 +8359,24 @@ async function markMonthlyBillPaidByBillId({
     .eq('user_id', bill.user_id)
     .eq('billing_month', bill.billing_month)
     .in('status', ['billed', 'unbilled']);
+
+  const monthlyWalletPayment = isWalletPayment(method);
+
+  await recordAccountingLedger({
+    entry_type: 'monthly_payment',
+    entry_label: '月結收款',
+    amount: totalAmount,
+    cash_amount: monthlyWalletPayment ? 0 : totalAmount,
+    liability_amount: monthlyWalletPayment ? -totalAmount : 0,
+    receivable_amount: -totalAmount,
+    payment_method: method,
+    customer_id: bill.user_id,
+    source_table: 'member_monthly_bills',
+    source_id: String(bill.id),
+    dedupe_key: `member_monthly_bills:${bill.id}:monthly_payment`,
+    note: `${bill.billing_month} 月結帳單已繳清`,
+    created_by: paidBy || null
+  });
 
   if (cashbackAmount > 0) {
     const finalCoins =

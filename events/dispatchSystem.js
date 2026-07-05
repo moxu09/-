@@ -6163,6 +6163,22 @@ async function handleConfirmExtensionWallet(interaction) {
     });
   }
 
+  await paymentHelpers.recordAccountingLedger?.({
+    entry_type: 'customer_extension_wallet',
+    entry_label: '客人消費',
+    amount,
+    revenue_amount: amount,
+    liability_amount: -amount,
+    payment_method: '儲值卡 / 錢包',
+    customer_id: extension.customer_id,
+    order_id: extension.order_id || extension.order_no || null,
+    order_no: extension.order_no || null,
+    source_table: 'order_extensions',
+    source_id: String(extension.id),
+    dedupe_key: `order_extensions:${extension.id}:customer_extension_wallet`,
+    note: `加時 ${extension.extension_text || ''}`.trim()
+  });
+
   let salaryResult = null;
 
   try {
@@ -6856,6 +6872,21 @@ async function confirmTopup(interaction) {
     'topup',
     amount
   );
+
+  await paymentHelpers.recordAccountingLedger?.({
+    entry_type: 'customer_topup',
+    entry_label: '客人儲值',
+    amount,
+    cash_amount: amount,
+    liability_amount: amount,
+    payment_method: '客服確認儲值',
+    customer_id: userId,
+    source_table: 'wallet_logs',
+    source_id: interaction.message?.id || interaction.id,
+    dedupe_key: `topup:${interaction.message?.id || interaction.id}:${userId}:${amount}`,
+    note: `客服 <@${interaction.user.id}> 確認儲值`,
+    created_by: interaction.user.id
+  });
 
   await interaction.channel.send({
     embeds: [
@@ -10146,6 +10177,25 @@ async function handleServiceConfirmWalletGroup(interaction) {
       );
     }
 
+    await paymentHelpers.recordAccountingLedger?.({
+      entry_type: 'customer_spend_wallet_group',
+      entry_label: '客人消費',
+      amount: totalAmount,
+      revenue_amount: totalAmount,
+      liability_amount: -totalAmount,
+      payment_method: '儲值卡 / 錢包',
+      customer_id: customerId,
+      order_id: groupId,
+      order_no: groupId,
+      source_table: 'play_orders',
+      source_id: `group:${groupId}`,
+      dedupe_key: `play_orders:group:${groupId}:customer_spend_wallet`,
+      note: '特戰娛樂＋技術合併付款',
+      metadata: {
+        order_ids: paidOrders.map((order) => order.id)
+      }
+    });
+
     await interaction.channel.send({
       embeds: [
         new EmbedBuilder()
@@ -10304,6 +10354,26 @@ async function handleServiceConfirmMonthlyGroup(interaction) {
         order
       );
     }
+
+    await paymentHelpers.recordAccountingLedger?.({
+      entry_type: 'customer_spend_monthly_group',
+      entry_label: '客人消費',
+      amount: totalAmount,
+      revenue_amount: totalAmount,
+      receivable_amount: totalAmount,
+      payment_method: '月結',
+      customer_id: customerId,
+      order_id: groupId,
+      order_no: groupId,
+      source_table: 'play_orders',
+      source_id: `group:${groupId}`,
+      dedupe_key: `play_orders:group:${groupId}:customer_spend_monthly`,
+      note: '特戰娛樂＋技術合併付款',
+      metadata: {
+        order_ids: paidOrders.map((order) => order.id)
+      }
+    });
+
     await interaction.channel.send({
       embeds: [
         new EmbedBuilder()
