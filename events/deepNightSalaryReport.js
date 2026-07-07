@@ -506,7 +506,7 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
       bonus.staff_id ||
       ""
     ).trim();
-
+ 
     return staffDiscordIds.has(bonusStaffId);
   });
 
