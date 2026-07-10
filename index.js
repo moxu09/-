@@ -1834,10 +1834,24 @@ async function handleSatisfactionSurveyCommand(interaction) {
   }
 
   const orderNo = interaction.options.getString('訂單編號')?.trim();
+  const customer = interaction.options.getUser('老闆');
+  const staff = interaction.options.getUser('陪陪');
   let query = supabase.from('play_orders').select('*');
 
   if (orderNo) {
     query = query.eq('order_no', orderNo).limit(1);
+  } else if (customer || staff) {
+    query = query.eq('guild_id', getGuildId(interaction));
+    if (customer) {
+      query = query.eq('customer_id', customer.id);
+    }
+    if (staff) {
+      query = query.ilike('assigned_player', `%${staff.id}%`);
+    }
+    query = query
+      .eq('status', 'completed')
+      .order('completed_at', { ascending: false })
+      .limit(1);
   } else {
     query = query
       .eq('channel_id', interaction.channel.id)
@@ -1853,7 +1867,9 @@ async function handleSatisfactionSurveyCommand(interaction) {
     return interaction.editReply({
       content: orderNo
         ? `❌ 找不到訂單編號 ${orderNo}`
-        : '❌ 找不到目前頻道對應的訂單'
+        : customer || staff
+          ? '❌ 找不到這位老闆與陪陪最近完成的訂單'
+          : '❌ 找不到目前頻道對應的訂單'
     });
   }
 
@@ -5023,6 +5039,18 @@ const commands = [
       option
         .setName('訂單編號')
         .setDescription('不填時會使用目前頻道最新一筆訂單')
+        .setRequired(false)
+    )
+    .addUserOption(option =>
+      option
+        .setName('老闆')
+        .setDescription('依老闆尋找最近一筆訂單')
+        .setRequired(false)
+    )
+    .addUserOption(option =>
+      option
+        .setName('陪陪')
+        .setDescription('依陪陪尋找最近一筆訂單')
         .setRequired(false)
     ),
   new SlashCommandBuilder()
