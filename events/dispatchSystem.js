@@ -1506,30 +1506,31 @@ async function sendDailyPlayerSummary() {
     return query;
   };
 
-  const [
-    { data: finishedOrders, error: finishedOrderError },
-    { data: completedOrders, error: completedOrderError }
-  ] = await Promise.all([
-    buildOrderQuery('order_finished_at'),
-    buildOrderQuery('completed_at').eq('status', 'completed')
-  ]);
-
-  const orderError =
-    finishedOrderError || completedOrderError;
-
-  if (orderError) {
-    console.log('[每日陪玩總結] 讀取訂單失敗', orderError);
-    return;
-  }
-
   const orderMap = new Map();
+  const timeColumns = [
+    'order_finished_at',
+    'completed_at',
+    'accepted_at',
+    'created_at'
+  ];
 
-  for (const order of [
-    ...(finishedOrders || []),
-    ...(completedOrders || [])
-  ]) {
-    if (order.is_deleted) continue;
-    orderMap.set(String(order.id), order);
+  for (const timeColumn of timeColumns) {
+    const { data, error } =
+      await buildOrderQuery(timeColumn);
+
+    if (error) {
+      console.log(`[每日陪玩總結] 讀取 ${timeColumn} 訂單失敗`, error);
+      continue;
+    }
+
+    for (const order of data || []) {
+      const status = String(order.status || '').trim();
+
+      if (order.is_deleted) continue;
+      if (['cancelled', 'canceled', '已取消', '取消'].includes(status)) continue;
+
+      orderMap.set(String(order.id), order);
+    }
   }
 
   const orders = Array.from(orderMap.values());
@@ -1604,7 +1605,7 @@ async function sendDailyPlayerSummary() {
         .setDescription(
           `日期：${dateText}\n` +
           `陪玩：<@${player.discord_id}>\n\n` +
-          `完成訂單：${totalOrders}\n` +
+          `今日訂單：${totalOrders}\n` +
           `總金額：NT$${totalPrice}\n\n` +
           `━━━━━━━━━━\n\n` +
           `${orderList}`

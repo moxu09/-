@@ -68,12 +68,32 @@ function getStaffReportChannelId(staff) {
 }
 
 function getOrderStaffId(order) {
-  return String(
-    order.player_id ||
-    order.discord_id ||
-    order.staff_id ||
-    ""
-  ).trim();
+  return getOrderStaffIds(order)[0] || "";
+}
+
+function getOrderStaffIds(order) {
+  const ids = [];
+  const assignedPlayer = order.assigned_player;
+
+  if (Array.isArray(assignedPlayer)) {
+    ids.push(...assignedPlayer);
+  } else if (assignedPlayer) {
+    ids.push(...String(assignedPlayer).split(","));
+  }
+
+  ids.push(
+    order.player_id,
+    order.discord_id,
+    order.staff_id
+  );
+
+  return [
+    ...new Set(
+      ids
+        .map(id => String(id || "").replace(/[<@!>]/g, "").trim())
+        .filter(Boolean)
+    )
+  ];
 }
 
 function getOrderStaffName(order) {
@@ -162,7 +182,7 @@ function buildPersonalReport({ dateText, staff, orders, extraBonuses }) {
 
   const orderLines =
     orders.length === 0
-      ? "今日沒有完成訂單"
+      ? "今日沒有訂單"
       : orders
           .slice(0, 15)
           .map((order, index) => {
@@ -195,7 +215,7 @@ function buildPersonalReport({ dateText, staff, orders, extraBonuses }) {
       `${BRAND_NAME}｜個人每日薪資報告\n\n` +
       `日期：${dateText}\n` +
       `員工：${staffName}\n\n` +
-      `今日完成訂單：${orders.length} 筆\n` +
+      `今日訂單：${orders.length} 筆\n` +
       `今日訂單總額：$${money(totalOrderAmount)}\n` +
       `今日接單薪資：$${money(totalSalary)}\n` +
       `今日獎金：$${money(totalBonus)}\n` +
@@ -306,7 +326,7 @@ function buildAdminReport({ dateText, orders, extraBonuses }) {
   return (
     `${BRAND_NAME}｜每日總報告\n\n` +
     `日期：${dateText}\n\n` +
-    `今日完成訂單：${orders.length} 筆\n` +
+    `今日訂單：${orders.length} 筆\n` +
     `今日總收入：$${money(totalIncome)}\n` +
     `今日總支出：$${money(totalExpense)}\n` +
     `今日預估利潤：$${money(profit)}\n` +
@@ -374,10 +394,7 @@ async function readStaffList(supabase) {
 
   return (data || []).filter(staff => {
     const discordId = getStaffDiscordId(staff);
-    const channelId = getStaffReportChannelId(staff);
-
     if (!discordId) return false;
-    if (!channelId) return false;
 
     if (typeof staff.is_active === "boolean") {
       return staff.is_active;
@@ -392,28 +409,49 @@ async function readStaffList(supabase) {
 }
 
 async function readTodaySalaryOrders(supabase, startIso, endIso) {
-  const timeColumn = getOrderTimeColumn();
   const guildId = getDeepNightGuildId();
+  const timeColumns = [
+    getOrderTimeColumn(),
+    "order_finished_at",
+    "completed_at",
+    "accepted_at",
+    "created_at"
+  ].filter((column, index, list) => column && list.indexOf(column) === index);
+  const orderMap = new Map();
 
-  let query = supabase
-    .from(ORDER_TABLE)
-    .select("*")
-    .gte(timeColumn, startIso)
-    .lte(timeColumn, endIso)
-    .order(timeColumn, { ascending: true });
+  for (const timeColumn of timeColumns) {
+    let query = supabase
+      .from(ORDER_TABLE)
+      .select("*")
+      .gte(timeColumn, startIso)
+      .lte(timeColumn, endIso)
+      .order(timeColumn, { ascending: true });
 
-  if (guildId && ORDER_TABLE === "play_orders") {
-    query = query.or(`guild_id.eq.${guildId},guild_id.is.null`);
+    if (guildId && ORDER_TABLE === "play_orders") {
+      query = query.or(`guild_id.eq.${guildId},guild_id.is.null`);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      console.error(
+        `[DEEP_NIGHT_REPORT] 讀取 ${ORDER_TABLE}.${timeColumn} 失敗`,
+        error
+      );
+      continue;
+    }
+
+    for (const order of data || []) {
+      const status = String(order.status || "").trim();
+
+      if (order.is_deleted) continue;
+      if (["cancelled", "canceled", "已取消", "取消"].includes(status)) continue;
+
+      orderMap.set(String(order.id), order);
+    }
   }
 
-  const { data, error } = await query;
-
-  if (error) {
-    console.error(`[DEEP_NIGHT_REPORT] 讀取 ${ORDER_TABLE} 失敗`, error);
-    return [];
-  }
-
-  return data || [];
+  return Array.from(orderMap.values());
 }
 
 async function readTodayBonuses(supabase, startIso, endIso) {
@@ -496,7 +534,7 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
   );
 
   const orders = (todayOrders || []).filter(order =>
-    staffDiscordIds.has(getOrderStaffId(order))
+    getOrderStaffIds(order).some(staffId => staffDiscordIds.has(staffId))
   );
 
   const bonuses = (todayBonuses || []).filter(bonus => {
@@ -517,7 +555,7 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
     const staffId = getStaffDiscordId(staff);
 
     const personalOrders = orders.filter(
-      order => getOrderStaffId(order) === staffId
+      order => getOrderStaffIds(order).includes(staffId)
     );
 
     const personalBonuses = bonuses.filter(bonus => {
@@ -542,9 +580,14 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
       extraBonuses: personalBonuses,
     });
 
+    const personalReportChannelId = getStaffReportChannelId(staff);
+    if (!personalReportChannelId) {
+      continue;
+    }
+
     const ok = await safeSendToChannel(
       client,
-      getStaffReportChannelId(staff),
+      personalReportChannelId,
       report.content
     );
 

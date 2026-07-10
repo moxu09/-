@@ -4929,6 +4929,16 @@ const commands = [
         .setName('數量')
         .setDescription('可領取人數')
         .setRequired(true)
+    )
+    .addStringOption(option =>
+      option
+        .setName('分配方式')
+        .setDescription('選擇紅包分配方式')
+        .setRequired(true)
+        .addChoices(
+          { name: '平均分', value: 'average' },
+          { name: '隨機分', value: 'random' }
+        )
     ),
   new SlashCommandBuilder()
     .setName('發錢')
@@ -5421,7 +5431,7 @@ console.log('✅ 扭蛋系統已載入');
 await sendPrivateRoomPanel(client);
 console.log('✅ 私人房間系統已載入');
 console.log('🌧️ 星雨機器人已成功上線');
-startDailySummaryScheduler();
+console.log('ℹ️ rainbot 舊版每日陪玩總結已停用，保留 salary 端每日報告。');
 startMonthlyBillScheduler();
 // ===== 深夜薪資每日報告 =====
 startDeepNightSalaryReportCron(client, supabase);
@@ -6654,11 +6664,16 @@ async function handleSlashCommand(interaction) {
 
     const totalCount =
       interaction.options.getInteger('數量');
+    const distributionMode =
+      normalizeRedPacketMode(
+        interaction.options.getString('分配方式') || 'random'
+      );
 
     return await createRedPacket(
       interaction,
       totalAmount,
-      totalCount
+      totalCount,
+      distributionMode
     );
   }
   // 扭蛋列表
@@ -7913,7 +7928,280 @@ async function handleSlashCommand(interaction) {
           });
         }
 }
-async function createRedPacket(interaction, totalAmount, totalCount) {
+const redPacketLocks = new Map();
+
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function withRedPacketLock(packetId, fn) {
+  while (redPacketLocks.get(packetId)) {
+    await delay(80);
+  }
+
+  redPacketLocks.set(packetId, true);
+
+  try {
+    return await fn();
+  } finally {
+    redPacketLocks.delete(packetId);
+  }
+}
+
+function getRedPacketModeLabel(mode) {
+  return mode === 'average' ? '平均分' : '隨機分';
+}
+
+function normalizeRedPacketMode(mode) {
+  return mode === 'average' ? 'average' : 'random';
+}
+
+function randomInt(min, max) {
+  const lower = Math.ceil(min);
+  const upper = Math.floor(max);
+
+  if (upper <= lower) return lower;
+
+  return lower + Math.floor(Math.random() * (upper - lower + 1));
+}
+
+function shuffleNumbers(values) {
+  const result = [...values];
+
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+
+  return result;
+}
+
+function buildAverageRedPacketShares(totalAmount, totalCount) {
+  const base = Math.floor(totalAmount / totalCount);
+  const remainder = totalAmount % totalCount;
+  const shares = Array.from({ length: totalCount }, (_, index) =>
+    base + (index < remainder ? 1 : 0)
+  );
+
+  return shuffleNumbers(shares);
+}
+
+function buildRandomRedPacketShares(totalAmount, totalCount) {
+  const average = totalAmount / totalCount;
+  const minShare = Math.max(1, Math.floor(average * 0.8));
+  const maxShare = Math.max(minShare, Math.ceil(average * 1.2));
+  const shares = [];
+  let remaining = totalAmount;
+
+  for (let index = 0; index < totalCount; index += 1) {
+    const remainingSlots = totalCount - index - 1;
+
+    if (remainingSlots === 0) {
+      shares.push(remaining);
+      break;
+    }
+
+    const minAllowed = Math.max(
+      minShare,
+      remaining - maxShare * remainingSlots
+    );
+    const maxAllowed = Math.min(
+      maxShare,
+      remaining - minShare * remainingSlots
+    );
+
+    shares.push(randomInt(minAllowed, maxAllowed));
+    remaining -= shares[shares.length - 1];
+  }
+
+  return shuffleNumbers(shares);
+}
+
+function buildRedPacketShares(totalAmount, totalCount, mode) {
+  if (mode === 'average') {
+    return buildAverageRedPacketShares(totalAmount, totalCount);
+  }
+
+  return buildRandomRedPacketShares(totalAmount, totalCount);
+}
+
+function getPendingRedPacketUserId(packetId, index) {
+  return `__pending_red_packet_${packetId}_${index}`;
+}
+
+function getPendingRedPacketPrefix(packetId) {
+  return `__pending_red_packet_${packetId}_`;
+}
+
+async function createRedPacketShares(packetId, shares) {
+  const rows = shares.map((amount, index) => ({
+    packet_id: packetId,
+    user_id: getPendingRedPacketUserId(packetId, index),
+    amount
+  }));
+
+  const { error } =
+    await supabase
+      .from('red_packet_claims')
+      .insert(rows);
+
+  if (error) {
+    console.error('[紅包份額建立失敗]', error);
+    throw new Error('建立紅包份額失敗');
+  }
+}
+
+async function claimPreparedRedPacket(packetId, userId) {
+  return await withRedPacketLock(packetId, async () => {
+    const { data: packet, error: packetError } =
+      await supabase
+        .from('red_packets')
+        .select('*')
+        .eq('id', packetId)
+        .maybeSingle();
+
+    if (packetError) {
+      console.error('[讀取紅包失敗]', packetError);
+      throw new Error('讀取紅包失敗');
+    }
+
+    if (!packet) {
+      return {
+        success: false,
+        message: '找不到這包紅包',
+        claim_amount: 0,
+        new_balance: 0,
+        left_amount: 0,
+        left_count: 0
+      };
+    }
+
+    const { data: existingClaim, error: existingError } =
+      await supabase
+        .from('red_packet_claims')
+        .select('id')
+        .eq('packet_id', packetId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (existingError) {
+      console.error('[檢查紅包領取紀錄失敗]', existingError);
+      throw new Error('檢查紅包領取紀錄失敗');
+    }
+
+    if (existingClaim) {
+      return {
+        success: false,
+        message: '你已經搶過這包紅包了',
+        claim_amount: 0,
+        new_balance: 0,
+        left_amount: Number(packet.remaining_amount || 0),
+        left_count: Number(packet.remaining_count || 0)
+      };
+    }
+
+    if (
+      packet.status !== 'active' ||
+      Number(packet.remaining_amount || 0) <= 0 ||
+      Number(packet.remaining_count || 0) <= 0
+    ) {
+      return {
+        success: false,
+        message: '紅包已被搶完',
+        claim_amount: 0,
+        new_balance: 0,
+        left_amount: 0,
+        left_count: 0
+      };
+    }
+
+    const pendingPrefix = getPendingRedPacketPrefix(packetId);
+    const { data: pendingShare, error: pendingError } =
+      await supabase
+        .from('red_packet_claims')
+        .select('*')
+        .eq('packet_id', packetId)
+        .like('user_id', `${pendingPrefix}%`)
+        .order('id', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+    if (pendingError) {
+      console.error('[讀取紅包份額失敗]', pendingError);
+      throw new Error('讀取紅包份額失敗');
+    }
+
+    if (!pendingShare) return null;
+
+    const claimAmount = Number(pendingShare.amount || 0);
+    const { data: updatedClaim, error: updateClaimError } =
+      await supabase
+        .from('red_packet_claims')
+        .update({
+          user_id: userId
+        })
+        .eq('id', pendingShare.id)
+        .like('user_id', `${pendingPrefix}%`)
+        .select('*')
+        .maybeSingle();
+
+    if (updateClaimError || !updatedClaim) {
+      console.error('[更新紅包領取紀錄失敗]', updateClaimError);
+      throw new Error('更新紅包領取紀錄失敗');
+    }
+
+    let newBalance = 0;
+
+    try {
+      newBalance = await changeCoins(userId, claimAmount);
+      await sendWalletLog(
+        userId,
+        '搶紅包',
+        claimAmount,
+        newBalance,
+        `🧧 搶到紅包 ${packet.packet_no || packetId}`
+      );
+    } catch (error) {
+      await supabase
+        .from('red_packet_claims')
+        .update({
+          user_id: pendingShare.user_id
+        })
+        .eq('id', pendingShare.id);
+
+      throw error;
+    }
+
+    const leftAmount = Math.max(
+      0,
+      Number(packet.remaining_amount || 0) - claimAmount
+    );
+    const leftCount = Math.max(
+      0,
+      Number(packet.remaining_count || 0) - 1
+    );
+
+    await supabase
+      .from('red_packets')
+      .update({
+        remaining_amount: leftAmount,
+        remaining_count: leftCount,
+        status: leftAmount <= 0 || leftCount <= 0 ? 'finished' : 'active'
+      })
+      .eq('id', packetId);
+
+    return {
+      success: true,
+      message: 'success',
+      claim_amount: claimAmount,
+      new_balance: newBalance,
+      left_amount: leftAmount,
+      left_count: leftCount
+    };
+  });
+}
+
+async function createRedPacket(interaction, totalAmount, totalCount, mode = 'random') {
   if (!Number.isInteger(totalAmount) || totalAmount <= 0) {
     return interaction.editReply({
       content: '❌ 紅包金額必須大於 0'
@@ -7946,6 +8234,10 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
     });
   }
 
+  const distributionMode =
+    mode === 'average'
+      ? 'average'
+      : 'random';
   const finalCoins =
     await changeCoins(interaction.user.id, -totalAmount);
 
@@ -7954,10 +8246,17 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
     '發紅包',
     -totalAmount,
     finalCoins,
-    `🧧 發出紅包，共 ${totalAmount} 星雨幣 / ${totalCount} 份`
+    `🧧 發出紅包，共 ${totalAmount} 星雨幣 / ${totalCount} 份｜${getRedPacketModeLabel(distributionMode)}`
   );
 
-  const packetNo = `RP-${Date.now()}`;
+  const packetNo =
+    `RP-${Date.now()}-${distributionMode === 'average' ? 'AVG' : 'RND'}`;
+  const shares =
+    buildRedPacketShares(
+      totalAmount,
+      totalCount,
+      distributionMode
+    );
 
   const { data: packet, error } =
     await supabase
@@ -7985,6 +8284,26 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
     });
   }
 
+  try {
+    await createRedPacketShares(packet.id, shares);
+  } catch (shareError) {
+    console.error('[紅包份額建立失敗]', shareError);
+
+    await changeCoins(interaction.user.id, totalAmount);
+    await supabase
+      .from('red_packets')
+      .update({
+        status: 'cancelled',
+        remaining_amount: 0,
+        remaining_count: 0
+      })
+      .eq('id', packet.id);
+
+    return interaction.editReply({
+      content: '❌ 紅包份額建立失敗，已退回星雨幣'
+    });
+  }
+
   const embed =
     new EmbedBuilder()
       .setColor('#ff4d4d')
@@ -7993,6 +8312,7 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
         `<@${interaction.user.id}> 發了一包紅包！\n\n` +
         `💰 總金額：${totalAmount} 星雨幣\n` +
         `👥 數量：${totalCount} 份\n\n` +
+        `🎲 分配：${getRedPacketModeLabel(distributionMode)}\n\n` +
         `快點下方按鈕搶紅包！`
       )
       .setFooter({
@@ -8024,7 +8344,9 @@ async function createRedPacket(interaction, totalAmount, totalCount) {
     .eq('id', packet.id);
 
   return interaction.editReply({
-    content: `✅ 已發出紅包：${totalAmount} 星雨幣 / ${totalCount} 份`
+    content:
+      `✅ 已發出紅包：${totalAmount} 星雨幣 / ${totalCount} 份\n` +
+      `分配方式：${getRedPacketModeLabel(distributionMode)}`
   });
 }
 async function claimRedPacket(interaction) {
@@ -8040,17 +8362,15 @@ async function claimRedPacket(interaction) {
       ''
     );
 
-  const { data, error } =
-    await supabase.rpc(
-      'claim_red_packet_safe',
-      {
-        p_packet_id: Number(packetId),
-        p_user_id: interaction.user.id
-      }
-    );
+  let result;
 
-  if (error) {
-    console.error('[安全搶紅包失敗]', error);
+  try {
+    result = await claimPreparedRedPacket(
+      Number(packetId),
+      interaction.user.id
+    );
+  } catch (error) {
+    console.error('[預分配搶紅包失敗]', error);
 
     return interaction.editReply({
       content:
@@ -8059,10 +8379,31 @@ async function claimRedPacket(interaction) {
     });
   }
 
-  const result =
-    Array.isArray(data)
-      ? data[0]
-      : data;
+  if (!result) {
+    const { data, error } =
+      await supabase.rpc(
+        'claim_red_packet_safe',
+        {
+          p_packet_id: Number(packetId),
+          p_user_id: interaction.user.id
+        }
+      );
+
+    if (error) {
+      console.error('[安全搶紅包失敗]', error);
+
+      return interaction.editReply({
+        content:
+          '❌ 搶紅包失敗，請稍後再試。\n' +
+          `錯誤：${error.message || '未知錯誤'}`
+      });
+    }
+
+    result =
+      Array.isArray(data)
+        ? data[0]
+        : data;
+  }
 
   if (!result || !result.success) {
     return interaction.editReply({
