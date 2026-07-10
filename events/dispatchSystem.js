@@ -125,6 +125,8 @@ const GAME_ORDER_PANELS = [
       { label: 'PUBG M', value: 'pubgm', description: 'PUBG M' },
       { label: 'NARAKA', value: 'naraka', description: 'NARAKA' },
       { label: 'Minecraft', value: 'minecraft', description: 'Minecraft' },
+      { label: '王者榮耀', value: 'honor_of_kings', description: '王者榮耀｜娛樂／技術' },
+      { label: '第五人格', value: 'identity_v', description: '第五人格｜娛樂／四階～七階' },
       { label: '語音聊天', value: 'voice_chat', description: '語音聊天' },
       { label: '點歌服務', value: 'song', description: '點歌服務' },
       { label: '打賞', value: 'tip', description: '建立打賞頻道' },
@@ -429,6 +431,43 @@ async function handleGameOrderSelect(interaction) {
     });
   }
 
+  if (gameKey === 'other' && ['honor_of_kings', 'identity_v'].includes(value)) {
+    const flowId = createFlowId(interaction.user.id);
+    const gameLabel = findOptionLabel('other', value);
+
+    pendingPanelOrders.set(flowId, {
+      userId: interaction.user.id,
+      gameKey,
+      otherGame: value,
+      gameLabel
+    });
+
+    setTimeout(() => pendingPanelOrders.delete(flowId), 15 * 60 * 1000);
+
+    const options = value === 'honor_of_kings'
+      ? [
+          { label: '娛樂', value: 'entertain', description: '王者榮耀｜娛樂' },
+          { label: '技術', value: 'skill', description: '王者榮耀｜技術' }
+        ]
+      : [
+          { label: '娛樂', value: 'entertain', description: '第五人格｜娛樂' },
+          { label: '四階', value: 'rank_4', description: '第五人格｜四階' },
+          { label: '五階', value: 'rank_5', description: '第五人格｜五階' },
+          { label: '六階', value: 'rank_6', description: '第五人格｜六階' },
+          { label: '七階', value: 'rank_7', description: '第五人格｜七階' }
+        ];
+
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId(`other_game_style_select_${flowId}`)
+      .setPlaceholder(`請選擇${gameLabel}項目`)
+      .addOptions(options);
+
+    return interaction.editReply({
+      content: `你選擇的是：${gameLabel}\n\n請選擇服務項目：`,
+      components: [new ActionRowBuilder().addComponents(menu)]
+    });
+  }
+
   const initial =
     buildPanelInitialData(gameKey, value);
 
@@ -437,6 +476,44 @@ async function handleGameOrderSelect(interaction) {
     initial.category,
     initial
   );
+}
+
+async function handleOtherGameStyleSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: 64 });
+  }
+
+  const flowId = interaction.customId.replace('other_game_style_select_', '');
+  const pending = pendingPanelOrders.get(flowId);
+  await resetSelectMenuMessage(interaction);
+
+  if (!pending || pending.userId !== interaction.user.id) {
+    return interaction.editReply({
+      content: '❌ 這個選單已過期，請回其他項目下單區重新選擇。',
+      components: []
+    });
+  }
+
+  const value = interaction.values[0];
+  const labels = {
+    entertain: '娛樂',
+    skill: '技術',
+    rank_4: '四階',
+    rank_5: '五階',
+    rank_6: '六階',
+    rank_7: '七階'
+  };
+  const itemLabel = labels[value] || value;
+  pendingPanelOrders.delete(flowId);
+
+  return createServiceTicket(interaction, 'other', {
+    category: 'other',
+    gameLabel: pending.gameLabel,
+    itemLabel,
+    serviceType: `${pending.gameLabel}｜${itemLabel}`,
+    playMode: itemLabel,
+    fromPanel: true
+  });
 }
 
 async function handleLolStyleSelect(interaction) {
@@ -7257,6 +7334,21 @@ async function acceptPlayOrder(interaction) {
       });
     }
 
+    const orderServiceText = `${order.game || ''}｜${order.order_item || ''}｜${order.service || ''}`;
+    if (orderServiceText.includes('王者榮耀') || orderServiceText.includes('第五人格')) {
+      const requiredService = getServiceKeywordFromPending({
+        category: 'other',
+        gameLabel: order.game,
+        itemLabel: order.order_item,
+        serviceType: order.service
+      });
+      if (!matchAllowedServiceName(player.allowed_services, requiredService)) {
+        return interaction.editReply({
+          content: `❌ 你的薪資網尚未勾選「${requiredService}」，目前不能接這張訂單。`
+        });
+      }
+    }
+
     // ===== 指定陪陪限制 =====
     if (order.preferred_player) {
       const preferredPlayers =
@@ -7374,22 +7466,6 @@ async function acceptPlayOrder(interaction) {
       return interaction.editReply({
         content: '❌ 這張訂單目前無法接單，可能已被接滿或狀態已變更',
       });
-    }
-
-    if (isFull) {
-      for (const playerId of assignedPlayerIds) {
-        let busyQuery =
-          supabase
-            .from(STAFF_TABLE)
-            .update({
-              status: 'busy'
-            })
-            .eq('discord_id', playerId);
-
-        busyQuery = applyStaffGuildFilter(busyQuery);
-
-        await busyQuery;
-      }
     }
 
     const orderChannel =
@@ -8036,6 +8112,17 @@ function getServiceKeywordFromPending(pending = {}) {
   }
 
   if (pending.category === 'other') {
+    if (text.includes('王者榮耀')) {
+      if (text.includes('技術')) return '王者榮耀技術';
+      if (text.includes('娛樂')) return '王者榮耀娛樂';
+    }
+    if (text.includes('第五人格')) {
+      if (text.includes('四階')) return '第五人格四階';
+      if (text.includes('五階')) return '第五人格五階';
+      if (text.includes('六階')) return '第五人格六階';
+      if (text.includes('七階')) return '第五人格七階';
+      if (text.includes('娛樂')) return '第五人格娛樂';
+    }
     if (text.includes('語音聊天')) return '語音聊天';
     if (text.includes('點歌')) return '點歌服務';
     if (text.includes('PUBG M')) return 'PUBG M';
@@ -8076,8 +8163,20 @@ function matchAllowedServiceName(allowedServices, targetService) {
   const group =
     getServiceGroupName(target);
 
+  const serviceAliases = {
+    王者榮耀娛樂: 'hok_entertain',
+    王者榮耀技術: 'hok_skill',
+    第五人格娛樂: 'identity_v_entertain',
+    第五人格四階: 'identity_v_rank_4',
+    第五人格五階: 'identity_v_rank_5',
+    第五人格六階: 'identity_v_rank_6',
+    第五人格七階: 'identity_v_rank_7'
+  };
+  const alias = serviceAliases[target];
+
   return (
     services.includes(target) ||
+    (alias && services.includes(cleanServiceKey(alias))) ||
     services.includes('全部服務') ||
     services.includes(`${group}全部`)
   );
@@ -10938,6 +11037,10 @@ async function handleDispatchInteraction(interaction) {
     }
     if (interaction.customId.startsWith('lol_style_select_')) {
       await handleLolStyleSelect(interaction);
+      return true;
+    }
+    if (interaction.customId.startsWith('other_game_style_select_')) {
+      await handleOtherGameStyleSelect(interaction);
       return true;
     }
     if (interaction.customId.startsWith('quote_select_coupon_')) {

@@ -1693,8 +1693,12 @@ async function saveDeepNightSalaryOrder({
 }) {
   if (!discordId) return null;
 
-  const commission =
+  const isTip = String(serviceName || '').includes('打賞');
+  const regularCommission =
     await getDeepNightCommissionInfo(discordId, finishedAt);
+  const commission = isTip && regularCommission.rate !== 95
+    ? { rate: 90, level: '打賞固定 90%' }
+    : regularCommission;
 
   const finalOrderAmount =
     Number(orderAmount || 0);
@@ -1820,6 +1824,48 @@ async function sendOrderReviewPanel(channel, order, assignedPlayers = []) {
         .setTimestamp()
     ],
     components: [row, row2]
+  });
+}
+async function handleSatisfactionSurveyCommand(interaction) {
+  if (!isAdminOrStaff(interaction)) {
+    return interaction.editReply({
+      content: '❌ 只有管理員或客服人員可以使用這個指令'
+    });
+  }
+
+  const orderNo = interaction.options.getString('訂單編號')?.trim();
+  let query = supabase.from('play_orders').select('*');
+
+  if (orderNo) {
+    query = query.eq('order_no', orderNo).limit(1);
+  } else {
+    query = query
+      .eq('channel_id', interaction.channel.id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+  }
+
+  const { data: rows, error } = await query;
+  const order = rows?.[0];
+
+  if (error || !order) {
+    console.error('[滿意度調查] 找不到訂單', error);
+    return interaction.editReply({
+      content: orderNo
+        ? `❌ 找不到訂單編號 ${orderNo}`
+        : '❌ 找不到目前頻道對應的訂單'
+    });
+  }
+
+  const assignedPlayers = String(order.assigned_player || '')
+    .split(',')
+    .map(id => id.trim())
+    .filter(Boolean);
+
+  await sendOrderReviewPanel(interaction.channel, order, assignedPlayers);
+
+  return interaction.editReply({
+    content: `✅ 已重新發送訂單 ${order.order_no || order.id} 的滿意度調查`
   });
 }
 // ===== 安全回覆封裝 =====
@@ -4971,6 +5017,15 @@ const commands = [
         .setRequired(true)
     ),
   new SlashCommandBuilder()
+    .setName('滿意度調查')
+    .setDescription('重新發送訂單完成後的滿意度調查表')
+    .addStringOption(option =>
+      option
+        .setName('訂單編號')
+        .setDescription('不填時會使用目前頻道最新一筆訂單')
+        .setRequired(false)
+    ),
+  new SlashCommandBuilder()
     .setName('發送優惠券')
     .setDescription('發送優惠券給指定玩家')
     .addUserOption(option =>
@@ -5473,15 +5528,14 @@ setInterval(async () => {
   }
 }, 60 * 60 * 1000);
 setInterval(async () => {
-  const twelveHoursAgo =
-    new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString();
+  const tenHoursAgo =
+    Date.now() - 10 * 60 * 60 * 1000;
 
   const { data: players, error } =
     await supabase
       .from('players')
       .select('*')
-      .eq('status', 'available')
-      .lt('online_started_at', twelveHoursAgo);
+      .in('status', ['available', 'busy']);
 
   if (error || !players?.length) return;
 
@@ -5489,12 +5543,36 @@ setInterval(async () => {
     const { data: activeOrder } =
       await supabase
         .from('play_orders')
-        .select('*')
-        .eq('assigned_player', player.discord_id)
+        .select('id')
+        .ilike('assigned_player', `%${player.discord_id}%`)
         .in('status', ['accepted'])
+        .limit(1)
         .maybeSingle();
 
-    if (activeOrder) continue;
+    const { data: latestOrder } =
+      await supabase
+        .from('play_orders')
+        .select('accepted_at, created_at')
+        .ilike('assigned_player', `%${player.discord_id}%`)
+        .not('accepted_at', 'is', null)
+        .order('accepted_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+    const lastActivityAt = Math.max(
+      new Date(player.online_started_at || 0).getTime(),
+      new Date(latestOrder?.accepted_at || latestOrder?.created_at || 0).getTime()
+    );
+
+    if (activeOrder || lastActivityAt > tenHoursAgo) {
+      if (player.status === 'busy') {
+        await supabase
+          .from('players')
+          .update({ status: 'available' })
+          .eq('discord_id', player.discord_id);
+      }
+      continue;
+    }
 
     await supabase
       .from('players')
@@ -6841,6 +6919,10 @@ async function handleSlashCommand(interaction) {
             });
           }
         // 儲值
+        if (interaction.commandName === '滿意度調查') {
+          await handleSatisfactionSurveyCommand(interaction);
+          return;
+        }
         if (interaction.commandName === '發錢') {
           if (!isAdminOrStaff(interaction)) {
             return interaction.editReply({
