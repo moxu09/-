@@ -169,6 +169,9 @@ const ORDER_CHANNEL=
   process.env.ORDER_CHANNEL;
 const STAFF_ROLE =
   process.env.STAFF_ROLE;
+const CUSTOMER_SERVICE_ROLE_ID =
+  process.env.CUSTOMER_SERVICE_ROLE_ID ||
+  '1501271090918326362';
 // ===== 全域狀態 =====
 const claimedDrops = new Set();
 const dropCooldown = new Map();
@@ -6536,9 +6539,13 @@ function isAdminOrStaff(interaction) {
 
   const roleIds = [
     process.env.STAFF_ROLE,
+    CUSTOMER_SERVICE_ROLE_ID,
+    process.env.SUPPORT_ROLE_ID,
     process.env.ADMIN_ROLE,
     process.env.ADMIN_ROLE_ID,
     ...parseRoleIdList(process.env.STAFF_ROLE_IDS),
+    ...parseRoleIdList(process.env.CUSTOMER_SERVICE_ROLE_IDS),
+    ...parseRoleIdList(process.env.SUPPORT_ROLE_IDS),
     ...parseRoleIdList(process.env.ADMIN_ROLE_IDS),
   ].filter(Boolean);
 
@@ -6837,9 +6844,9 @@ async function handleSlashCommand(interaction) {
           }
         // 儲值
         if (interaction.commandName === '發錢') {
-          if (!isOwnerOrAdmin(interaction)) {
+          if (!isAdminOrStaff(interaction)) {
             return interaction.editReply({
-              content: '❌ 只有群主或管理員可以使用',
+              content: '❌ 只有群主、管理員或客服人員可以使用',
             });
           }
           const target = interaction.options.getUser('玩家');

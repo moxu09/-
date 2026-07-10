@@ -1468,6 +1468,9 @@ function getTodayRangeTW() {
 }
 
 async function sendDailyPlayerSummary() {
+  console.log('[每日陪玩總結] 已停用，保留 salary 端每日報告。');
+  return;
+
   const {
     dateText,
     start,
