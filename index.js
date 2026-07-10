@@ -5758,16 +5758,14 @@ async function sendBankTransferInfo(channel) {
     .setTitle('🏦 匯款資訊')
     .setDescription(
       `請依照以下資訊完成匯款：\n\n` +
-      `銀行：將來銀行\n` +
-      `銀行代碼：823\n` +
-      `帳號：88620979281818\n` +
+      `銀行：星展銀行\n` +
+      `銀行代碼：810\n` +
+      `帳號：60108039566\n` +
       `戶名：許O星\n\n` +
-      `也可以掃描下方 QR Code 付款。\n\n` +
       `匯款完成後，請在此頻道上傳匯款截圖，等待客服確認。\n\n` +
       `若有其他銀行之需求，請在下方告訴客服。`
 
     )
-    .setImage('https://cdn.discordapp.com/attachments/1501098193276895360/1517290256385310782/2026-06-19_6.09.01.png?ex=6a35be2b&is=6a346cab&hm=18a672e233a7e5984ada0e257932966853a7ba2977e3323d93578be4abaf6094&')
     .setFooter({
       text: '請確認金額正確後再匯款'
     })
@@ -6877,9 +6875,9 @@ async function handleSlashCommand(interaction) {
         }
         // 扣錢
         if (interaction.commandName === '扣錢') {
-          if (!isOwnerOrAdmin(interaction)) {
+          if (!isAdminOrStaff(interaction)) {
             return interaction.editReply({
-              content: '❌ 只有群主或管理員可以使用',
+              content: '❌ 只有群主、管理員或客服人員可以使用',
             });
           }
           const target = interaction.options.getUser('玩家');
