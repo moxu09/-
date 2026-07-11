@@ -9536,13 +9536,34 @@ ${content || "(無內容)"}
     }
     return await interaction.reply(expiredMessage);
   } catch (error) {
-    console.error("[按鈕錯誤]", error);
-
-    return await interaction
-      .editReply({
-        content: "❌ 按鈕執行失敗",
-      })
-      .catch(() => {});
+    const errorCode = error?.code || error?.status || "unknown";
+    const errorMessage = String(error?.message || error || "未知錯誤").slice(
+      0,
+      500,
+    );
+    console.error("[按鈕錯誤]", {
+      customId,
+      errorCode,
+      errorMessage,
+      stack: error?.stack,
+    });
+    const response = {
+      content:
+        `❌ 按鈕執行失敗\n` +
+        `按鈕：${customId}\n` +
+        `錯誤代碼：${errorCode}\n` +
+        `原因：${errorMessage}`,
+      flags: 64,
+    };
+    if (interaction.deferred) {
+      return await interaction
+        .editReply({ content: response.content })
+        .catch(() => {});
+    }
+    if (interaction.replied) {
+      return await interaction.followUp(response).catch(() => {});
+    }
+    return await interaction.reply(response).catch(() => {});
   }
 }
 // ===== 完整字符串選單交互處理 =====
