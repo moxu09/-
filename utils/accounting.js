@@ -4,7 +4,8 @@ function numberValue(value) {
 }
 
 function createAccountingLedger(supabase, options = {}) {
-  const appKey = options.appKey || process.env.ACCOUNTING_APP_KEY || "deepnight";
+  const appKey =
+    options.appKey || process.env.ACCOUNTING_APP_KEY || "deepnight";
   let tableMissingLogged = false;
 
   function buildDedupeKey(entry) {
@@ -66,11 +67,9 @@ function createAccountingLedger(supabase, options = {}) {
       updated_at: new Date().toISOString(),
     };
 
-    const { error } = await supabase
-      .from("accounting_ledger")
-      .upsert(payload, {
-        onConflict: "app_key,dedupe_key",
-      });
+    const { error } = await supabase.from("accounting_ledger").upsert(payload, {
+      onConflict: "app_key,dedupe_key",
+    });
 
     if (error) {
       if (error.code === "PGRST205" || error.code === "42P01") {

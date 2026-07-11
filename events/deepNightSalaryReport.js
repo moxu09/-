@@ -4,17 +4,13 @@ const BRAND_NAME = "深夜不關燈";
 const BRAND_FOOTER = "深夜不關燈｜We Are Still Here";
 
 // 這些表名可以用 .env 覆蓋，不設定就用預設
-const STAFF_TABLE =
-  process.env.SALARY_STAFF_TABLE || "players";
+const STAFF_TABLE = process.env.SALARY_STAFF_TABLE || "players";
 
-const ORDER_TABLE =
-  process.env.SALARY_ORDER_TABLE || "play_orders";
+const ORDER_TABLE = process.env.SALARY_ORDER_TABLE || "play_orders";
 
-const BONUS_TABLE =
-  process.env.SALARY_BONUS_TABLE || "players_bonus";
+const BONUS_TABLE = process.env.SALARY_BONUS_TABLE || "players_bonus";
 
-const SETTINGS_TABLE =
-  process.env.SALARY_SETTINGS_TABLE || "salary_settings";
+const SETTINGS_TABLE = process.env.SALARY_SETTINGS_TABLE || "salary_settings";
 
 function getTaipeiDayRange() {
   const now = new Date();
@@ -51,10 +47,7 @@ function getStaffName(staff) {
 
 function getStaffDiscordId(staff) {
   return String(
-    staff.discord_id ||
-    staff.player_id ||
-    staff.user_id ||
-    ""
+    staff.discord_id || staff.player_id || staff.user_id || ""
   ).trim();
 }
 
@@ -81,18 +74,18 @@ function getOrderStaffIds(order) {
     ids.push(...String(assignedPlayer).split(","));
   }
 
-  ids.push(
-    order.player_id,
-    order.discord_id,
-    order.staff_id
-  );
+  ids.push(order.player_id, order.discord_id, order.staff_id);
 
   return [
     ...new Set(
       ids
-        .map(id => String(id || "").replace(/[<@!>]/g, "").trim())
+        .map((id) =>
+          String(id || "")
+            .replace(/[<@!>]/g, "")
+            .trim()
+        )
         .filter(Boolean)
-    )
+    ),
   ];
 }
 
@@ -109,36 +102,26 @@ function getOrderStaffName(order) {
 
 function getOrderServiceName(order) {
   return (
-    order.service ||
-    order.service_name ||
-    order.order_item ||
-    "未命名服務"
+    order.service || order.service_name || order.order_item || "未命名服務"
   );
 }
 
 function getOrderAmount(order) {
   return Number(
     order.total_amount ||
-    order.order_amount ||
-    order.final_price ||
-    order.price ||
-    0
+      order.order_amount ||
+      order.final_price ||
+      order.price ||
+      0
   );
 }
 
 function getStaffSalary(order) {
-  return Number(
-    order.salary_amount ||
-    order.staff_salary ||
-    0
-  );
+  return Number(order.salary_amount || order.staff_salary || 0);
 }
 
 function getOrderBonus(order) {
-  return Number(
-    order.bonus_amount ||
-    0
-  );
+  return Number(order.bonus_amount || 0);
 }
 
 function getOrderTimeColumn() {
@@ -284,10 +267,7 @@ function buildAdminReport({ dateText, orders, extraBonuses }) {
 
   for (const bonus of extraBonuses) {
     const key = String(
-      bonus.discord_id ||
-      bonus.player_id ||
-      bonus.staff_id ||
-      ""
+      bonus.discord_id || bonus.player_id || bonus.staff_id || ""
     ).trim();
 
     if (!key) continue;
@@ -344,7 +324,9 @@ async function safeSendToChannel(client, channelId, content) {
     const channel = await client.channels.fetch(channelId);
 
     if (!channel || !channel.isTextBased()) {
-      console.warn(`[DEEP_NIGHT_REPORT] 頻道不可用或不是文字頻道：${channelId}`);
+      console.warn(
+        `[DEEP_NIGHT_REPORT] 頻道不可用或不是文字頻道：${channelId}`
+      );
       return false;
     }
 
@@ -383,16 +365,14 @@ function splitMessage(text, maxLength = 1900) {
 }
 
 async function readStaffList(supabase) {
-  const { data, error } = await supabase
-    .from(STAFF_TABLE)
-    .select("*");
+  const { data, error } = await supabase.from(STAFF_TABLE).select("*");
 
   if (error) {
     console.error(`[DEEP_NIGHT_REPORT] 讀取 ${STAFF_TABLE} 失敗`, error);
     return [];
   }
 
-  return (data || []).filter(staff => {
+  return (data || []).filter((staff) => {
     const discordId = getStaffDiscordId(staff);
     if (!discordId) return false;
 
@@ -415,7 +395,7 @@ async function readTodaySalaryOrders(supabase, startIso, endIso) {
     "order_finished_at",
     "completed_at",
     "accepted_at",
-    "created_at"
+    "created_at",
   ].filter((column, index, list) => column && list.indexOf(column) === index);
   const orderMap = new Map();
 
@@ -445,7 +425,8 @@ async function readTodaySalaryOrders(supabase, startIso, endIso) {
       const status = String(order.status || "").trim();
 
       if (order.is_deleted) continue;
-      if (["cancelled", "canceled", "已取消", "取消"].includes(status)) continue;
+      if (["cancelled", "canceled", "已取消", "取消"].includes(status))
+        continue;
 
       orderMap.set(String(order.id), order);
     }
@@ -455,8 +436,7 @@ async function readTodaySalaryOrders(supabase, startIso, endIso) {
 }
 
 async function readTodayBonuses(supabase, startIso, endIso) {
-  const bonusTimeColumn =
-    process.env.SALARY_BONUS_TIME_COLUMN || "created_at";
+  const bonusTimeColumn = process.env.SALARY_BONUS_TIME_COLUMN || "created_at";
 
   const { data, error } = await supabase
     .from(BONUS_TABLE)
@@ -511,40 +491,29 @@ async function readAdminReportChannelId(supabase) {
 async function sendDeepNightDailySalaryReports(client, supabase) {
   const { dateText, startIso, endIso } = getTaipeiDayRange();
 
-  console.log(`[DEEP_NIGHT_REPORT] 開始發送${BRAND_NAME}每日薪資報告：${dateText}`);
+  console.log(
+    `[DEEP_NIGHT_REPORT] 開始發送${BRAND_NAME}每日薪資報告：${dateText}`
+  );
 
   const staffs = await readStaffList(supabase);
 
   const staffDiscordIds = new Set(
-    staffs
-      .map(staff => getStaffDiscordId(staff))
-      .filter(Boolean)
+    staffs.map((staff) => getStaffDiscordId(staff)).filter(Boolean)
   );
 
-  const todayOrders = await readTodaySalaryOrders(
-    supabase,
-    startIso,
-    endIso
+  const todayOrders = await readTodaySalaryOrders(supabase, startIso, endIso);
+
+  const todayBonuses = await readTodayBonuses(supabase, startIso, endIso);
+
+  const orders = (todayOrders || []).filter((order) =>
+    getOrderStaffIds(order).some((staffId) => staffDiscordIds.has(staffId))
   );
 
-  const todayBonuses = await readTodayBonuses(
-    supabase,
-    startIso,
-    endIso
-  );
-
-  const orders = (todayOrders || []).filter(order =>
-    getOrderStaffIds(order).some(staffId => staffDiscordIds.has(staffId))
-  );
-
-  const bonuses = (todayBonuses || []).filter(bonus => {
+  const bonuses = (todayBonuses || []).filter((bonus) => {
     const bonusStaffId = String(
-      bonus.discord_id ||
-      bonus.player_id ||
-      bonus.staff_id ||
-      ""
+      bonus.discord_id || bonus.player_id || bonus.staff_id || ""
     ).trim();
- 
+
     return staffDiscordIds.has(bonusStaffId);
   });
 
@@ -554,16 +523,13 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
   for (const staff of staffs) {
     const staffId = getStaffDiscordId(staff);
 
-    const personalOrders = orders.filter(
-      order => getOrderStaffIds(order).includes(staffId)
+    const personalOrders = orders.filter((order) =>
+      getOrderStaffIds(order).includes(staffId)
     );
 
-    const personalBonuses = bonuses.filter(bonus => {
+    const personalBonuses = bonuses.filter((bonus) => {
       const bonusStaffId = String(
-        bonus.discord_id ||
-        bonus.player_id ||
-        bonus.staff_id ||
-        ""
+        bonus.discord_id || bonus.player_id || bonus.staff_id || ""
       ).trim();
 
       return bonusStaffId === staffId;
@@ -595,8 +561,7 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
     else failCount += 1;
   }
 
-  const reportChannelId =
-    await readAdminReportChannelId(supabase);
+  const reportChannelId = await readAdminReportChannelId(supabase);
 
   if (reportChannelId) {
     const adminReport = buildAdminReport({
@@ -605,11 +570,7 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
       extraBonuses: bonuses,
     });
 
-    await safeSendToChannel(
-      client,
-      reportChannelId,
-      adminReport
-    );
+    await safeSendToChannel(client, reportChannelId, adminReport);
   } else {
     console.warn(
       "[DEEP_NIGHT_REPORT] 沒有設定管理總報表頻道，請設定 SALARY_REPORT_CHANNEL_ID"
