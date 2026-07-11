@@ -5365,10 +5365,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ===== Slash =====
     if (interaction.isChatInputCommand()) {
       if (!interaction.deferred && !interaction.replied) {
-        if (interaction.commandName === "餘額") {
-          const target = interaction.options.getUser("玩家");
-          const selfLookup = !target || target.id === interaction.user.id;
-          await interaction.deferReply(selfLookup ? undefined : { flags: 64 });
+        if (["餘額", "發錢", "扣錢"].includes(interaction.commandName)) {
+          await interaction.deferReply();
         } else if (interaction.commandName === "查詢累積") {
           await interaction.deferReply(); // 公開，頻道都看得到
         } else {
