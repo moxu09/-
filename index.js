@@ -5390,6 +5390,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.isButton()) {
       if (
         interaction.customId === "open_manual_work_report" ||
+        interaction.customId.startsWith("manual_work_confirm_") ||
+        interaction.customId.startsWith("manual_work_cancel_") ||
         interaction.customId.startsWith("work_report_time_")
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);

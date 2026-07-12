@@ -349,16 +349,75 @@ function createWorkReportSystem({
             components: interaction.message.components,
           });
         }
-        await createReports(pending, interaction.values);
-        pendingManualReports.delete(flowId);
+        pending.selectedStaffIds = [...interaction.values];
+        pendingManualReports.set(flowId, pending);
         await interaction.editReply({
-          content: `已送出 ${interaction.values.length} 位陪陪的填單面板。`,
-          components: [],
+          content: `已選擇 ${interaction.values.length} 位陪陪：${interaction.values.map((id) => `<@${id}>`).join("、")}\n確認名單後請按「確定送出」。`,
+          components: [
+            interaction.message.components[0],
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`manual_work_confirm_${flowId}`)
+                .setLabel("確定送出")
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`manual_work_cancel_${flowId}`)
+                .setLabel("取消")
+                .setStyle(ButtonStyle.Secondary),
+            ),
+          ],
         });
       } catch (error) {
         await interaction.editReply({
           content: `報單失敗：${error.message}`,
           components: [],
+        });
+      }
+      return true;
+    }
+
+    if (
+      interaction.isButton() &&
+      (interaction.customId.startsWith("manual_work_confirm_") ||
+        interaction.customId.startsWith("manual_work_cancel_"))
+    ) {
+      const isConfirm = interaction.customId.startsWith("manual_work_confirm_");
+      const flowId = interaction.customId.replace(
+        isConfirm ? "manual_work_confirm_" : "manual_work_cancel_",
+        "",
+      );
+      const pending = pendingManualReports.get(flowId);
+      if (!pending || pending.creatorId !== interaction.user.id) {
+        return interaction.reply({
+          content: "這份報單已逾時，請重新填寫。",
+          flags: 64,
+        });
+      }
+      if (!isConfirm) {
+        pendingManualReports.delete(flowId);
+        return interaction.update({
+          content: "已取消這份人工報單。",
+          components: [],
+        });
+      }
+      if (!pending.selectedStaffIds?.length) {
+        return interaction.reply({
+          content: "請先選擇至少一位陪陪。",
+          flags: 64,
+        });
+      }
+      await interaction.deferUpdate();
+      try {
+        await createReports(pending, pending.selectedStaffIds);
+        pendingManualReports.delete(flowId);
+        await interaction.editReply({
+          content: `已送出 ${pending.selectedStaffIds.length} 位陪陪的填單面板。`,
+          components: [],
+        });
+      } catch (error) {
+        await interaction.editReply({
+          content: `報單失敗：${error.message}`,
+          components: interaction.message.components,
         });
       }
       return true;
