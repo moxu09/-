@@ -47,7 +47,7 @@ function getStaffName(staff) {
 
 function getStaffDiscordId(staff) {
   return String(
-    staff.discord_id || staff.player_id || staff.user_id || ""
+    staff.discord_id || staff.player_id || staff.user_id || "",
   ).trim();
 }
 
@@ -82,9 +82,9 @@ function getOrderStaffIds(order) {
         .map((id) =>
           String(id || "")
             .replace(/[<@!>]/g, "")
-            .trim()
+            .trim(),
         )
-        .filter(Boolean)
+        .filter(Boolean),
     ),
   ];
 }
@@ -112,7 +112,7 @@ function getOrderAmount(order) {
       order.order_amount ||
       order.final_price ||
       order.price ||
-      0
+      0,
   );
 }
 
@@ -142,22 +142,22 @@ function buildPersonalReport({ dateText, staff, orders, extraBonuses }) {
 
   const totalOrderAmount = orders.reduce(
     (sum, order) => sum + getOrderAmount(order),
-    0
+    0,
   );
 
   const totalSalary = orders.reduce(
     (sum, order) => sum + getStaffSalary(order),
-    0
+    0,
   );
 
   const orderBonus = orders.reduce(
     (sum, order) => sum + getOrderBonus(order),
-    0
+    0,
   );
 
   const extraBonusTotal = extraBonuses.reduce(
     (sum, bonus) => sum + Number(bonus.amount || 0),
-    0
+    0,
   );
 
   const totalBonus = orderBonus + extraBonusTotal;
@@ -175,7 +175,7 @@ function buildPersonalReport({ dateText, staff, orders, extraBonuses }) {
                 : "";
 
             return `${index + 1}. ${getOrderServiceName(order)}｜訂單 $${money(
-              getOrderAmount(order)
+              getOrderAmount(order),
             )}｜薪資 $${money(getStaffSalary(order))}${bonusText}`;
           })
           .join("\n");
@@ -188,7 +188,7 @@ function buildPersonalReport({ dateText, staff, orders, extraBonuses }) {
           .slice(0, 10)
           .map((bonus, index) => {
             return `${index + 1}. ${bonus.title || "額外獎金"}｜$${money(
-              bonus.amount
+              bonus.amount,
             )}${bonus.note ? `｜${bonus.note}` : ""}`;
           })
           .join("\n");
@@ -220,22 +220,22 @@ function buildPersonalReport({ dateText, staff, orders, extraBonuses }) {
 function buildAdminReport({ dateText, orders, extraBonuses }) {
   const totalIncome = orders.reduce(
     (sum, order) => sum + getOrderAmount(order),
-    0
+    0,
   );
 
   const totalSalary = orders.reduce(
     (sum, order) => sum + getStaffSalary(order),
-    0
+    0,
   );
 
   const orderBonus = orders.reduce(
     (sum, order) => sum + getOrderBonus(order),
-    0
+    0,
   );
 
   const extraBonusTotal = extraBonuses.reduce(
     (sum, bonus) => sum + Number(bonus.amount || 0),
-    0
+    0,
   );
 
   const totalBonus = orderBonus + extraBonusTotal;
@@ -267,7 +267,7 @@ function buildAdminReport({ dateText, orders, extraBonuses }) {
 
   for (const bonus of extraBonuses) {
     const key = String(
-      bonus.discord_id || bonus.player_id || bonus.staff_id || ""
+      bonus.discord_id || bonus.player_id || bonus.staff_id || "",
     ).trim();
 
     if (!key) continue;
@@ -296,9 +296,9 @@ function buildAdminReport({ dateText, orders, extraBonuses }) {
           .sort((a, b) => b.salary + b.bonus - (a.salary + a.bonus))
           .map((item) => {
             return `${item.name}｜${item.orderCount} 單｜薪資 $${money(
-              item.salary
+              item.salary,
             )}｜獎金 $${money(item.bonus)}｜合計 $${money(
-              item.salary + item.bonus
+              item.salary + item.bonus,
             )}`;
           })
           .join("\n");
@@ -325,7 +325,7 @@ async function safeSendToChannel(client, channelId, content) {
 
     if (!channel || !channel.isTextBased()) {
       console.warn(
-        `[DEEP_NIGHT_REPORT] 頻道不可用或不是文字頻道：${channelId}`
+        `[DEEP_NIGHT_REPORT] 頻道不可用或不是文字頻道：${channelId}`,
       );
       return false;
     }
@@ -416,7 +416,7 @@ async function readTodaySalaryOrders(supabase, startIso, endIso) {
     if (error) {
       console.error(
         `[DEEP_NIGHT_REPORT] 讀取 ${ORDER_TABLE}.${timeColumn} 失敗`,
-        error
+        error,
       );
       continue;
     }
@@ -448,7 +448,7 @@ async function readTodayBonuses(supabase, startIso, endIso) {
   if (error) {
     console.warn(
       `[DEEP_NIGHT_REPORT] 讀取 ${BONUS_TABLE} 失敗，若你沒有額外獎金表可忽略`,
-      error.message || error
+      error.message || error,
     );
     return [];
   }
@@ -457,31 +457,27 @@ async function readTodayBonuses(supabase, startIso, endIso) {
 }
 
 async function readAdminReportChannelId(supabase) {
-  if (process.env.SALARY_REPORT_CHANNEL_ID) {
-    return process.env.SALARY_REPORT_CHANNEL_ID;
-  }
-
-  if (process.env.REPORT_CHANNEL_ID) {
-    return process.env.REPORT_CHANNEL_ID;
-  }
-
   const { data, error } = await supabase
     .from(SETTINGS_TABLE)
     .select("*")
-    .order("created_at", { ascending: true })
     .limit(1)
     .maybeSingle();
 
   if (error) {
     console.warn(
       `[DEEP_NIGHT_REPORT] 讀取 ${SETTINGS_TABLE} 失敗，若你改用 SALARY_REPORT_CHANNEL_ID 可忽略`,
-      error.message || error
+      error.message || error,
     );
+  } else if (data?.daily_report_enabled === false) {
+    console.log("[DEEP_NIGHT_REPORT] 每日報告已在薪資網設定中停用");
     return null;
+  } else if (data?.report_channel_id) {
+    return data.report_channel_id;
   }
 
   return (
-    data?.report_channel_id ||
+    process.env.SALARY_REPORT_CHANNEL_ID ||
+    process.env.REPORT_CHANNEL_ID ||
     data?.salary_report_channel_id ||
     data?.daily_report_channel_id ||
     null
@@ -492,13 +488,13 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
   const { dateText, startIso, endIso } = getTaipeiDayRange();
 
   console.log(
-    `[DEEP_NIGHT_REPORT] 開始發送${BRAND_NAME}每日薪資報告：${dateText}`
+    `[DEEP_NIGHT_REPORT] 開始發送${BRAND_NAME}每日薪資報告：${dateText}`,
   );
 
   const staffs = await readStaffList(supabase);
 
   const staffDiscordIds = new Set(
-    staffs.map((staff) => getStaffDiscordId(staff)).filter(Boolean)
+    staffs.map((staff) => getStaffDiscordId(staff)).filter(Boolean),
   );
 
   const todayOrders = await readTodaySalaryOrders(supabase, startIso, endIso);
@@ -506,12 +502,12 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
   const todayBonuses = await readTodayBonuses(supabase, startIso, endIso);
 
   const orders = (todayOrders || []).filter((order) =>
-    getOrderStaffIds(order).some((staffId) => staffDiscordIds.has(staffId))
+    getOrderStaffIds(order).some((staffId) => staffDiscordIds.has(staffId)),
   );
 
   const bonuses = (todayBonuses || []).filter((bonus) => {
     const bonusStaffId = String(
-      bonus.discord_id || bonus.player_id || bonus.staff_id || ""
+      bonus.discord_id || bonus.player_id || bonus.staff_id || "",
     ).trim();
 
     return staffDiscordIds.has(bonusStaffId);
@@ -524,12 +520,12 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
     const staffId = getStaffDiscordId(staff);
 
     const personalOrders = orders.filter((order) =>
-      getOrderStaffIds(order).includes(staffId)
+      getOrderStaffIds(order).includes(staffId),
     );
 
     const personalBonuses = bonuses.filter((bonus) => {
       const bonusStaffId = String(
-        bonus.discord_id || bonus.player_id || bonus.staff_id || ""
+        bonus.discord_id || bonus.player_id || bonus.staff_id || "",
       ).trim();
 
       return bonusStaffId === staffId;
@@ -554,7 +550,7 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
     const ok = await safeSendToChannel(
       client,
       personalReportChannelId,
-      report.content
+      report.content,
     );
 
     if (ok) successCount += 1;
@@ -573,12 +569,12 @@ async function sendDeepNightDailySalaryReports(client, supabase) {
     await safeSendToChannel(client, reportChannelId, adminReport);
   } else {
     console.warn(
-      "[DEEP_NIGHT_REPORT] 沒有設定管理總報表頻道，請設定 SALARY_REPORT_CHANNEL_ID"
+      "[DEEP_NIGHT_REPORT] 沒有設定管理總報表頻道，請設定 SALARY_REPORT_CHANNEL_ID",
     );
   }
 
   console.log(
-    `[DEEP_NIGHT_REPORT] 發送完成，成功 ${successCount}，失敗 ${failCount}`
+    `[DEEP_NIGHT_REPORT] 發送完成，成功 ${successCount}，失敗 ${failCount}`,
   );
 }
 
@@ -599,11 +595,11 @@ function startDeepNightSalaryReportCron(client, supabase) {
     },
     {
       timezone,
-    }
+    },
   );
 
   console.log(
-    `[DEEP_NIGHT_REPORT] 已啟動每日 23:59 ${BRAND_NAME}薪資報告排程｜${timezone}`
+    `[DEEP_NIGHT_REPORT] 已啟動每日 23:59 ${BRAND_NAME}薪資報告排程｜${timezone}`,
   );
 }
 
