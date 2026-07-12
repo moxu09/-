@@ -28,6 +28,40 @@ function parseTaipeiDateTime(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function formatTaipeiDateTime(value) {
+  if (!value) return "尚未填寫";
+  return new Intl.DateTimeFormat("zh-TW", {
+    timeZone: "Asia/Taipei",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
+}
+
+function buildUpdatedReportEmbed(message, startedAt, endedAt, minutes) {
+  const embed = EmbedBuilder.from(message.embeds[0]);
+  const timeFields = [
+    { name: "開始時間", value: formatTaipeiDateTime(startedAt), inline: true },
+  ];
+  if (endedAt) {
+    timeFields.push(
+      { name: "結束時間", value: formatTaipeiDateTime(endedAt), inline: true },
+      {
+        name: "總時長",
+        value: `${Math.floor(minutes / 60)} 小時 ${minutes % 60} 分鐘`,
+        inline: true,
+      },
+    );
+  }
+  const baseFields = (embed.data.fields || []).filter(
+    (field) => !["開始時間", "結束時間", "總時長"].includes(field.name),
+  );
+  return embed.setFields(...baseFields, ...timeFields);
+}
+
 function createWorkReportSystem({
   supabase,
   client,
@@ -90,9 +124,13 @@ function createWorkReportSystem({
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
-            .setCustomId(`work_report_time_${report.id}`)
-            .setLabel("填寫開始／結束時間")
+            .setCustomId(`work_report_start_${report.id}`)
+            .setLabel("輸入開始時間")
             .setStyle(ButtonStyle.Primary),
+          new ButtonBuilder()
+            .setCustomId(`work_report_end_${report.id}`)
+            .setLabel("輸入結束時間")
+            .setStyle(ButtonStyle.Success),
         ),
       ],
     });
@@ -425,9 +463,14 @@ function createWorkReportSystem({
 
     if (
       interaction.isButton() &&
-      interaction.customId.startsWith("work_report_time_")
+      (interaction.customId.startsWith("work_report_start_") ||
+        interaction.customId.startsWith("work_report_end_"))
     ) {
-      const reportId = interaction.customId.replace("work_report_time_", "");
+      const isStart = interaction.customId.startsWith("work_report_start_");
+      const reportId = interaction.customId.replace(
+        isStart ? "work_report_start_" : "work_report_end_",
+        "",
+      );
       const { data: report } = await supabase
         .from(salaryTable)
         .select("*")
@@ -443,22 +486,16 @@ function createWorkReportSystem({
           flags: 64,
         });
       const modal = new ModalBuilder()
-        .setCustomId(`submit_work_report_time_${reportId}`)
-        .setTitle("填寫服務時間");
+        .setCustomId(
+          `submit_work_report_${isStart ? "start" : "end"}_${reportId}`,
+        )
+        .setTitle(isStart ? "填寫開始時間" : "填寫結束時間");
       modal.addComponents(
         new ActionRowBuilder().addComponents(
           new TextInputBuilder()
-            .setCustomId("work_started_at")
-            .setLabel("開始時間（YYYY-MM-DD HH:mm）")
-            .setPlaceholder("2026-07-12 20:30")
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true),
-        ),
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId("work_ended_at")
-            .setLabel("結束時間（YYYY-MM-DD HH:mm）")
-            .setPlaceholder("2026-07-12 22:00")
+            .setCustomId("work_time")
+            .setLabel(`${isStart ? "開始" : "結束"}時間（YYYY-MM-DD HH:mm）`)
+            .setPlaceholder(isStart ? "2026-07-12 20:30" : "2026-07-12 22:00")
             .setStyle(TextInputStyle.Short)
             .setRequired(true),
         ),
@@ -469,24 +506,24 @@ function createWorkReportSystem({
 
     if (
       interaction.isModalSubmit() &&
-      interaction.customId.startsWith("submit_work_report_time_")
+      (interaction.customId.startsWith("submit_work_report_start_") ||
+        interaction.customId.startsWith("submit_work_report_end_"))
     ) {
+      const isStart = interaction.customId.startsWith(
+        "submit_work_report_start_",
+      );
       const reportId = interaction.customId.replace(
-        "submit_work_report_time_",
+        isStart ? "submit_work_report_start_" : "submit_work_report_end_",
         "",
       );
-      const started = parseTaipeiDateTime(
-        interaction.fields.getTextInputValue("work_started_at"),
+      const enteredTime = parseTaipeiDateTime(
+        interaction.fields.getTextInputValue("work_time"),
       );
-      const ended = parseTaipeiDateTime(
-        interaction.fields.getTextInputValue("work_ended_at"),
-      );
-      if (!started || !ended || ended <= started)
+      if (!enteredTime)
         return interaction.reply({
-          content: "時間格式不正確，或結束時間早於開始時間。",
+          content: "時間格式不正確，請使用 YYYY-MM-DD HH:mm。",
           flags: 64,
         });
-      const minutes = Math.round((ended - started) / 60000);
       const { data: current } = await supabase
         .from(salaryTable)
         .select("*")
@@ -496,29 +533,46 @@ function createWorkReportSystem({
       try {
         meta = JSON.parse(current?.note || current?.admin_note || "{}");
       } catch {}
+      const started = isStart
+        ? enteredTime
+        : new Date(
+            meta.startedAt || current?.accepted_at || current?.paid_at || 0,
+          );
+      const ended = isStart ? null : enteredTime;
+      if (!isStart && (!started.getTime() || ended <= started)) {
+        return interaction.reply({
+          content: "請先輸入開始時間，且結束時間必須晚於開始時間。",
+          flags: 64,
+        });
+      }
+      const minutes = ended ? Math.round((ended - started) / 60000) : null;
       const updatePayload =
         appKey === "deepnight"
           ? {
               accepted_at: started.toISOString(),
-              completed_at: ended.toISOString(),
-              order_finished_at: ended.toISOString(),
+              ...(ended
+                ? {
+                    completed_at: ended.toISOString(),
+                    order_finished_at: ended.toISOString(),
+                  }
+                : {}),
               duration_minutes: minutes,
-              status: "work_pending",
+              status: ended ? "work_pending" : "work_draft",
               note: JSON.stringify({
                 ...meta,
                 startedAt: started.toISOString(),
-                endedAt: ended.toISOString(),
+                endedAt: ended?.toISOString() || null,
                 durationMinutes: minutes,
               }),
             }
           : {
               paid_at: started.toISOString(),
-              order_finished_at: ended.toISOString(),
-              status: "工時待審核",
+              ...(ended ? { order_finished_at: ended.toISOString() } : {}),
+              status: ended ? "工時待審核" : "工時待填",
               admin_note: JSON.stringify({
                 ...meta,
                 startedAt: started.toISOString(),
-                endedAt: ended.toISOString(),
+                endedAt: ended?.toISOString() || null,
                 durationMinutes: minutes,
               }),
             };
@@ -536,10 +590,24 @@ function createWorkReportSystem({
           flags: 64,
         });
       await interaction.reply({
-        content: `申報已送到薪資後台等待審核。服務時長：${Math.floor(minutes / 60)} 小時 ${minutes % 60} 分鐘。`,
+        content: ended
+          ? `結束時間已儲存，申報已送到薪資後台等待審核。總時長：${Math.floor(minutes / 60)} 小時 ${minutes % 60} 分鐘。`
+          : "開始時間已儲存。完成服務後請按「輸入結束時間」。",
         flags: 64,
       });
-      await interaction.message.edit({ components: [] }).catch(() => {});
+      await interaction.message
+        .edit({
+          embeds: [
+            buildUpdatedReportEmbed(
+              interaction.message,
+              started,
+              ended,
+              minutes,
+            ),
+          ],
+          components: ended ? [] : interaction.message.components,
+        })
+        .catch(() => {});
       return true;
     }
     return false;

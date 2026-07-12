@@ -5392,7 +5392,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId === "open_manual_work_report" ||
         interaction.customId.startsWith("manual_work_confirm_") ||
         interaction.customId.startsWith("manual_work_cancel_") ||
-        interaction.customId.startsWith("work_report_time_")
+        interaction.customId.startsWith("work_report_start_") ||
+        interaction.customId.startsWith("work_report_end_")
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
