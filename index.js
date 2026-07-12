@@ -5756,6 +5756,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     // ===== User Select =====
     if (interaction.isUserSelectMenu()) {
+      if (interaction.customId.startsWith("manual_work_staff_")) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
       // ===== ATM 玩家轉帳選人 =====
       // 這個後面要 showModal，所以不能先 deferReply
       if (interaction.customId === "transfer_user_select") {

@@ -7,6 +7,7 @@ const {
   TextInputBuilder,
   TextInputStyle,
   PermissionFlagsBits,
+  UserSelectMenuBuilder,
 } = require("discord.js");
 
 function parseUserIds(value) {
@@ -37,6 +38,7 @@ function createWorkReportSystem({
   staffRoleId,
   salaryTable,
 }) {
+  const pendingManualReports = new Map();
   async function findStaff(discordId) {
     let query = supabase
       .from(staffTable)
@@ -259,7 +261,6 @@ function createWorkReportSystem({
           "老闆（@使用者或 Discord ID）",
           TextInputStyle.Short,
         ],
-        ["manual_staff", "陪陪（可輸入多人）", TextInputStyle.Short],
         ["manual_type", "類型（訂單／打賞）", TextInputStyle.Short],
         ["manual_service", "項目", TextInputStyle.Short],
         ["manual_amount", "金額", TextInputStyle.Short],
@@ -291,36 +292,74 @@ function createWorkReportSystem({
       const customerText =
         interaction.fields.getTextInputValue("manual_customer");
       const customerId = parseUserIds(customerText)[0] || null;
-      const staffIds = parseUserIds(
-        interaction.fields.getTextInputValue("manual_staff"),
-      );
       const amount = Number(
         interaction.fields.getTextInputValue("manual_amount").replace(/,/g, ""),
       );
-      if (!staffIds.length || !Number.isFinite(amount) || amount <= 0)
+      if (!Number.isFinite(amount) || amount <= 0)
         return interaction.reply({
-          content: "陪陪或金額格式不正確。",
+          content: "金額格式不正確。",
           flags: 64,
         });
-      await interaction.deferReply({ flags: 64 });
+      const flowId = `${interaction.user.id}_${Date.now()}`;
+      pendingManualReports.set(flowId, {
+        creatorId: interaction.user.id,
+        sourceKind: "manual",
+        sourceOrderId: `MANUAL-${Date.now()}`,
+        customerId,
+        customerName: customerId ? null : customerText,
+        orderType: interaction.fields.getTextInputValue("manual_type"),
+        serviceName: interaction.fields.getTextInputValue("manual_service"),
+        orderAmount: amount,
+      });
+      setTimeout(() => pendingManualReports.delete(flowId), 15 * 60 * 1000);
+      const menu = new UserSelectMenuBuilder()
+        .setCustomId(`manual_work_staff_${flowId}`)
+        .setPlaceholder("搜尋並選擇陪陪（可複選）")
+        .setMinValues(1)
+        .setMaxValues(25);
+      await interaction.reply({
+        content: "請選擇這筆訂單的陪陪，可直接輸入名稱搜尋並一次選取多人。",
+        components: [new ActionRowBuilder().addComponents(menu)],
+        flags: 64,
+      });
+      return true;
+    }
+
+    if (
+      interaction.isUserSelectMenu() &&
+      interaction.customId.startsWith("manual_work_staff_")
+    ) {
+      const flowId = interaction.customId.replace("manual_work_staff_", "");
+      const pending = pendingManualReports.get(flowId);
+      if (!pending || pending.creatorId !== interaction.user.id) {
+        return interaction.reply({
+          content: "這份報單已逾時，請重新填寫。",
+          flags: 64,
+        });
+      }
+      await interaction.deferUpdate();
       try {
-        await createReports(
-          {
-            sourceKind: "manual",
-            sourceOrderId: `MANUAL-${Date.now()}`,
-            customerId,
-            customerName: customerId ? null : customerText,
-            orderType: interaction.fields.getTextInputValue("manual_type"),
-            serviceName: interaction.fields.getTextInputValue("manual_service"),
-            orderAmount: amount,
-          },
-          staffIds,
-        );
-        await interaction.editReply(
-          `已送出 ${staffIds.length} 位陪陪的填單面板。`,
-        );
+        const invalidIds = [];
+        for (const staffId of interaction.values) {
+          if (!(await findStaff(staffId))) invalidIds.push(staffId);
+        }
+        if (invalidIds.length) {
+          return interaction.editReply({
+            content: `以下使用者不是薪資網陪陪，請重新選擇：${invalidIds.map((id) => `<@${id}>`).join("、")}`,
+            components: interaction.message.components,
+          });
+        }
+        await createReports(pending, interaction.values);
+        pendingManualReports.delete(flowId);
+        await interaction.editReply({
+          content: `已送出 ${interaction.values.length} 位陪陪的填單面板。`,
+          components: [],
+        });
       } catch (error) {
-        await interaction.editReply(`報單失敗：${error.message}`);
+        await interaction.editReply({
+          content: `報單失敗：${error.message}`,
+          components: [],
+        });
       }
       return true;
     }
