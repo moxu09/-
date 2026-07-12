@@ -4693,6 +4693,7 @@ client.once(Events.ClientReady, async () => {
     console.log("✅ Slash Commands 已註冊");
     // ===== 初始化系統 =====
     await dispatchSystem.sendGameOrderPanels();
+    await dispatchSystem.sendWorkReportPanel();
     console.log("✅ 分區下單系統已載入");
     await refreshShop(client);
     console.log("✅ 商店系統已載入");
@@ -5387,6 +5388,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ===== 一般 Button =====
     if (interaction.isButton()) {
+      if (
+        interaction.customId === "open_manual_work_report" ||
+        interaction.customId.startsWith("work_report_time_")
+      ) {
+        return await dispatchSystem.handleDispatchInteraction(interaction);
+      }
       // ===== 派單 / 陪玩狀態按鈕：先處理，避免 interaction 過期 =====
       if (
         interaction.customId === "player_online" ||
