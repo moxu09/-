@@ -1,5 +1,6 @@
 require("dotenv").config();
 const fs = require("fs");
+const { createPrefixCommandHandler } = require("./utils/prefixCommands");
 const {
   startDeepNightSalaryReportCron,
   sendDeepNightDailySalaryReports,
@@ -2148,7 +2149,9 @@ async function handleSlashExtendOrder(interaction) {
 
   const orderNo = interaction.options.getString("訂單編號") || "";
 
-  const extensionText = interaction.options.getString("內容");
+  const extensionText =
+    interaction.options.getString("時長") ||
+    interaction.options.getString("內容");
 
   const amount = interaction.options.getInteger("金額");
 
@@ -5883,6 +5886,39 @@ async function handleSlashCommand(interaction) {
   // ping
   if (interaction.commandName === "ping") {
     return interaction.editReply("Pong!");
+  }
+  if (["單抽", "十抽"].includes(interaction.commandName)) {
+    const count = interaction.commandName === "十抽" ? 10 : 1;
+    try {
+      const result = await performGacha(
+        interaction.user.id,
+        interaction.guild.id,
+        count,
+      );
+      const text = result.results
+        .slice(0, count)
+        .map((item) => `${getRarityEmoji(item.rarity)} ${item.name}`)
+        .join("\n");
+      await sendWalletLog(
+        interaction.user.id,
+        interaction.commandName,
+        -result.cost + result.totalRewardCoins,
+        result.finalCoins,
+        `🎰 ${interaction.commandName}完成`,
+      );
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor("#ff66cc")
+            .setTitle(`🎰 ${interaction.commandName}結果`)
+            .setDescription(
+              `${text}\n\n💰 代幣變動：${-result.cost + result.totalRewardCoins}\n💳 目前餘額：${result.finalCoins}`,
+            ),
+        ],
+      });
+    } catch (error) {
+      return interaction.editReply({ content: `❌ ${error.message}` });
+    }
   }
   if (interaction.commandName === "批量刪除頻道") {
     return await handleBulkDeleteChannelsCommand(interaction);
@@ -10411,8 +10447,15 @@ async function handleError(interaction) {
   }
 }
 // ===== 聊天掉落 =====
+const handlePrefixCommand = createPrefixCommandHandler({
+  commands,
+  dispatchSystem,
+  handleSlashCommand,
+  handleSlashExtendOrder,
+});
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
+  if (await handlePrefixCommand(message)) return;
   // ===== 深夜薪資報告測試 =====
   if (message.content === "!深夜薪資報告測試") {
     if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
