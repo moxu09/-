@@ -8,6 +8,88 @@ function tokenize(input) {
   return tokens;
 }
 
+const COMMAND_CATEGORIES = [
+  {
+    title: "查詢與錢包",
+    commands: [
+      "指令",
+      "ping",
+      "我的排名",
+      "餘額",
+      "隱藏餘額",
+      "交易紀錄",
+      "查詢累積",
+      "我的商品",
+    ],
+  },
+  {
+    title: "金流",
+    commands: ["發錢", "扣錢", "發紅包"],
+  },
+  {
+    title: "訂單與客服",
+    commands: ["加時", "滿意度調查", "批量刪除頻道"],
+  },
+  {
+    title: "優惠券與身分組",
+    commands: ["發送優惠券", "使用優惠券", "給與身份組"],
+  },
+  {
+    title: "VIP 累積",
+    commands: ["調整累積消費", "調整累積儲值"],
+  },
+  {
+    title: "月結",
+    commands: ["設定月結", "月結餘額扣款", "標記月結已繳", "保證金抵扣"],
+  },
+  {
+    title: "商店與扭蛋",
+    commands: [
+      "新增商品",
+      "刪除商品",
+      "新增卡池",
+      "刪除扭蛋",
+      "新增獎勵",
+      "刪除獎勵",
+      "扭蛋列表",
+      "單抽",
+      "十抽",
+    ],
+  },
+];
+
+function getCommandOrder(name) {
+  for (
+    let categoryIndex = 0;
+    categoryIndex < COMMAND_CATEGORIES.length;
+    categoryIndex += 1
+  ) {
+    const commandIndex =
+      COMMAND_CATEGORIES[categoryIndex].commands.indexOf(name);
+    if (commandIndex >= 0) return categoryIndex * 100 + commandIndex;
+  }
+  return 9999;
+}
+
+function sortCommandDefinitions(commands) {
+  return [...commands].sort(
+    (left, right) =>
+      getCommandOrder(left.name) - getCommandOrder(right.name) ||
+      left.name.localeCompare(right.name, "zh-TW"),
+  );
+}
+
+function buildCommandHelp(commands) {
+  const available = new Set(commands.map((command) => command.name));
+  const sections = COMMAND_CATEGORIES.map((category) => {
+    const names = category.commands.filter((name) => available.has(name));
+    return names.length
+      ? `【${category.title}】\n${names.map((name) => `!${name}`).join("　")}`
+      : null;
+  }).filter(Boolean);
+  return `📚 指令分類\n\n${sections.join("\n\n")}\n\n含空格的參數請使用引號，例如：!新增商品 "商品名稱" 100 "商品介紹" 一般商品`;
+}
+
 function stripId(value) {
   return String(value || "").replace(/[^0-9]/g, "");
 }
@@ -251,4 +333,8 @@ function createPrefixCommandHandler({
   };
 }
 
-module.exports = { createPrefixCommandHandler };
+module.exports = {
+  buildCommandHelp,
+  createPrefixCommandHandler,
+  sortCommandDefinitions,
+};
