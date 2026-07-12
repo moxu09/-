@@ -5393,7 +5393,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId.startsWith("manual_work_confirm_") ||
         interaction.customId.startsWith("manual_work_cancel_") ||
         interaction.customId.startsWith("work_report_start_") ||
-        interaction.customId.startsWith("work_report_end_")
+        interaction.customId.startsWith("work_report_end_") ||
+        interaction.customId.startsWith("work_report_save_") ||
+        interaction.customId.startsWith("work_report_close_")
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
@@ -9295,8 +9297,14 @@ async function handleButtonInteraction(interaction) {
         const playerCount = assignedPlayers.length || 1;
         const totalPrice = Number(order.final_price || order.price || 0);
         const splitAmount = Math.floor(totalPrice / playerCount);
+        const { data: workReports } = await supabase
+          .from("play_orders")
+          .select("id")
+          .like("order_id", `WORK-${order.id}-%`)
+          .limit(1);
+        const hasWorkReports = Boolean(workReports?.length);
         // ===== 寫入薪資紀錄：多位陪陪平分 =====
-        if (assignedPlayers.length > 0 && totalPrice > 0) {
+        if (assignedPlayers.length > 0 && totalPrice > 0 && !hasWorkReports) {
           const finishedAt = new Date().toISOString();
           for (const playerId of assignedPlayers) {
             const player = await getStaffByDiscordId(playerId);

@@ -41,23 +41,69 @@ function formatTaipeiDateTime(value) {
   }).format(new Date(value));
 }
 
-function buildUpdatedReportEmbed(message, startedAt, endedAt, minutes) {
+function parseDurationMinutes(value) {
+  const text = String(value || "")
+    .trim()
+    .toLowerCase();
+  if (!text) return null;
+  const hours = text.match(/([\d.]+)\s*(?:小時|小时|hr|hrs|h)/);
+  const minutes = text.match(/([\d.]+)\s*(?:分鐘|分钟|min|mins|m)/);
+  if (hours || minutes) {
+    return Math.round(Number(hours?.[1] || 0) * 60 + Number(minutes?.[1] || 0));
+  }
+  const numeric = Number(text);
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  return Math.round(numeric <= 24 ? numeric * 60 : numeric);
+}
+
+function durationText(minutes) {
+  return `${Math.floor(Number(minutes || 0) / 60)} 小時 ${Number(minutes || 0) % 60} 分鐘`;
+}
+
+function buildUpdatedReportEmbed(message, meta) {
   const embed = EmbedBuilder.from(message.embeds[0]);
-  const timeFields = [
-    { name: "開始時間", value: formatTaipeiDateTime(startedAt), inline: true },
-  ];
-  if (endedAt) {
-    timeFields.push(
-      { name: "結束時間", value: formatTaipeiDateTime(endedAt), inline: true },
-      {
-        name: "總時長",
-        value: `${Math.floor(minutes / 60)} 小時 ${minutes % 60} 分鐘`,
-        inline: true,
-      },
+  const segments = meta.segments || [];
+  const totalMinutes = segments.reduce(
+    (sum, segment) => sum + Number(segment.minutes || 0),
+    0,
+  );
+  const expectedMinutes = Number(meta.expectedDurationMinutes || 0);
+  const segmentLines = segments.map(
+    (segment, index) =>
+      `第 ${index + 1} 段｜${formatTaipeiDateTime(segment.startedAt)} ～ ${formatTaipeiDateTime(segment.endedAt)}｜${durationText(segment.minutes)}`,
+  );
+  if (meta.pendingSegmentStart) {
+    segmentLines.push(
+      `第 ${segments.length + 1} 段｜${formatTaipeiDateTime(meta.pendingSegmentStart)} ～ 尚未結束`,
     );
   }
+  const timeFields = [
+    {
+      name: "預定時長",
+      value: expectedMinutes ? durationText(expectedMinutes) : "未設定",
+      inline: true,
+    },
+    {
+      name: "累積時長",
+      value: durationText(totalMinutes),
+      inline: true,
+    },
+    {
+      name: "報時紀錄",
+      value: segmentLines.join("\n") || "尚未輸入",
+      inline: false,
+    },
+  ];
+  if (expectedMinutes > totalMinutes) {
+    timeFields.push({
+      name: "不足時長",
+      value: durationText(expectedMinutes - totalMinutes),
+      inline: true,
+    });
+  }
   const baseFields = (embed.data.fields || []).filter(
-    (field) => !["開始時間", "結束時間", "總時長"].includes(field.name),
+    (field) =>
+      !["預定時長", "累積時長", "報時紀錄", "不足時長"].includes(field.name),
   );
   return embed.setFields(...baseFields, ...timeFields);
 }
@@ -70,6 +116,7 @@ function createWorkReportSystem({
   manualChannelId,
   staffTable,
   staffRoleId,
+  customerServiceRoleId,
   salaryTable,
 }) {
   const pendingManualReports = new Map();
@@ -118,6 +165,13 @@ function createWorkReportSystem({
               value: `NT$${Number(report.order_amount || 0).toLocaleString("zh-TW")}`,
               inline: true,
             },
+            {
+              name: "預定時長",
+              value: report.expected_duration_minutes
+                ? durationText(report.expected_duration_minutes)
+                : "未設定",
+              inline: true,
+            },
           )
           .setDescription("填寫完成後會自動計算時長，並送到薪資後台等待審核。"),
       ],
@@ -138,7 +192,16 @@ function createWorkReportSystem({
 
   async function createReports(payload, staffIds) {
     const reports = [];
-    for (const staffId of staffIds) {
+    const totalAmount = Number(payload.orderAmount || 0);
+    const baseStaffAmount = Math.floor(
+      totalAmount / Math.max(1, staffIds.length),
+    );
+    const amountRemainder = Math.round(
+      totalAmount - baseStaffAmount * staffIds.length,
+    );
+    for (const [staffIndex, staffId] of staffIds.entries()) {
+      const perStaffAmount =
+        baseStaffAmount + (staffIndex < amountRemainder ? 1 : 0);
       const staff = await findStaff(staffId);
       if (!staff) throw new Error(`找不到陪陪 <@${staffId}> 的員工資料`);
       const staffName =
@@ -154,6 +217,8 @@ function createWorkReportSystem({
         customerName: payload.customerName || null,
         orderType: payload.orderType || "訂單",
         serviceName: payload.serviceName || "陪玩服務",
+        expectedDurationMinutes: Number(payload.expectedDurationMinutes || 0),
+        segments: [],
       };
       const basePayload = {
         order_id: reportKey,
@@ -161,11 +226,11 @@ function createWorkReportSystem({
         staff_name: staffName,
         customer_name: payload.customerName || payload.customerId || "手動報單",
         service_name: payload.serviceName || "陪玩服務",
-        order_amount: Number(payload.orderAmount || 0),
+        order_amount: perStaffAmount,
         staff_salary: 0,
         bonus_amount: 0,
         salary_rate: 0,
-        platform_income: Number(payload.orderAmount || 0),
+        platform_income: perStaffAmount,
         platform_expense: 0,
         is_deleted: true,
       };
@@ -177,8 +242,8 @@ function createWorkReportSystem({
               customer_id: payload.customerId || "manual",
               service: payload.serviceName || "陪玩服務",
               assigned_player: String(staffId),
-              price: Number(payload.orderAmount || 0),
-              final_price: Number(payload.orderAmount || 0),
+              price: perStaffAmount,
+              final_price: perStaffAmount,
               order_type: payload.orderType || "訂單",
               status: "work_draft",
               quote_status: "work_report",
@@ -210,7 +275,8 @@ function createWorkReportSystem({
         customer_name: payload.customerName || null,
         order_type: payload.orderType || "訂單",
         service_name: payload.serviceName || "陪玩服務",
-        order_amount: Number(payload.orderAmount || 0),
+        order_amount: perStaffAmount,
+        expected_duration_minutes: Number(payload.expectedDurationMinutes || 0),
       };
       await sendReportCard(report, staff);
       reports.push(report);
@@ -228,6 +294,9 @@ function createWorkReportSystem({
         orderType: order.order_type || "訂單",
         serviceName: order.service || order.service_name || order.order_item,
         orderAmount: order.final_price || order.price || order.order_amount,
+        expectedDurationMinutes:
+          Number(order.duration_minutes || 0) ||
+          parseDurationMinutes(order.duration_text),
       },
       staffIds,
     );
@@ -276,8 +345,49 @@ function createWorkReportSystem({
   function isStaff(interaction) {
     return (
       interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
-      (staffRoleId && interaction.member?.roles?.cache?.has(staffRoleId))
+      (staffRoleId && interaction.member?.roles?.cache?.has(staffRoleId)) ||
+      (customerServiceRoleId &&
+        interaction.member?.roles?.cache?.has(customerServiceRoleId))
     );
+  }
+
+  async function notifyCustomerAboutSavedOrder(
+    meta,
+    shortageMinutes,
+    fallbackChannel,
+  ) {
+    const content = `${meta.customerId ? `<@${meta.customerId}> ` : `${meta.customerName || "客戶"} `}本次服務尚差 ${durationText(shortageMinutes)}，訂單已存單，請聯繫客服安排後續時間。`;
+    let sent = false;
+    if (meta.sourceKind === "bot_order" && meta.sourceOrderId) {
+      const { data: sourceOrder } = await supabase
+        .from("play_orders")
+        .select("channel_id")
+        .eq("id", meta.sourceOrderId)
+        .maybeSingle();
+      if (sourceOrder?.channel_id) {
+        const orderChannel = await client.channels
+          .fetch(sourceOrder.channel_id)
+          .catch(() => null);
+        if (orderChannel?.isTextBased()) {
+          await orderChannel.send(content).catch(() => {});
+          sent = true;
+        }
+      }
+    }
+    if (!sent && meta.customerId) {
+      const customer = await client.users
+        .fetch(meta.customerId)
+        .catch(() => null);
+      if (customer) {
+        await customer
+          .send(content.replace(`<@${meta.customerId}> `, ""))
+          .catch(() => {});
+        sent = true;
+      }
+    }
+    if (!sent && fallbackChannel?.isTextBased()) {
+      await fallbackChannel.send(content).catch(() => {});
+    }
   }
 
   async function handleInteraction(interaction) {
@@ -302,6 +412,11 @@ function createWorkReportSystem({
         ["manual_type", "類型（訂單／打賞）", TextInputStyle.Short],
         ["manual_service", "項目", TextInputStyle.Short],
         ["manual_amount", "金額", TextInputStyle.Short],
+        [
+          "manual_duration",
+          "時長（例如 2小時 或 90分鐘）",
+          TextInputStyle.Short,
+        ],
       ];
       modal.addComponents(
         ...fields.map(([id, label, style]) =>
@@ -333,9 +448,12 @@ function createWorkReportSystem({
       const amount = Number(
         interaction.fields.getTextInputValue("manual_amount").replace(/,/g, ""),
       );
-      if (!Number.isFinite(amount) || amount <= 0)
+      const expectedDurationMinutes = parseDurationMinutes(
+        interaction.fields.getTextInputValue("manual_duration"),
+      );
+      if (!Number.isFinite(amount) || amount <= 0 || !expectedDurationMinutes)
         return interaction.reply({
-          content: "金額格式不正確。",
+          content: "金額或時長格式不正確。時長可輸入 2小時、1.5 或 90分鐘。",
           flags: 64,
         });
       const flowId = `${interaction.user.id}_${Date.now()}`;
@@ -348,6 +466,7 @@ function createWorkReportSystem({
         orderType: interaction.fields.getTextInputValue("manual_type"),
         serviceName: interaction.fields.getTextInputValue("manual_service"),
         orderAmount: amount,
+        expectedDurationMinutes,
       });
       setTimeout(() => pendingManualReports.delete(flowId), 15 * 60 * 1000);
       const menu = new UserSelectMenuBuilder()
@@ -463,6 +582,93 @@ function createWorkReportSystem({
 
     if (
       interaction.isButton() &&
+      (interaction.customId.startsWith("work_report_save_") ||
+        interaction.customId.startsWith("work_report_close_"))
+    ) {
+      const isClose = interaction.customId.startsWith("work_report_close_");
+      const reportId = interaction.customId.replace(
+        isClose ? "work_report_close_" : "work_report_save_",
+        "",
+      );
+      if (isClose && !isStaff(interaction)) {
+        return interaction.reply({
+          content: "只有管理員或客服可以在時長不足時直接結單。",
+          flags: 64,
+        });
+      }
+      const { data: current } = await supabase
+        .from(salaryTable)
+        .select("*")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (
+        !current ||
+        (!isClose && current.discord_id !== interaction.user.id)
+      ) {
+        return interaction.reply({
+          content: "這筆工時申報無法操作。",
+          flags: 64,
+        });
+      }
+      let meta = {};
+      try {
+        meta = JSON.parse(current.note || current.admin_note || "{}");
+      } catch {}
+      const totalMinutes = (meta.segments || []).reduce(
+        (sum, segment) => sum + Number(segment.minutes || 0),
+        0,
+      );
+      const expectedMinutes = Number(meta.expectedDurationMinutes || 0);
+      const shortageMinutes = Math.max(0, expectedMinutes - totalMinutes);
+      const updatePayload =
+        appKey === "deepnight"
+          ? {
+              status: isClose ? "work_pending" : "work_saved",
+              duration_minutes: totalMinutes,
+              note: JSON.stringify({
+                ...meta,
+                shortageMinutes,
+                closedEarly: isClose,
+              }),
+            }
+          : {
+              status: isClose ? "工時待審核" : "工時已存單",
+              admin_note: JSON.stringify({
+                ...meta,
+                shortageMinutes,
+                closedEarly: isClose,
+              }),
+            };
+      const { error } = await supabase
+        .from(salaryTable)
+        .update(updatePayload)
+        .eq("id", reportId)
+        .in("status", ["work_draft", "工時待填"]);
+      if (error) {
+        return interaction.reply({
+          content: `操作失敗：${error.message}`,
+          flags: 64,
+        });
+      }
+      if (!isClose) {
+        await notifyCustomerAboutSavedOrder(
+          meta,
+          shortageMinutes,
+          interaction.channel,
+        );
+      }
+      await interaction.update({
+        content: isClose
+          ? `已由客服結單，實際工時 ${durationText(totalMinutes)}，已送後台審核。`
+          : `已存單，尚差 ${durationText(shortageMinutes)}，系統已通知客戶。`,
+        embeds: [buildUpdatedReportEmbed(interaction.message, meta)],
+        components: [],
+      });
+      return true;
+    }
+
+    if (
+      interaction.isButton() &&
       (interaction.customId.startsWith("work_report_start_") ||
         interaction.customId.startsWith("work_report_end_"))
     ) {
@@ -533,48 +739,61 @@ function createWorkReportSystem({
       try {
         meta = JSON.parse(current?.note || current?.admin_note || "{}");
       } catch {}
-      const started = isStart
+      const segments = Array.isArray(meta.segments) ? [...meta.segments] : [];
+      const segmentStart = isStart
         ? enteredTime
-        : new Date(
-            meta.startedAt || current?.accepted_at || current?.paid_at || 0,
-          );
-      const ended = isStart ? null : enteredTime;
-      if (!isStart && (!started.getTime() || ended <= started)) {
+        : new Date(meta.pendingSegmentStart || 0);
+      const segmentEnd = isStart ? null : enteredTime;
+      if (!isStart && (!segmentStart.getTime() || segmentEnd <= segmentStart)) {
         return interaction.reply({
           content: "請先輸入開始時間，且結束時間必須晚於開始時間。",
           flags: 64,
         });
       }
-      const minutes = ended ? Math.round((ended - started) / 60000) : null;
+      if (segmentEnd) {
+        segments.push({
+          startedAt: segmentStart.toISOString(),
+          endedAt: segmentEnd.toISOString(),
+          minutes: Math.round((segmentEnd - segmentStart) / 60000),
+        });
+      }
+      const totalMinutes = segments.reduce(
+        (sum, segment) => sum + Number(segment.minutes || 0),
+        0,
+      );
+      const expectedMinutes = Number(meta.expectedDurationMinutes || 0);
+      const isComplete =
+        Boolean(segmentEnd) &&
+        (!expectedMinutes || totalMinutes >= expectedMinutes);
+      const nextMeta = {
+        ...meta,
+        segments,
+        pendingSegmentStart: isStart ? segmentStart.toISOString() : null,
+        startedAt: segments[0]?.startedAt || segmentStart.toISOString(),
+        endedAt: segmentEnd?.toISOString() || null,
+        durationMinutes: totalMinutes,
+      };
       const updatePayload =
         appKey === "deepnight"
           ? {
-              accepted_at: started.toISOString(),
-              ...(ended
+              accepted_at: nextMeta.startedAt,
+              ...(segmentEnd
                 ? {
-                    completed_at: ended.toISOString(),
-                    order_finished_at: ended.toISOString(),
+                    completed_at: segmentEnd.toISOString(),
+                    order_finished_at: segmentEnd.toISOString(),
                   }
                 : {}),
-              duration_minutes: minutes,
-              status: ended ? "work_pending" : "work_draft",
-              note: JSON.stringify({
-                ...meta,
-                startedAt: started.toISOString(),
-                endedAt: ended?.toISOString() || null,
-                durationMinutes: minutes,
-              }),
+              duration_minutes: totalMinutes || null,
+              status: isComplete ? "work_pending" : "work_draft",
+              note: JSON.stringify(nextMeta),
             }
           : {
-              paid_at: started.toISOString(),
-              ...(ended ? { order_finished_at: ended.toISOString() } : {}),
-              status: ended ? "工時待審核" : "工時待填",
-              admin_note: JSON.stringify({
-                ...meta,
-                startedAt: started.toISOString(),
-                endedAt: ended?.toISOString() || null,
-                durationMinutes: minutes,
-              }),
+              paid_at: nextMeta.startedAt,
+              ...(segmentEnd
+                ? { order_finished_at: segmentEnd.toISOString() }
+                : {}),
+              status: isComplete ? "工時待審核" : "工時待填",
+              admin_note: JSON.stringify(nextMeta),
             };
       const { data, error } = await supabase
         .from(salaryTable)
@@ -590,22 +809,44 @@ function createWorkReportSystem({
           flags: 64,
         });
       await interaction.reply({
-        content: ended
-          ? `結束時間已儲存，申報已送到薪資後台等待審核。總時長：${Math.floor(minutes / 60)} 小時 ${minutes % 60} 分鐘。`
-          : "開始時間已儲存。完成服務後請按「輸入結束時間」。",
+        content: !segmentEnd
+          ? `第 ${segments.length + 1} 段開始時間已儲存，完成後請輸入結束時間。`
+          : isComplete
+            ? `本段時間已儲存，累積 ${durationText(totalMinutes)}，已送到薪資後台等待審核。`
+            : `本段時間已儲存，目前累積 ${durationText(totalMinutes)}，尚不足 ${durationText(expectedMinutes - totalMinutes)}。請選擇繼續報時、存單或由客服結單。`,
         flags: 64,
       });
+      const nextComponents = !segmentEnd
+        ? [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`work_report_end_${reportId}`)
+                .setLabel(`輸入第 ${segments.length + 1} 段結束時間`)
+                .setStyle(ButtonStyle.Success),
+            ),
+          ]
+        : isComplete
+          ? []
+          : [
+              new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`work_report_start_${reportId}`)
+                  .setLabel(`第 ${segments.length + 1} 段報時`)
+                  .setStyle(ButtonStyle.Primary),
+                new ButtonBuilder()
+                  .setCustomId(`work_report_save_${reportId}`)
+                  .setLabel("存單")
+                  .setStyle(ButtonStyle.Secondary),
+                new ButtonBuilder()
+                  .setCustomId(`work_report_close_${reportId}`)
+                  .setLabel("結單（客服）")
+                  .setStyle(ButtonStyle.Danger),
+              ),
+            ];
       await interaction.message
         .edit({
-          embeds: [
-            buildUpdatedReportEmbed(
-              interaction.message,
-              started,
-              ended,
-              minutes,
-            ),
-          ],
-          components: ended ? [] : interaction.message.components,
+          embeds: [buildUpdatedReportEmbed(interaction.message, nextMeta)],
+          components: nextComponents,
         })
         .catch(() => {});
       return true;
