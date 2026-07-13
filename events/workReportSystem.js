@@ -676,9 +676,13 @@ function createWorkReportSystem({
         "",
       );
       const pending = pendingManualReports.get(flowId);
-      if (!pending || pending.creatorId !== interaction.user.id) {
+      if (
+        !pending ||
+        (pending.creatorId !== interaction.user.id &&
+          (!isConfirm || !isStaff(interaction)))
+      ) {
         return interaction.reply({
-          content: "這份報單已逾時，請重新填寫。",
+          content: "這份報單已逾時，或你沒有代為送出的權限。",
           flags: 64,
         });
       }

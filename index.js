@@ -8747,9 +8747,12 @@ async function handleButtonInteraction(interaction) {
           components: [],
         });
       }
-      if (interaction.user.id !== tipData.createdBy) {
+      if (
+        interaction.user.id !== tipData.createdBy &&
+        !isAdminOrStaff(interaction)
+      ) {
         return await interaction.editReply({
-          content: "❌ 只有填寫這筆打賞的人可以確認送出",
+          content: "❌ 只有打賞人、客服或管理員可以確認送出",
         });
       }
       const { tipperId, item, amount, paymentMethod } = tipData;
