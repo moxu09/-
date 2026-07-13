@@ -18,6 +18,10 @@ const {
   isStaffInteraction,
 } = require("../events/workReportSystem");
 const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
+const {
+  isCouponInventoryItem,
+  parseVipCouponReward,
+} = require("../utils/vipRewards");
 
 test("service settings support arrays, JSON, and comma-separated values", () => {
   assert.deepEqual(parseAllowedServices(["a", "b"]), ["a", "b"]);
@@ -92,4 +96,24 @@ test("order flows remain active for 24 hours", () => {
 test("manual gifts keep the full amount for every selected staff member", () => {
   assert.deepEqual(buildReportAmounts(1000, 3, false), [334, 333, 333]);
   assert.deepEqual(buildReportAmounts(1000, 3, true), [1000, 1000, 1000]);
+});
+
+test("VIP rewards normalize suffix coupons and never auto-grant gift cards", () => {
+  assert.deepEqual(
+    parseVipCouponReward(
+      "7折券*2,陪玩前綴一週券*2,陪玩冠名7日券*2,500元禮品卡*1",
+    ),
+    [
+      { name: "7折券", count: 2 },
+      { name: "陪玩後綴一週券", count: 2 },
+      { name: "陪玩後綴7日券", count: 2 },
+    ],
+  );
+  assert.deepEqual(parseVipCouponReward("陪玩心動值禮物加成雙倍*1"), [
+    { name: "心動值禮物雙倍券", count: 1 },
+  ]);
+  assert.equal(
+    isCouponInventoryItem({ item_name: "心動值禮物雙倍券" }),
+    true,
+  );
 });

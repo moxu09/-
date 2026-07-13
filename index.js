@@ -21,6 +21,10 @@ const { createAllianceMembership } = require("./utils/allianceMembership");
 const { parseAllowedServices } = require("./utils/services");
 const { ORDER_FLOW_TTL_MS } = require("./utils/orderFlow");
 const {
+  isCouponInventoryItem,
+  parseVipCouponReward,
+} = require("./utils/vipRewards");
+const {
   buildRedPacketShares,
   getPendingRedPacketPrefix,
   getPendingRedPacketUserId,
@@ -2312,32 +2316,6 @@ async function handleSlashExtendOrder(interaction) {
   });
 }
 // ===== VIP 成長制度 =====
-function parseVipCouponReward(rewardCoupon = "") {
-  const text = String(rewardCoupon || "").trim();
-
-  if (!text) {
-    return [];
-  }
-
-  const match = text.match(/(.+?)[*×xX]\s*(\d+)/);
-
-  if (!match) {
-    return [
-      {
-        name: text,
-        count: 1,
-      },
-    ];
-  }
-
-  return [
-    {
-      name: match[1].trim(),
-      count: Number(match[2] || 1),
-    },
-  ];
-}
-
 async function giveVipRole(userId, roleId, guildId = process.env.GUILD_ID) {
   if (!roleId) return;
 
@@ -3242,16 +3220,6 @@ async function removeUserItem(itemId) {
     throw new Error("刪除玩家商品失敗");
   }
 }
-function isCouponInventoryItem(item) {
-  const itemName = String(item?.item_name || "");
-
-  return (
-    item?.item_type === "coupon" ||
-    itemName.includes("折券") ||
-    itemName.includes("優惠券")
-  );
-}
-
 function formatCouponChoiceName(coupon) {
   const itemName = String(coupon?.item_name || "未知優惠券");
 
@@ -8730,8 +8698,7 @@ async function handleButtonInteraction(interaction) {
         });
       }
       const coupons = (await getUserItems(interaction.user.id)).filter(
-        (item) =>
-          item.item_type === "coupon" || item.item_name.includes("折券"),
+        isCouponInventoryItem,
       );
       if (coupons.length === 0) {
         return await interaction.editReply({
@@ -10220,9 +10187,7 @@ async function handleStringSelectInteraction(interaction) {
         );
         const items = await getUserItems(interaction.user.id);
         const coupon = items.find(
-          (item) =>
-            item.id === itemId &&
-            (item.item_type === "coupon" || item.item_name.includes("折券")),
+          (item) => item.id === itemId && isCouponInventoryItem(item),
         );
         if (!coupon) {
           return await interaction.editReply({
