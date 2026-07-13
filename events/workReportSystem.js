@@ -28,6 +28,43 @@ function parseTaipeiDateTime(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+function getTaipeiNowParts() {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date())
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+}
+
+function parseTaipeiWorkTime(value) {
+  const text = String(value || "").trim();
+  if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}$/.test(text)) {
+    return parseTaipeiDateTime(text);
+  }
+  const matched = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (!matched) return null;
+  const hour = Number(matched[1]);
+  const minute = Number(matched[2]);
+  if (hour > 23 || minute > 59) return null;
+  const now = getTaipeiNowParts();
+  return parseTaipeiDateTime(
+    `${now.year}-${now.month}-${now.day} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
+  );
+}
+
+function isGiftOrderType(value) {
+  return /打賞|禮物|礼物|gift|tip/i.test(String(value || ""));
+}
+
 function formatTaipeiDateTime(value) {
   if (!value) return "尚未填寫";
   return new Intl.DateTimeFormat("zh-TW", {
@@ -414,7 +451,7 @@ function createWorkReportSystem({
         ["manual_amount", "金額", TextInputStyle.Short],
         [
           "manual_duration",
-          "時長（例如 2小時 或 90分鐘）",
+          "時長（打賞可留空，例如 2小時或90分鐘）",
           TextInputStyle.Short,
         ],
       ];
@@ -425,7 +462,7 @@ function createWorkReportSystem({
               .setCustomId(id)
               .setLabel(label)
               .setStyle(style)
-              .setRequired(true),
+              .setRequired(id !== "manual_duration"),
           ),
         ),
       );
@@ -448,12 +485,26 @@ function createWorkReportSystem({
       const amount = Number(
         interaction.fields.getTextInputValue("manual_amount").replace(/,/g, ""),
       );
-      const expectedDurationMinutes = parseDurationMinutes(
-        interaction.fields.getTextInputValue("manual_duration"),
-      );
-      if (!Number.isFinite(amount) || amount <= 0 || !expectedDurationMinutes)
+      const orderType = interaction.fields
+        .getTextInputValue("manual_type")
+        .trim();
+      const durationValue = interaction.fields
+        .getTextInputValue("manual_duration")
+        .trim();
+      const expectedDurationMinutes = parseDurationMinutes(durationValue) || 0;
+      if (!Number.isFinite(amount) || amount <= 0)
         return interaction.reply({
-          content: "金額或時長格式不正確。時長可輸入 2小時、1.5 或 90分鐘。",
+          content: "金額格式不正確，請輸入大於 0 的數字。",
+          flags: 64,
+        });
+      if (!isGiftOrderType(orderType) && !expectedDurationMinutes)
+        return interaction.reply({
+          content: "一般訂單需要填寫時長，可輸入 2小時、1.5 或 90分鐘；打賞可留空。",
+          flags: 64,
+        });
+      if (durationValue && !expectedDurationMinutes)
+        return interaction.reply({
+          content: "時長格式不正確，可輸入 2小時、1.5 或 90分鐘。",
           flags: 64,
         });
       const flowId = `${interaction.user.id}_${Date.now()}`;
@@ -463,7 +514,7 @@ function createWorkReportSystem({
         sourceOrderId: `MANUAL-${Date.now()}`,
         customerId,
         customerName: customerId ? null : customerText,
-        orderType: interaction.fields.getTextInputValue("manual_type"),
+        orderType,
         serviceName: interaction.fields.getTextInputValue("manual_service"),
         orderAmount: amount,
         expectedDurationMinutes,
@@ -696,12 +747,14 @@ function createWorkReportSystem({
           `submit_work_report_${isStart ? "start" : "end"}_${reportId}`,
         )
         .setTitle(isStart ? "填寫開始時間" : "填寫結束時間");
+      const now = getTaipeiNowParts();
       modal.addComponents(
         new ActionRowBuilder().addComponents(
           new TextInputBuilder()
             .setCustomId("work_time")
-            .setLabel(`${isStart ? "開始" : "結束"}時間（YYYY-MM-DD HH:mm）`)
-            .setPlaceholder(isStart ? "2026-07-12 20:30" : "2026-07-12 22:00")
+            .setLabel(`${isStart ? "開始" : "結束"}時間（台北當天 HH:mm）`)
+            .setPlaceholder(isStart ? "20:30" : "22:00")
+            .setValue(`${now.hour}:${now.minute}`)
             .setStyle(TextInputStyle.Short)
             .setRequired(true),
         ),
@@ -722,12 +775,12 @@ function createWorkReportSystem({
         isStart ? "submit_work_report_start_" : "submit_work_report_end_",
         "",
       );
-      const enteredTime = parseTaipeiDateTime(
+      const enteredTime = parseTaipeiWorkTime(
         interaction.fields.getTextInputValue("work_time"),
       );
       if (!enteredTime)
         return interaction.reply({
-          content: "時間格式不正確，請使用 YYYY-MM-DD HH:mm。",
+          content: "時間格式不正確，請使用 HH:mm，例如 20:30。",
           flags: 64,
         });
       const { data: current } = await supabase
