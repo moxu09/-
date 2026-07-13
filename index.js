@@ -5399,7 +5399,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     // ===== 一般 Button =====
     if (interaction.isButton()) {
       if (
-        interaction.customId === "open_manual_work_report" ||
+        interaction.customId.startsWith("open_manual_work_report") ||
         interaction.customId.startsWith("manual_work_confirm_") ||
         interaction.customId.startsWith("manual_work_cancel_") ||
         interaction.customId.startsWith("work_report_start_") ||

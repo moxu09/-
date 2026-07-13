@@ -347,36 +347,46 @@ function createWorkReportSystem({
     const recent = await channel.messages
       .fetch({ limit: 20 })
       .catch(() => null);
-    if (
-      recent?.some(
-        (message) =>
-          message.author.id === client.user.id &&
-          message.components.some((row) =>
-            row.components.some(
-              (item) => item.customId === "open_manual_work_report",
-            ),
-          ),
-      )
-    )
-      return;
-    await channel.send({
+    const panelPayload = {
       embeds: [
         new EmbedBuilder()
           .setColor("#f59e0b")
           .setTitle("客服人工報單")
           .setDescription(
-            "人工派單請由客服按下方按鈕，填寫訂單資料後送給陪陪申報工時。",
+            "請依類型選擇報單。訂單需填時長，打賞不需填時長。",
           ),
       ],
       components: [
         new ActionRowBuilder().addComponents(
           new ButtonBuilder()
-            .setCustomId("open_manual_work_report")
-            .setLabel("報單")
+            .setCustomId("open_manual_work_report_order")
+            .setLabel("訂單報單")
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId("open_manual_work_report_gift")
+            .setLabel("打賞報單")
             .setStyle(ButtonStyle.Success),
         ),
       ],
-    });
+    };
+    const existingPanel = recent?.find(
+      (message) =>
+        message.author.id === client.user.id &&
+        message.components.some((row) =>
+          row.components.some((item) =>
+            [
+              "open_manual_work_report",
+              "open_manual_work_report_order",
+              "open_manual_work_report_gift",
+            ].includes(item.customId),
+          ),
+        ),
+    );
+    if (existingPanel) {
+      await existingPanel.edit(panelPayload);
+      return;
+    }
+    await channel.send(panelPayload);
   }
 
   function isStaff(interaction) {
@@ -430,31 +440,39 @@ function createWorkReportSystem({
   async function handleInteraction(interaction) {
     if (
       interaction.isButton() &&
-      interaction.customId === "open_manual_work_report"
+      [
+        "open_manual_work_report",
+        "open_manual_work_report_order",
+        "open_manual_work_report_gift",
+      ].includes(interaction.customId)
     ) {
       if (!isStaff(interaction))
         return interaction.reply({
           content: "只有客服或管理員可以報單。",
           flags: 64,
         });
+      const reportKind = interaction.customId.endsWith("_gift")
+        ? "gift"
+        : "order";
       const modal = new ModalBuilder()
-        .setCustomId("submit_manual_work_report")
-        .setTitle("客服人工報單");
+        .setCustomId(`submit_manual_work_report_${reportKind}`)
+        .setTitle(reportKind === "gift" ? "打賞報單" : "訂單報單");
       const fields = [
         [
           "manual_customer",
           "老闆（@使用者或 Discord ID）",
           TextInputStyle.Short,
         ],
-        ["manual_type", "類型（訂單／打賞）", TextInputStyle.Short],
         ["manual_service", "項目", TextInputStyle.Short],
         ["manual_amount", "金額", TextInputStyle.Short],
-        [
-          "manual_duration",
-          "時長（打賞可留空，例如 2小時或90分鐘）",
-          TextInputStyle.Short,
-        ],
       ];
+      if (reportKind === "order") {
+        fields.push([
+          "manual_duration",
+          "時長（例如 2小時或90分鐘）",
+          TextInputStyle.Short,
+        ]);
+      }
       modal.addComponents(
         ...fields.map(([id, label, style]) =>
           new ActionRowBuilder().addComponents(
@@ -462,7 +480,7 @@ function createWorkReportSystem({
               .setCustomId(id)
               .setLabel(label)
               .setStyle(style)
-              .setRequired(id !== "manual_duration"),
+              .setRequired(true),
           ),
         ),
       );
@@ -472,7 +490,7 @@ function createWorkReportSystem({
 
     if (
       interaction.isModalSubmit() &&
-      interaction.customId === "submit_manual_work_report"
+      interaction.customId.startsWith("submit_manual_work_report")
     ) {
       if (!isStaff(interaction))
         return interaction.reply({
@@ -485,12 +503,19 @@ function createWorkReportSystem({
       const amount = Number(
         interaction.fields.getTextInputValue("manual_amount").replace(/,/g, ""),
       );
-      const orderType = interaction.fields
-        .getTextInputValue("manual_type")
-        .trim();
-      const durationValue = interaction.fields
-        .getTextInputValue("manual_duration")
-        .trim();
+      const isLegacy = interaction.customId === "submit_manual_work_report";
+      const reportKind = interaction.customId.endsWith("_gift")
+        ? "gift"
+        : "order";
+      const orderType = isLegacy
+        ? interaction.fields.getTextInputValue("manual_type").trim()
+        : reportKind === "gift"
+          ? "打賞"
+          : "訂單";
+      const durationValue =
+        isLegacy || reportKind === "order"
+          ? interaction.fields.getTextInputValue("manual_duration").trim()
+          : "";
       const expectedDurationMinutes = parseDurationMinutes(durationValue) || 0;
       if (!Number.isFinite(amount) || amount <= 0)
         return interaction.reply({
