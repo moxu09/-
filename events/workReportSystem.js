@@ -14,6 +14,40 @@ function parseUserIds(value) {
   return [...new Set(String(value || "").match(/\d{17,20}/g) || [])];
 }
 
+function parseRoleIds(...values) {
+  return [
+    ...new Set(
+      values.flatMap((value) =>
+        String(value || "").match(/\d{17,20}/g) || [],
+      ),
+    ),
+  ];
+}
+
+function memberHasRole(member, roleId) {
+  if (!member || !roleId) return false;
+  if (member.roles?.cache?.has) return member.roles.cache.has(roleId);
+  if (Array.isArray(member.roles)) return member.roles.includes(roleId);
+  return false;
+}
+
+function isStaffInteraction(interaction, ...configuredRoleIds) {
+  const roleIds = parseRoleIds(
+    ...configuredRoleIds,
+    process.env.STAFF_ROLE,
+    process.env.STAFF_ROLE_ID,
+    process.env.STAFF_ROLE_IDS,
+    process.env.CUSTOMER_SERVICE_ROLE_ID,
+    process.env.CUSTOMER_SERVICE_ROLE_IDS,
+  );
+  return (
+    interaction.guild?.ownerId === interaction.user.id ||
+    interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
+    interaction.member?.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+    roleIds.some((roleId) => memberHasRole(interaction.member, roleId))
+  );
+}
+
 function parseTaipeiDateTime(value) {
   const text = String(value || "")
     .trim()
@@ -390,12 +424,7 @@ function createWorkReportSystem({
   }
 
   function isStaff(interaction) {
-    return (
-      interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
-      (staffRoleId && interaction.member?.roles?.cache?.has(staffRoleId)) ||
-      (customerServiceRoleId &&
-        interaction.member?.roles?.cache?.has(customerServiceRoleId))
-    );
+    return isStaffInteraction(interaction, staffRoleId, customerServiceRoleId);
   }
 
   async function notifyCustomerAboutSavedOrder(
@@ -935,4 +964,4 @@ function createWorkReportSystem({
   return { handleInteraction, sendForAcceptedOrder, sendManualPanel };
 }
 
-module.exports = { createWorkReportSystem };
+module.exports = { createWorkReportSystem, isStaffInteraction };

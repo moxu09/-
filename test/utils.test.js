@@ -13,6 +13,7 @@ const {
   buildRedPacketShares,
   normalizeRedPacketMode,
 } = require("../utils/redPackets");
+const { isStaffInteraction } = require("../events/workReportSystem");
 
 test("service settings support arrays, JSON, and comma-separated values", () => {
   assert.deepEqual(parseAllowedServices(["a", "b"]), ["a", "b"]);
@@ -47,4 +48,28 @@ test("red packet shares preserve totals and stay near the average", () => {
   }
   assert.equal(normalizeRedPacketMode("average"), "average");
   assert.equal(normalizeRedPacketMode("anything-else"), "random");
+});
+
+test("work report permissions accept cached and raw Discord roles", () => {
+  const roleId = "1501271090918326362";
+  const base = {
+    guild: { ownerId: "owner" },
+    user: { id: "user" },
+    memberPermissions: { has: () => false },
+  };
+  assert.equal(
+    isStaffInteraction(
+      { ...base, member: { roles: { cache: { has: (id) => id === roleId } } } },
+      roleId,
+    ),
+    true,
+  );
+  assert.equal(
+    isStaffInteraction({ ...base, member: { roles: [roleId] } }, roleId),
+    true,
+  );
+  assert.equal(
+    isStaffInteraction({ ...base, member: { roles: [] } }, roleId),
+    false,
+  );
 });

@@ -808,7 +808,10 @@ function setup(supabaseInstance, clientInstance, helpers = {}) {
     guildId: process.env.GUILD_ID || "1501098191813214312",
     manualChannelId: "1525872495331377372",
     staffTable: STAFF_TABLE,
-    staffRoleId: process.env.STAFF_ROLE,
+    staffRoleId:
+      process.env.STAFF_ROLE ||
+      process.env.STAFF_ROLE_ID ||
+      "1501271090918326362",
     customerServiceRoleId:
       process.env.CUSTOMER_SERVICE_ROLE_ID || "1501271090918326362",
     salaryTable: "play_orders",
