@@ -5898,6 +5898,7 @@ function isAdminOrStaff(interaction) {
   const roleIds = [
     process.env.STAFF_ROLE,
     CUSTOMER_SERVICE_ROLE_ID,
+    "1502010574781943989",
     process.env.SUPPORT_ROLE_ID,
     process.env.ADMIN_ROLE,
     process.env.ADMIN_ROLE_ID,

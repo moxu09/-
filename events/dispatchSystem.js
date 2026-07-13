@@ -813,7 +813,14 @@ function setup(supabaseInstance, clientInstance, helpers = {}) {
       process.env.STAFF_ROLE_ID ||
       "1501271090918326362",
     customerServiceRoleId:
-      process.env.CUSTOMER_SERVICE_ROLE_ID || "1501271090918326362",
+      [
+        process.env.CUSTOMER_SERVICE_ROLE_ID,
+        process.env.CUSTOMER_SERVICE_ROLE_IDS,
+        "1501271090918326362",
+        "1502010574781943989",
+      ]
+        .filter(Boolean)
+        .join(","),
     salaryTable: "play_orders",
   });
 }
