@@ -2740,7 +2740,7 @@ async function countOrderVipSpentOnce(order, reason = "付款完成") {
     note: reason,
   });
   await checkAndUpgradeVip(userId, "spend", amount, guildId);
-  await applyVipOrderCashback(lockedOrder, guildId);
+  await applyVipOrderBenefits(lockedOrder, guildId);
 
   console.log("[VIP累積消費] 已計入", {
     order: order.order_no || order.id,
@@ -2844,7 +2844,7 @@ async function checkVvipMonthlyKeep(
     isPassed,
   };
 }
-async function applyVipOrderCashback(order, guildId = process.env.GUILD_ID) {
+async function applyVipOrderBenefits(order, guildId = process.env.GUILD_ID) {
   if (!order) return;
 
   if (order.vip_cashback_given) {
@@ -2853,9 +2853,7 @@ async function applyVipOrderCashback(order, guildId = process.env.GUILD_ID) {
 
   const userId = order.customer_id;
 
-  const amount = Number(order.final_price || order.price || 0);
-
-  if (!userId || !amount || amount <= 0) {
+  if (!userId) {
     return;
   }
 
@@ -2865,7 +2863,7 @@ async function applyVipOrderCashback(order, guildId = process.env.GUILD_ID) {
   );
 
   if (vipError) {
-    console.error("[VIP消費回饋] 讀取會員累積資料失敗", vipError);
+    console.error("[VIP訂單權益] 讀取會員累積資料失敗", vipError);
     return;
   }
 
@@ -2886,32 +2884,6 @@ async function applyVipOrderCashback(order, guildId = process.env.GUILD_ID) {
 
   const playerCount = Number(order.player_count || 1);
 
-  let cashbackRate = Number(level.cashback_rate || 0);
-
-  const multiMin = Number(level.multi_player_min_count || 0);
-
-  const multiRate = Number(level.multi_player_cashback_rate || 0);
-
-  if (multiMin > 0 && playerCount >= multiMin && multiRate > cashbackRate) {
-    cashbackRate = multiRate;
-  }
-
-  const cashback = Math.floor(amount * cashbackRate);
-
-  if (cashback > 0) {
-    const finalCoins = await changeCoins(userId, cashback);
-
-    await sendWalletLog(
-      userId,
-      "VIP消費回饋",
-      cashback,
-      finalCoins,
-      `${level.level_name}｜訂單 ${
-        order.order_no || order.id
-      }｜消費回饋 ${cashback} ASD`,
-    );
-  }
-
   if (vip.level_key === "vip10" && playerCount >= 3) {
     await addUserItem(
       userId,
@@ -2927,7 +2899,7 @@ async function applyVipOrderCashback(order, guildId = process.env.GUILD_ID) {
     .from("play_orders")
     .update({
       vip_cashback_given: true,
-      vip_cashback_amount: cashback,
+      vip_cashback_amount: 0,
       vip_cashback_at: new Date().toISOString(),
     })
     .eq("id", order.id);
