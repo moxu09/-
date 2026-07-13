@@ -18,6 +18,7 @@ const COMMAND_CATEGORIES = [
       "餘額",
       "隱藏餘額",
       "交易紀錄",
+      "會籍查詢",
       "查詢累積",
       "我的商品",
     ],
@@ -224,6 +225,7 @@ function createMessageInteraction(message, commandName, values) {
     channelId: message.channelId,
     client: message.client,
     createdTimestamp: message.createdTimestamp,
+    isPrefixCommand: true,
     deferred: false,
     replied: false,
     options: {

@@ -4436,6 +4436,16 @@ async function handleQuoteNoCoupon(interaction) {
 }
 function getCouponDiscount(itemName = "") {
   const name = String(itemName || "");
+  const fixedAmountMatch = name.match(/(\d+(?:\.\d+)?)\s*ASD\s*折價券/i);
+
+  if (fixedAmountMatch) {
+    const fixedAmount = Number(fixedAmountMatch[1]);
+    return {
+      rate: 1,
+      fixedAmount,
+      label: `折抵 ${fixedAmount.toLocaleString("zh-TW")} ASD`,
+    };
+  }
 
   if (name.includes("95折")) {
     return {
@@ -4649,7 +4659,9 @@ async function handleQuoteSelectCoupon(interaction) {
 
   const discount = getCouponDiscount(coupon.item_name);
 
-  const finalPrice = Math.floor(originalPrice * discount.rate);
+  const finalPrice = discount.fixedAmount
+    ? Math.max(0, originalPrice - discount.fixedAmount)
+    : Math.floor(originalPrice * discount.rate);
 
   const discountAmount = originalPrice - finalPrice;
 
@@ -6444,10 +6456,10 @@ async function confirmTopup(interaction) {
     });
   }
 
-  if (!paymentHelpers.sendWalletLog || !paymentHelpers.checkAndUpgradeVip) {
+  if (!paymentHelpers.sendWalletLog || !paymentHelpers.recordMembershipActivity) {
     return interaction.editReply({
       content:
-        "❌ 儲值函式尚未完整接入，請確認 index.js 的 dispatchSystem.setup 有傳 sendWalletLog 和 checkAndUpgradeVip",
+        "❌ 儲值函式尚未完整接入，請確認會員累積與錢包紀錄設定",
     });
   }
 
@@ -6488,7 +6500,12 @@ async function confirmTopup(interaction) {
     "💳 自動儲值成功"
   );
 
-  await paymentHelpers.checkAndUpgradeVip(userId, "topup", amount);
+  await paymentHelpers.recordMembershipActivity({
+    userId,
+    amount,
+    sourceKey: `dispatch-topup:${interaction.message?.id || interaction.id}:${userId}`,
+    note: `客服 <@${interaction.user.id}> 確認儲值`,
+  });
 
   await paymentHelpers.recordAccountingLedger?.({
     entry_type: "customer_topup",
@@ -8502,7 +8519,9 @@ async function handleServiceSelectCoupon(interaction) {
   }
 
   const discount = getCouponDiscount(coupon.item_name);
-  const finalPrice = Math.floor(originalPrice * discount.rate);
+  const finalPrice = discount.fixedAmount
+    ? Math.max(0, originalPrice - discount.fixedAmount)
+    : Math.floor(originalPrice * discount.rate);
   const discountAmount = originalPrice - finalPrice;
 
   const { error: deleteError } = await supabase

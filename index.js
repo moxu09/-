@@ -17,6 +17,7 @@ process.on("unhandledRejection", (err) => {
 });
 const { createClient } = require("@supabase/supabase-js");
 const { createAccountingLedger } = require("./utils/accounting");
+const { createAllianceMembership } = require("./utils/allianceMembership");
 const { parseAllowedServices } = require("./utils/services");
 const {
   buildRedPacketShares,
@@ -60,6 +61,10 @@ const supabase = createClient(
 const { recordAccountingLedger } = createAccountingLedger(supabase, {
   appKey: process.env.ACCOUNTING_APP_KEY || "deepnight",
 });
+const allianceMembership = createAllianceMembership(
+  supabase,
+  process.env.GUILD_ID,
+);
 const STAFF_TABLE = process.env.STAFF_TABLE || "players";
 
 const SALARY_ORDER_TABLE = process.env.SALARY_ORDER_TABLE || "play_orders";
@@ -156,7 +161,14 @@ dispatchSystem.setup(supabase, client, {
   payOrderByMonthly,
   sendWalletLog,
   getUser,
-  checkAndUpgradeVip,
+  recordMembershipActivity: ({ userId, amount, sourceKey, note }) =>
+    allianceMembership.applyActivity({
+      discordUserId: userId,
+      activityType: "topup",
+      amount,
+      sourceKey,
+      note,
+    }),
   changeCoins,
   recordAccountingLedger,
   startTipFlowInChannel,
@@ -2740,8 +2752,13 @@ async function countOrderVipSpentOnce(order, reason = "付款完成") {
 
   const guildId =
     lockedOrder.guild_id || order.guild_id || process.env.GUILD_ID;
-  await checkAndUpgradeVip(userId, "spend", amount, guildId);
-  await applyVipOrderCashback(lockedOrder, guildId);
+  await allianceMembership.applyActivity({
+    discordUserId: userId,
+    activityType: "spend",
+    amount,
+    sourceKey: `order:${lockedOrder.id}`,
+    note: reason,
+  });
 
   console.log("[VIP累積消費] 已計入", {
     order: order.order_no || order.id,
@@ -4509,6 +4526,9 @@ const commands = sortCommandDefinitions([
         .setRequired(false),
     ),
   new SlashCommandBuilder()
+    .setName("會籍查詢")
+    .setDescription("私密查詢自己的星夜聯盟會籍、積分與晉升進度"),
+  new SlashCommandBuilder()
     .setName("查詢累積")
     .setDescription("公開查詢會員累積儲值與累積消費")
     .addUserOption((option) =>
@@ -6194,12 +6214,13 @@ async function handleSlashCommand(interaction) {
 
     const finalCoins = await changeCoins(target.id, amount);
     await sendWalletLog(target.id, "儲值", amount, finalCoins, "💳 儲值成功");
-    await checkAndUpgradeVip(
-      target.id,
-      "topup",
+    await allianceMembership.applyActivity({
+      discordUserId: target.id,
+      activityType: "topup",
       amount,
-      getGuildId(interaction),
-    );
+      sourceKey: `topup:${getGuildId(interaction)}:${target.id}:${Date.now()}`,
+      note: "客服發錢／儲值",
+    });
     return interaction.editReply({
       content: `✅ 已給予 <@${target.id}> ${amount} 星雨幣`,
     });
@@ -6304,7 +6325,50 @@ async function handleSlashCommand(interaction) {
     }
     return;
   }
-  if (interaction.commandName === "調整累積消費") {
+  if (["調整累積消費", "調整累積儲值"].includes(interaction.commandName)) {
+    if (!isAdminOrStaff(interaction)) return replyError(interaction, "你沒有權限");
+    const target = interaction.options.getUser("玩家");
+    const amount = interaction.options.getInteger("金額");
+    const mode = interaction.options.getString("模式");
+    const isTopup = interaction.commandName === "調整累積儲值";
+    const label = isTopup ? "累積儲值" : "累積消費";
+    const note = interaction.options.getString("備註") || `手動調整${label}`;
+    if (!target) return replyError(interaction, "找不到玩家");
+    if (!Number.isFinite(amount) || (mode === "set" ? amount < 0 : amount <= 0)) {
+      return replyError(interaction, "金額格式錯誤");
+    }
+    try {
+      const result = await allianceMembership.adjustCumulative({
+        discordUserId: target.id,
+        activityType: isTopup ? "topup" : "spend",
+        mode,
+        amount,
+        sourceKey: `staff-adjust:${interaction.id}`,
+        note: `${note}｜操作人員 ${interaction.user.tag}`,
+      });
+      return interaction.editReply({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(isTopup ? "#66ccff" : "#ffd166")
+            .setTitle(`✅ 已調整聯盟${label}`)
+            .setDescription(
+              `會員：<@${target.id}>\n` +
+                `模式：${mode === "add" ? "增加" : mode === "subtract" ? "扣除" : "直接設定"}\n` +
+                `調整金額：${amount.toLocaleString("zh-TW")} ASD\n\n` +
+                `原本${label}：${result.oldTotal.toLocaleString("zh-TW")} ASD\n` +
+                `現在${label}：${result.newTotal.toLocaleString("zh-TW")} ASD\n\n` +
+                `備註：${note}`,
+            )
+            .setFooter({ text: `操作人員：${interaction.user.tag}` })
+            .setTimestamp(),
+        ],
+      });
+    } catch (error) {
+      console.error(`[${interaction.commandName}] 星夜聯盟調整失敗`, error);
+      return replyError(interaction, `更新${label}失敗：${error.message || "未知錯誤"}`);
+    }
+  }
+  if (interaction.commandName === "__舊VIP調整累積消費") {
     if (!isAdminOrStaff(interaction)) {
       return replyError(interaction, "你沒有權限");
     }
@@ -6405,7 +6469,7 @@ async function handleSlashCommand(interaction) {
       ],
     });
   }
-  if (interaction.commandName === "調整累積儲值") {
+  if (interaction.commandName === "__舊VIP調整累積儲值") {
     if (!isAdminOrStaff(interaction)) {
       return replyError(interaction, "你沒有權限");
     }
@@ -6744,50 +6808,32 @@ async function handleSlashCommand(interaction) {
       ],
     });
   }
-  if (interaction.commandName === "查詢累積") {
-    const guildId = getGuildId(interaction);
+  if (
+    interaction.commandName === "會籍查詢" ||
+    interaction.commandName === "查詢累積"
+  ) {
     const target = interaction.options.getUser("玩家") || interaction.user;
-
-    const { data: vipData, error: vipError } = await getUserVipRecord(
-      target.id,
-      guildId,
-    );
-
-    if (vipError) {
-      console.error("[查詢累積] 讀取 user_vips 失敗", vipError);
-      return replyError(interaction, "查詢累積資料失敗");
-    }
-
-    const totalSpent = Number(vipData?.total_spent || 0);
-
-    const totalTopup = Number(vipData?.total_topup || 0);
-
-    const highestSingleTopup = Number(vipData?.highest_single_topup || 0);
-
-    const vipName = vipData?.level_name || vipData?.level_key || "尚未達成 VIP";
-    return interaction.editReply({
+    const summary = await allianceMembership.getMembership(target.id);
+    const payload = {
       embeds: [
         new EmbedBuilder()
-          .setColor("#66ccff")
-          .setTitle("📊 會員累積資訊")
+          .setColor("#facc15")
+          .setTitle("星夜聯盟會籍")
           .setThumbnail(target.displayAvatarURL())
           .setDescription(
-            `會員：<@${target.id}>\n\n` +
-              `💰 **累積消費**\n` +
-              `NT$${totalSpent.toLocaleString("zh-TW")}\n\n` +
-              `💳 **累積儲值**\n` +
-              `NT$${totalTopup.toLocaleString("zh-TW")}\n\n` +
-              `🏦 **最高單筆儲值**\n` +
-              `NT$${highestSingleTopup.toLocaleString("zh-TW")}\n\n` +
-              `🌙 **目前 VIP 等級**\n` +
-              `${vipName}`,
+            `會員：<@${target.id}>\n\n${allianceMembership.formatSummary(summary)}`,
           )
           .setFooter({
             text: `查詢人：${interaction.user.tag}`,
           })
           .setTimestamp(),
       ],
-    });
+    };
+    if (interaction.commandName === "會籍查詢" && interaction.isPrefixCommand) {
+      await interaction.user.send(payload);
+      return interaction.editReply({ content: "會籍資料已私訊給你。" });
+    }
+    return interaction.editReply(payload);
   }
   if (interaction.commandName === "標記月結已繳") {
     if (!isAdminOrStaff(interaction)) {
@@ -8121,14 +8167,8 @@ async function handleButtonInteraction(interaction) {
     // ===== ATM 消費資訊 =====
     if (customId === "consume_info") {
       const userData = await getUser(interaction.user.id);
-      const guildId = getGuildId(interaction);
-      const { data: vipData, error: vipError } = await getUserVipRecord(
-        interaction.user.id,
-        guildId,
-      );
-      if (vipError) {
-        console.error("[ATM 消費資訊] 查詢 VIP 累積資料失敗", vipError);
-      }
+      const { member: membershipData } =
+        await allianceMembership.getMembership(interaction.user.id);
       const now = new Date();
       const taiwanNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
       const year = taiwanNow.getUTCFullYear();
@@ -8145,8 +8185,7 @@ async function handleButtonInteraction(interaction) {
         console.error("[ATM 消費資訊] 查詢儲值紀錄失敗", topupError);
       }
       const logs = topupLogs || [];
-      // 總累積儲值改讀 user_vips，這樣 /調整累積儲值 才會同步顯示
-      const totalTopup = Number(vipData?.total_topup || 0);
+      const totalTopup = Number(membershipData?.qualifying_topup || 0);
       // 本月累積儲值仍然用 wallet_logs 計算
       const monthTopup = logs
         .filter((log) => {
@@ -8177,7 +8216,7 @@ async function handleButtonInteraction(interaction) {
           `**錢包餘額**\n` +
             `${Number(userData.coins || 0).toLocaleString("zh-TW")} ASD\n\n` +
             `**累積消費金額**\n` +
-            `${Number(vipData?.total_spent || 0).toLocaleString(
+            `${Number(membershipData?.qualifying_spend || 0).toLocaleString(
               "zh-TW",
             )} 元\n\n` +
             `**月累積消費金額**\n` +
@@ -10138,7 +10177,14 @@ async function handleStringSelectInteraction(interaction) {
         let discountAmount = 0;
         let finalPrice = order.price;
 
-        if (coupon.item_name.includes("95折")) {
+        const fixedAmountMatch = String(coupon.item_name).match(
+          /(\d+(?:\.\d+)?)\s*ASD\s*折價券/i,
+        );
+
+        if (fixedAmountMatch) {
+          discountAmount = Math.min(order.price, Number(fixedAmountMatch[1]));
+          finalPrice = Math.max(0, order.price - discountAmount);
+        } else if (coupon.item_name.includes("95折")) {
           if (order.price > 500) {
             return await interaction.editReply({
               content: "❌ 這張優惠券只能用於 500 元內商品",
