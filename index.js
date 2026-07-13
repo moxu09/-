@@ -4530,6 +4530,9 @@ const commands = sortCommandDefinitions([
     .setName("會籍查詢")
     .setDescription("私密查詢自己的星夜聯盟會籍、積分與晉升進度"),
   new SlashCommandBuilder()
+    .setName("會員卡")
+    .setDescription("私密查看自己的星夜聯盟會員等級與會員卡"),
+  new SlashCommandBuilder()
     .setName("查詢累積")
     .setDescription("公開查詢會員累積儲值與累積消費")
     .addUserOption((option) =>
@@ -6812,26 +6815,43 @@ async function handleSlashCommand(interaction) {
   }
   if (
     interaction.commandName === "會籍查詢" ||
+    interaction.commandName === "會員卡" ||
     interaction.commandName === "查詢累積"
   ) {
-    const target = interaction.options.getUser("玩家") || interaction.user;
+    const target =
+      interaction.commandName === "查詢累積"
+        ? interaction.options.getUser("玩家") || interaction.user
+        : interaction.user;
     const summary = await allianceMembership.getMembership(target.id);
+    const cardImageUrl = String(
+      summary.currentTier?.card_image_url || "",
+    ).trim();
+    const embed = new EmbedBuilder()
+      .setColor("#facc15")
+      .setTitle("星夜聯盟會員卡")
+      .setThumbnail(target.displayAvatarURL())
+      .setDescription(
+        `會員：<@${target.id}>\n\n${allianceMembership.formatSummary(summary)}`,
+      )
+      .setFooter({
+        text: `查詢人：${interaction.user.tag}`,
+      })
+      .setTimestamp();
+    if (/^https?:\/\//i.test(cardImageUrl)) {
+      embed.setImage(cardImageUrl);
+    } else {
+      embed.addFields({
+        name: "會員卡圖片",
+        value: "此會員等級的專屬卡圖尚未上傳。",
+      });
+    }
     const payload = {
-      embeds: [
-        new EmbedBuilder()
-          .setColor("#facc15")
-          .setTitle("星夜聯盟會籍")
-          .setThumbnail(target.displayAvatarURL())
-          .setDescription(
-            `會員：<@${target.id}>\n\n${allianceMembership.formatSummary(summary)}`,
-          )
-          .setFooter({
-            text: `查詢人：${interaction.user.tag}`,
-          })
-          .setTimestamp(),
-      ],
+      embeds: [embed],
     };
-    if (interaction.commandName === "會籍查詢" && interaction.isPrefixCommand) {
+    if (
+      ["會籍查詢", "會員卡"].includes(interaction.commandName) &&
+      interaction.isPrefixCommand
+    ) {
       await interaction.user.send(payload);
       return interaction.editReply({ content: "會籍資料已私訊給你。" });
     }
