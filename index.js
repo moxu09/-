@@ -170,6 +170,7 @@ dispatchSystem.setup(supabase, client, {
       sourceKey,
       note,
     }),
+  checkAndUpgradeVip,
   changeCoins,
   recordAccountingLedger,
   startTipFlowInChannel,
@@ -2760,6 +2761,8 @@ async function countOrderVipSpentOnce(order, reason = "付款完成") {
     sourceKey: `order:${lockedOrder.id}`,
     note: reason,
   });
+  await checkAndUpgradeVip(userId, "spend", amount, guildId);
+  await applyVipOrderCashback(lockedOrder, guildId);
 
   console.log("[VIP累積消費] 已計入", {
     order: order.order_no || order.id,
@@ -4709,6 +4712,38 @@ function startMonthlyBillScheduler() {
 
   setInterval(runCheck, 60 * 1000);
 }
+
+async function processLegacyVipBackfillQueue() {
+  const guildId = process.env.GUILD_ID;
+  const { data: queued, error } = await supabase
+    .from("legacy_vip_backfill_queue")
+    .select("guild_id,user_id")
+    .eq("guild_id", guildId)
+    .is("processed_at", null);
+
+  if (error) throw error;
+  for (const entry of queued || []) {
+    try {
+      await checkAndUpgradeVip(entry.user_id, "spend", 0, guildId);
+      await supabase
+        .from("legacy_vip_backfill_queue")
+        .update({ processed_at: new Date().toISOString(), last_error: null })
+        .eq("guild_id", guildId)
+        .eq("user_id", entry.user_id);
+    } catch (queueError) {
+      await supabase
+        .from("legacy_vip_backfill_queue")
+        .update({ last_error: String(queueError?.message || queueError) })
+        .eq("guild_id", guildId)
+        .eq("user_id", entry.user_id);
+      console.error("[舊 VIP 回填獎勵失敗]", entry.user_id, queueError);
+    }
+  }
+
+  if (queued?.length) {
+    console.log(`[舊 VIP 回填] 已檢查 ${queued.length} 位會員`);
+  }
+}
 client.once(Events.ClientReady, async () => {
   try {
     console.log("🚀 星雨系統啟動中...");
@@ -4742,6 +4777,7 @@ client.once(Events.ClientReady, async () => {
     await sendPrivateRoomPanel(client);
     console.log("✅ 私人房間系統已載入");
     console.log("🌧️ 星雨機器人已成功上線");
+    await processLegacyVipBackfillQueue();
     console.log("ℹ️ rainbot 舊版每日陪玩總結已停用，保留 salary 端每日報告。");
     startMonthlyBillScheduler();
     // ===== 深夜薪資每日報告 =====
@@ -6226,6 +6262,12 @@ async function handleSlashCommand(interaction) {
       sourceKey: `topup:${getGuildId(interaction)}:${target.id}:${Date.now()}`,
       note: "客服發錢／儲值",
     });
+    await checkAndUpgradeVip(
+      target.id,
+      "topup",
+      amount,
+      getGuildId(interaction),
+    );
     return interaction.editReply({
       content: `✅ 已給予 <@${target.id}> ${amount} 星雨幣`,
     });
