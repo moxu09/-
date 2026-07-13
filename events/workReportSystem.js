@@ -100,6 +100,18 @@ function isGiftOrderType(value) {
   return /打賞|禮物|礼物|gift|tip/i.test(String(value || ""));
 }
 
+function buildReportAmounts(totalAmount, staffCount, isGift) {
+  const count = Math.max(1, Number(staffCount || 0));
+  const total = Number(totalAmount || 0);
+  if (isGift) return Array(count).fill(total);
+  const baseAmount = Math.floor(total / count);
+  const remainder = Math.round(total - baseAmount * count);
+  return Array.from(
+    { length: count },
+    (_, index) => baseAmount + (index < remainder ? 1 : 0),
+  );
+}
+
 function formatTaipeiDateTime(value) {
   if (!value) return "尚未填寫";
   return new Intl.DateTimeFormat("zh-TW", {
@@ -212,68 +224,82 @@ function createWorkReportSystem({
     if (!channel?.isTextBased())
       throw new Error(`找不到陪陪 <@${report.staff_id}> 的填單頻道`);
 
+    const isGift = isGiftOrderType(report.order_type);
+    const fields = [
+      {
+        name: "老闆",
+        value: report.customer_id
+          ? `<@${report.customer_id}>`
+          : report.customer_name || "未填寫",
+        inline: true,
+      },
+      { name: "類型", value: report.order_type || "訂單", inline: true },
+      {
+        name: "項目",
+        value: report.service_name || "陪玩服務",
+        inline: true,
+      },
+      {
+        name: "金額",
+        value: `NT$${Number(report.order_amount || 0).toLocaleString("zh-TW")}`,
+        inline: true,
+      },
+    ];
+    if (!isGift) {
+      fields.push(
+        {
+          name: "預定時長",
+          value: report.expected_duration_minutes
+            ? durationText(report.expected_duration_minutes)
+            : "未設定",
+          inline: true,
+        },
+      );
+    }
+    const components = isGift
+      ? []
+      : [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`work_report_start_${report.id}`)
+              .setLabel("輸入開始時間")
+              .setStyle(ButtonStyle.Primary),
+            new ButtonBuilder()
+              .setCustomId(`work_report_end_${report.id}`)
+              .setLabel("輸入結束時間")
+              .setStyle(ButtonStyle.Success),
+          ),
+        ];
     await channel.send({
-      content: `<@${report.staff_id}> 請填寫這筆服務的開始與結束時間。`,
+      content: isGift
+        ? `<@${report.staff_id}> 你有一筆打賞紀錄，已直接送到薪資後台等待審核。`
+        : `<@${report.staff_id}> 請填寫這筆服務的開始與結束時間。`,
       embeds: [
         new EmbedBuilder()
-          .setColor("#38bdf8")
-          .setTitle("訂單工時申報")
-          .addFields(
-            {
-              name: "老闆",
-              value: report.customer_id
-                ? `<@${report.customer_id}>`
-                : report.customer_name || "未填寫",
-              inline: true,
-            },
-            { name: "類型", value: report.order_type || "訂單", inline: true },
-            {
-              name: "項目",
-              value: report.service_name || "陪玩服務",
-              inline: true,
-            },
-            {
-              name: "金額",
-              value: `NT$${Number(report.order_amount || 0).toLocaleString("zh-TW")}`,
-              inline: true,
-            },
-            {
-              name: "預定時長",
-              value: report.expected_duration_minutes
-                ? durationText(report.expected_duration_minutes)
-                : "未設定",
-              inline: true,
-            },
-          )
-          .setDescription("填寫完成後會自動計算時長，並送到薪資後台等待審核。"),
+          .setColor(isGift ? "#f59e0b" : "#38bdf8")
+          .setTitle(isGift ? "打賞申報" : "訂單工時申報")
+          .addFields(...fields)
+          .setDescription(
+            isGift
+              ? "打賞不需填寫時間，客服送出後已同步進入薪資後台審核。"
+              : "填寫完成後會自動計算時長，並送到薪資後台等待審核。",
+          ),
       ],
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`work_report_start_${report.id}`)
-            .setLabel("輸入開始時間")
-            .setStyle(ButtonStyle.Primary),
-          new ButtonBuilder()
-            .setCustomId(`work_report_end_${report.id}`)
-            .setLabel("輸入結束時間")
-            .setStyle(ButtonStyle.Success),
-        ),
-      ],
+      components,
     });
   }
 
   async function createReports(payload, staffIds) {
     const reports = [];
     const totalAmount = Number(payload.orderAmount || 0);
-    const baseStaffAmount = Math.floor(
-      totalAmount / Math.max(1, staffIds.length),
-    );
-    const amountRemainder = Math.round(
-      totalAmount - baseStaffAmount * staffIds.length,
+    const isGift = isGiftOrderType(payload.orderType);
+    const reportAmounts = buildReportAmounts(
+      totalAmount,
+      staffIds.length,
+      isGift,
     );
     for (const [staffIndex, staffId] of staffIds.entries()) {
-      const perStaffAmount =
-        baseStaffAmount + (staffIndex < amountRemainder ? 1 : 0);
+      const perStaffAmount = reportAmounts[staffIndex];
       const staff = await findStaff(staffId);
       if (!staff) throw new Error(`找不到陪陪 <@${staffId}> 的員工資料`);
       const staffName =
@@ -317,14 +343,14 @@ function createWorkReportSystem({
               price: perStaffAmount,
               final_price: perStaffAmount,
               order_type: payload.orderType || "訂單",
-              status: "work_draft",
+              status: isGift ? "work_pending" : "work_draft",
               quote_status: "work_report",
               note: JSON.stringify(reportMeta),
               guild_id: guildId,
             }
           : {
               ...basePayload,
-              status: "工時待填",
+              status: isGift ? "工時待審核" : "工時待填",
               admin_note: JSON.stringify(reportMeta),
             };
       const { data: existing } = await supabase
@@ -674,7 +700,9 @@ function createWorkReportSystem({
         await createReports(pending, pending.selectedStaffIds);
         pendingManualReports.delete(flowId);
         await interaction.editReply({
-          content: `已送出 ${pending.selectedStaffIds.length} 位陪陪的填單面板。`,
+          content: isGiftOrderType(pending.orderType)
+            ? `已送出 ${pending.selectedStaffIds.length} 位陪陪的完整打賞紀錄，每位金額 NT$${Number(pending.orderAmount).toLocaleString("zh-TW")}，並直接送到後台審核。`
+            : `已送出 ${pending.selectedStaffIds.length} 位陪陪的填單面板。`,
           components: [],
         });
       } catch (error) {
@@ -965,4 +993,8 @@ function createWorkReportSystem({
   return { handleInteraction, sendForAcceptedOrder, sendManualPanel };
 }
 
-module.exports = { createWorkReportSystem, isStaffInteraction };
+module.exports = {
+  buildReportAmounts,
+  createWorkReportSystem,
+  isStaffInteraction,
+};

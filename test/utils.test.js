@@ -13,7 +13,10 @@ const {
   buildRedPacketShares,
   normalizeRedPacketMode,
 } = require("../utils/redPackets");
-const { isStaffInteraction } = require("../events/workReportSystem");
+const {
+  buildReportAmounts,
+  isStaffInteraction,
+} = require("../events/workReportSystem");
 const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 
 test("service settings support arrays, JSON, and comma-separated values", () => {
@@ -84,4 +87,9 @@ test("work report permissions accept cached and raw Discord roles", () => {
 
 test("order flows remain active for 24 hours", () => {
   assert.equal(ORDER_FLOW_TTL_MS, 24 * 60 * 60 * 1000);
+});
+
+test("manual gifts keep the full amount for every selected staff member", () => {
+  assert.deepEqual(buildReportAmounts(1000, 3, false), [334, 333, 333]);
+  assert.deepEqual(buildReportAmounts(1000, 3, true), [1000, 1000, 1000]);
 });
