@@ -19,6 +19,7 @@ const { createClient } = require("@supabase/supabase-js");
 const { createAccountingLedger } = require("./utils/accounting");
 const { createAllianceMembership } = require("./utils/allianceMembership");
 const { parseAllowedServices } = require("./utils/services");
+const { ORDER_FLOW_TTL_MS } = require("./utils/orderFlow");
 const {
   buildRedPacketShares,
   getPendingRedPacketPrefix,
@@ -580,7 +581,7 @@ async function startTipFlowInChannel(channel, user) {
 
       pendingTips.delete(tipId);
     },
-    30 * 60 * 1000,
+    ORDER_FLOW_TTL_MS,
   );
 
   await sendTipGiftSelect(channel, tipId);
@@ -5714,7 +5715,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           () => {
             pendingTips.delete(tipDraftId);
           },
-          30 * 60 * 1000,
+          ORDER_FLOW_TTL_MS,
         );
 
         const modal = new ModalBuilder()
@@ -9998,7 +9999,7 @@ async function handleStringSelectInteraction(interaction) {
 
               pendingTips.delete(tipId);
             },
-            30 * 60 * 1000,
+            ORDER_FLOW_TTL_MS,
           );
           await sendTipGiftSelect(orderChannel, tipId);
           return await interaction.editReply({

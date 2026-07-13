@@ -9,6 +9,7 @@ const {
   PermissionFlagsBits,
   UserSelectMenuBuilder,
 } = require("discord.js");
+const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 
 function parseUserIds(value) {
   return [...new Set(String(value || "").match(/\d{17,20}/g) || [])];
@@ -573,7 +574,7 @@ function createWorkReportSystem({
         orderAmount: amount,
         expectedDurationMinutes,
       });
-      setTimeout(() => pendingManualReports.delete(flowId), 15 * 60 * 1000);
+      setTimeout(() => pendingManualReports.delete(flowId), ORDER_FLOW_TTL_MS);
       const menu = new UserSelectMenuBuilder()
         .setCustomId(`manual_work_staff_${flowId}`)
         .setPlaceholder("搜尋並選擇陪陪（可複選）")

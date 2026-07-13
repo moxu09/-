@@ -14,6 +14,7 @@ const {
   normalizeRedPacketMode,
 } = require("../utils/redPackets");
 const { isStaffInteraction } = require("../events/workReportSystem");
+const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 
 test("service settings support arrays, JSON, and comma-separated values", () => {
   assert.deepEqual(parseAllowedServices(["a", "b"]), ["a", "b"]);
@@ -79,4 +80,8 @@ test("work report permissions accept cached and raw Discord roles", () => {
     isStaffInteraction({ ...base, member: { roles: [] } }, roleId),
     false,
   );
+});
+
+test("order flows remain active for 24 hours", () => {
+  assert.equal(ORDER_FLOW_TTL_MS, 24 * 60 * 60 * 1000);
 });
