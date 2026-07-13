@@ -18,9 +18,7 @@ function parseUserIds(value) {
 function parseRoleIds(...values) {
   return [
     ...new Set(
-      values.flatMap((value) =>
-        String(value || "").match(/\d{17,20}/g) || [],
-      ),
+      values.flatMap((value) => String(value || "").match(/\d{17,20}/g) || []),
     ),
   ];
 }
@@ -144,6 +142,11 @@ function durationText(minutes) {
   return `${Math.floor(Number(minutes || 0) / 60)} 小時 ${Number(minutes || 0) % 60} 分鐘`;
 }
 
+function parseMoney(value) {
+  const amount = Number(String(value || "").replace(/[,，$NT\s]/gi, ""));
+  return Number.isFinite(amount) && amount > 0 ? amount : null;
+}
+
 function buildUpdatedReportEmbed(message, meta) {
   const embed = EmbedBuilder.from(message.embeds[0]);
   const segments = meta.segments || [];
@@ -185,10 +188,19 @@ function buildUpdatedReportEmbed(message, meta) {
       inline: true,
     });
   }
-  const baseFields = (embed.data.fields || []).filter(
-    (field) =>
-      !["預定時長", "累積時長", "報時紀錄", "不足時長"].includes(field.name),
-  );
+  const baseFields = (embed.data.fields || [])
+    .filter(
+      (field) =>
+        !["預定時長", "累積時長", "報時紀錄", "不足時長"].includes(field.name),
+    )
+    .map((field) =>
+      field.name === "金額" && Number(meta.orderAmount) > 0
+        ? {
+            ...field,
+            value: `NT$${Number(meta.orderAmount).toLocaleString("zh-TW")}`,
+          }
+        : field,
+    );
   return embed.setFields(...baseFields, ...timeFields);
 }
 
@@ -246,30 +258,35 @@ function createWorkReportSystem({
       },
     ];
     if (!isGift) {
-      fields.push(
-        {
-          name: "預定時長",
-          value: report.expected_duration_minutes
-            ? durationText(report.expected_duration_minutes)
-            : "未設定",
-          inline: true,
-        },
-      );
+      fields.push({
+        name: "預定時長",
+        value: report.expected_duration_minutes
+          ? durationText(report.expected_duration_minutes)
+          : "未設定",
+        inline: true,
+      });
     }
-    const components = isGift
-      ? []
-      : [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`work_report_start_${report.id}`)
-              .setLabel("輸入開始時間")
-              .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-              .setCustomId(`work_report_end_${report.id}`)
-              .setLabel("輸入結束時間")
-              .setStyle(ButtonStyle.Success),
-          ),
-        ];
+    const editButton = new ButtonBuilder()
+      .setCustomId(`work_report_edit_${report.id}`)
+      .setLabel("改時長及金額")
+      .setStyle(ButtonStyle.Secondary);
+    const components = [
+      new ActionRowBuilder().addComponents(
+        ...(isGift
+          ? []
+          : [
+              new ButtonBuilder()
+                .setCustomId(`work_report_start_${report.id}`)
+                .setLabel("輸入開始時間")
+                .setStyle(ButtonStyle.Primary),
+              new ButtonBuilder()
+                .setCustomId(`work_report_end_${report.id}`)
+                .setLabel("輸入結束時間")
+                .setStyle(ButtonStyle.Success),
+            ]),
+        editButton,
+      ),
+    ];
     await channel.send({
       content: isGift
         ? `<@${report.staff_id}> 你有一筆打賞紀錄，已直接送到薪資後台等待審核。`
@@ -413,9 +430,7 @@ function createWorkReportSystem({
         new EmbedBuilder()
           .setColor("#f59e0b")
           .setTitle("客服人工報單")
-          .setDescription(
-            "請依類型選擇報單。訂單需填時長，打賞不需填時長。",
-          ),
+          .setDescription("請依類型選擇報單。訂單需填時長，打賞不需填時長。"),
       ],
       components: [
         new ActionRowBuilder().addComponents(
@@ -545,6 +560,181 @@ function createWorkReportSystem({
     }
 
     if (
+      interaction.isButton() &&
+      interaction.customId.startsWith("work_report_edit_")
+    ) {
+      if (!isStaff(interaction)) {
+        return interaction.reply({
+          content: "只有客服或管理員可以修改送審單據。",
+          flags: 64,
+        });
+      }
+      const reportId = interaction.customId.replace("work_report_edit_", "");
+      const { data: report, error } = await supabase
+        .from(salaryTable)
+        .select("*")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (error || !report) {
+        return interaction.reply({
+          content: "找不到這筆申報。",
+          flags: 64,
+        });
+      }
+      if (!["work_pending", "工時待審核"].includes(report.status)) {
+        return interaction.reply({
+          content: "這筆申報尚未送到後台待審核，暫時不能修改。",
+          flags: 64,
+        });
+      }
+      let meta = {};
+      try {
+        meta = JSON.parse(report.note || report.admin_note || "{}");
+      } catch {}
+      const isGift = isGiftOrderType(meta.orderType || report.order_type);
+      const currentDuration = Number(
+        meta.durationMinutes || report.duration_minutes || 0,
+      );
+      const modal = new ModalBuilder()
+        .setCustomId(`submit_work_report_edit_${reportId}`)
+        .setTitle(isGift ? "修改打賞金額" : "修改時長及金額");
+      if (!isGift) {
+        modal.addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("edit_duration")
+              .setLabel("實際時長（例如 2小時或90分鐘）")
+              .setValue(currentDuration ? String(currentDuration) : "")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true),
+          ),
+        );
+      }
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId("edit_amount")
+            .setLabel("金額")
+            .setValue(String(report.order_amount || 0))
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true),
+        ),
+      );
+      await interaction.showModal(modal);
+      return true;
+    }
+
+    if (
+      interaction.isModalSubmit() &&
+      interaction.customId.startsWith("submit_work_report_edit_")
+    ) {
+      if (!isStaff(interaction)) {
+        return interaction.reply({
+          content: "只有客服或管理員可以修改送審單據。",
+          flags: 64,
+        });
+      }
+      const reportId = interaction.customId.replace(
+        "submit_work_report_edit_",
+        "",
+      );
+      const { data: current, error: fetchError } = await supabase
+        .from(salaryTable)
+        .select("*")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (
+        fetchError ||
+        !current ||
+        !["work_pending", "工時待審核"].includes(current.status)
+      ) {
+        return interaction.reply({
+          content: "這筆申報已不在待審核狀態，無法修改。",
+          flags: 64,
+        });
+      }
+      let meta = {};
+      try {
+        meta = JSON.parse(current.note || current.admin_note || "{}");
+      } catch {}
+      const isGift = isGiftOrderType(meta.orderType || current.order_type);
+      const amount = parseMoney(
+        interaction.fields.getTextInputValue("edit_amount"),
+      );
+      const durationMinutes = isGift
+        ? Number(meta.durationMinutes || current.duration_minutes || 0)
+        : parseDurationMinutes(
+            interaction.fields.getTextInputValue("edit_duration"),
+          );
+      if (!amount) {
+        return interaction.reply({
+          content: "金額格式不正確，請輸入大於 0 的數字。",
+          flags: 64,
+        });
+      }
+      if (!isGift && !durationMinutes) {
+        return interaction.reply({
+          content: "時長格式不正確，可輸入 2小時、1.5 或 90分鐘。",
+          flags: 64,
+        });
+      }
+      const nextMeta = {
+        ...meta,
+        orderAmount: amount,
+        ...(!isGift
+          ? {
+              durationMinutes,
+              expectedDurationMinutes: durationMinutes,
+            }
+          : {}),
+        lastEditedBy: interaction.user.id,
+        lastEditedAt: new Date().toISOString(),
+      };
+      const updatePayload =
+        appKey === "deepnight"
+          ? {
+              order_amount: amount,
+              price: amount,
+              final_price: amount,
+              platform_income: amount,
+              ...(!isGift ? { duration_minutes: durationMinutes } : {}),
+              note: JSON.stringify(nextMeta),
+            }
+          : {
+              order_amount: amount,
+              platform_income: amount,
+              admin_note: JSON.stringify(nextMeta),
+            };
+      const { data: updated, error: updateError } = await supabase
+        .from(salaryTable)
+        .update(updatePayload)
+        .eq("id", reportId)
+        .in("status", ["work_pending", "工時待審核"])
+        .select()
+        .maybeSingle();
+      if (updateError || !updated) {
+        return interaction.reply({
+          content: `修改失敗：${updateError?.message || "單據狀態已變更"}`,
+          flags: 64,
+        });
+      }
+      await interaction.reply({
+        content: isGift
+          ? `打賞金額已更新為 NT$${amount.toLocaleString("zh-TW")}，後台審核單已同步。`
+          : `已更新為 ${durationText(durationMinutes)}、NT$${amount.toLocaleString("zh-TW")}，後台審核單已同步。`,
+        flags: 64,
+      });
+      if (interaction.message) {
+        await interaction.message
+          .edit({
+            embeds: [buildUpdatedReportEmbed(interaction.message, nextMeta)],
+          })
+          .catch(() => {});
+      }
+      return true;
+    }
+
+    if (
       interaction.isModalSubmit() &&
       interaction.customId.startsWith("submit_manual_work_report")
     ) {
@@ -580,7 +770,8 @@ function createWorkReportSystem({
         });
       if (!isGiftOrderType(orderType) && !expectedDurationMinutes)
         return interaction.reply({
-          content: "一般訂單需要填寫時長，可輸入 2小時、1.5 或 90分鐘；打賞可留空。",
+          content:
+            "一般訂單需要填寫時長，可輸入 2小時、1.5 或 90分鐘；打賞可留空。",
           flags: 64,
         });
       if (durationValue && !expectedDurationMinutes)
@@ -1001,4 +1192,6 @@ module.exports = {
   buildReportAmounts,
   createWorkReportSystem,
   isStaffInteraction,
+  parseDurationMinutes,
+  parseMoney,
 };

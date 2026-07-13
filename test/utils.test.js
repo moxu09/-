@@ -16,6 +16,8 @@ const {
 const {
   buildReportAmounts,
   isStaffInteraction,
+  parseDurationMinutes,
+  parseMoney,
 } = require("../events/workReportSystem");
 const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 const {
@@ -49,7 +51,7 @@ test("red packet shares preserve totals and stay near the average", () => {
       assert.equal(shares.length, 10);
       assert.equal(
         shares.reduce((sum, amount) => sum + amount, 0),
-        1000
+        1000,
       );
       assert.ok(shares.every((amount) => amount >= 80 && amount <= 120));
     }
@@ -98,6 +100,14 @@ test("manual gifts keep the full amount for every selected staff member", () => 
   assert.deepEqual(buildReportAmounts(1000, 3, true), [1000, 1000, 1000]);
 });
 
+test("work report edits parse duration and formatted money", () => {
+  assert.equal(parseDurationMinutes("2小時30分鐘"), 150);
+  assert.equal(parseDurationMinutes("1.5"), 90);
+  assert.equal(parseDurationMinutes("90分鐘"), 90);
+  assert.equal(parseMoney("NT$ 12,500"), 12500);
+  assert.equal(parseMoney("0"), null);
+});
+
 test("VIP rewards normalize suffix coupons and never auto-grant gift cards", () => {
   assert.deepEqual(
     parseVipCouponReward(
@@ -112,8 +122,5 @@ test("VIP rewards normalize suffix coupons and never auto-grant gift cards", () 
   assert.deepEqual(parseVipCouponReward("陪玩心動值禮物加成雙倍*1"), [
     { name: "心動值禮物雙倍券", count: 1 },
   ]);
-  assert.equal(
-    isCouponInventoryItem({ item_name: "心動值禮物雙倍券" }),
-    true,
-  );
+  assert.equal(isCouponInventoryItem({ item_name: "心動值禮物雙倍券" }), true);
 });

@@ -5404,6 +5404,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId.startsWith("manual_work_cancel_") ||
         interaction.customId.startsWith("work_report_start_") ||
         interaction.customId.startsWith("work_report_end_") ||
+        interaction.customId.startsWith("work_report_edit_") ||
         interaction.customId.startsWith("work_report_save_") ||
         interaction.customId.startsWith("work_report_close_")
       ) {
