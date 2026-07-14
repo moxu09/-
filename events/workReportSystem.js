@@ -61,7 +61,7 @@ function parseTaipeiDateTime(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function getTaipeiNowParts() {
+function getTaipeiNowParts(nowDate = new Date()) {
   return Object.fromEntries(
     new Intl.DateTimeFormat("en-CA", {
       timeZone: "Asia/Taipei",
@@ -72,13 +72,13 @@ function getTaipeiNowParts() {
       minute: "2-digit",
       hourCycle: "h23",
     })
-      .formatToParts(new Date())
+      .formatToParts(nowDate)
       .filter((part) => part.type !== "literal")
       .map((part) => [part.type, part.value]),
   );
 }
 
-function parseTaipeiWorkTime(value) {
+function parseTaipeiWorkTime(value, nowDate = new Date()) {
   const text = String(value || "").trim();
   if (/^\d{4}[-/]\d{1,2}[-/]\d{1,2}\s+\d{1,2}:\d{2}$/.test(text)) {
     return parseTaipeiDateTime(text);
@@ -88,10 +88,14 @@ function parseTaipeiWorkTime(value) {
   const hour = Number(matched[1]);
   const minute = Number(matched[2]);
   if (hour > 23 || minute > 59) return null;
-  const now = getTaipeiNowParts();
-  return parseTaipeiDateTime(
+  const now = getTaipeiNowParts(nowDate);
+  const parsed = parseTaipeiDateTime(
     `${now.year}-${now.month}-${now.day} ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`,
   );
+  if (parsed && parsed.getTime() > nowDate.getTime() + 5 * 60 * 1000) {
+    parsed.setUTCDate(parsed.getUTCDate() - 1);
+  }
+  return parsed;
 }
 
 function isGiftOrderType(value) {
@@ -1192,6 +1196,7 @@ module.exports = {
   buildReportAmounts,
   createWorkReportSystem,
   isStaffInteraction,
+  parseTaipeiWorkTime,
   parseDurationMinutes,
   parseMoney,
 };

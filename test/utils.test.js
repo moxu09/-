@@ -16,6 +16,7 @@ const {
 const {
   buildReportAmounts,
   isStaffInteraction,
+  parseTaipeiWorkTime,
   parseDurationMinutes,
   parseMoney,
 } = require("../events/workReportSystem");
@@ -106,6 +107,18 @@ test("work report edits parse duration and formatted money", () => {
   assert.equal(parseDurationMinutes("90分鐘"), 90);
   assert.equal(parseMoney("NT$ 12,500"), 12500);
   assert.equal(parseMoney("0"), null);
+});
+
+test("time-only work reports use the latest Taipei occurrence", () => {
+  const justAfterMidnight = new Date("2026-07-14T16:30:00.000Z");
+  assert.equal(
+    parseTaipeiWorkTime("22:38", justAfterMidnight).toISOString(),
+    "2026-07-14T14:38:00.000Z",
+  );
+  assert.equal(
+    parseTaipeiWorkTime("00:20", justAfterMidnight).toISOString(),
+    "2026-07-14T16:20:00.000Z",
+  );
 });
 
 test("VIP rewards normalize suffix coupons and never auto-grant gift cards", () => {
