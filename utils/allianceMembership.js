@@ -7,14 +7,21 @@ const ALLIANCE_TIER_ORDER = [
   "exclusive",
 ];
 
-const EXCLUSIVE_CARD_URLS = {
-  white: "https://www.wearestilllhere.com/membership-cards/exclusive.png",
-  black: "https://www.wearestilllhere.com/membership-cards/exclusive-black.png",
-};
+const MEMBERSHIP_CARD_API =
+  "https://www.wearestilllhere.com/api/membership/card";
 
 function resolveMembershipCardImage(member, currentTier) {
-  if (currentTier?.tier_key !== "exclusive") return currentTier?.card_image_url || null;
-  return EXCLUSIVE_CARD_URLS[member?.exclusive_card_variant] || null;
+  if (
+    currentTier?.tier_key === "exclusive" &&
+    !["white", "black"].includes(member?.exclusive_card_variant)
+  ) {
+    return null;
+  }
+  if (!member?.discord_user_id) return currentTier?.card_image_url || null;
+  const version = member.updated_at
+    ? `?v=${encodeURIComponent(member.updated_at)}`
+    : "";
+  return `${MEMBERSHIP_CARD_API}/${encodeURIComponent(member.discord_user_id)}${version}`;
 }
 
 function createAllianceMembership(supabase, guildId) {

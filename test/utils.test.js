@@ -142,12 +142,18 @@ test("VIP rewards normalize suffix coupons and never auto-grant gift cards", () 
 test("exclusive membership cards follow the member's one-time variant", () => {
   const tier = { tier_key: "exclusive", card_image_url: "fallback" };
   assert.match(
-    resolveMembershipCardImage({ exclusive_card_variant: "white" }, tier),
-    /exclusive\.png$/,
+    resolveMembershipCardImage(
+      { discord_user_id: "123456789012345678", exclusive_card_variant: "white" },
+      tier,
+    ),
+    /\/api\/membership\/card\/123456789012345678$/,
   );
   assert.match(
-    resolveMembershipCardImage({ exclusive_card_variant: "black" }, tier),
-    /exclusive-black\.png$/,
+    resolveMembershipCardImage(
+      { discord_user_id: "123456789012345678", exclusive_card_variant: "black" },
+      tier,
+    ),
+    /\/api\/membership\/card\/123456789012345678$/,
   );
   assert.equal(resolveMembershipCardImage({}, tier), null);
 });
