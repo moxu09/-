@@ -25,6 +25,7 @@ const {
   isCouponInventoryItem,
   parseVipCouponReward,
 } = require("../utils/vipRewards");
+const { resolveMembershipCardImage } = require("../utils/allianceMembership");
 
 test("service settings support arrays, JSON, and comma-separated values", () => {
   assert.deepEqual(parseAllowedServices(["a", "b"]), ["a", "b"]);
@@ -136,4 +137,17 @@ test("VIP rewards normalize suffix coupons and never auto-grant gift cards", () 
     { name: "心動值禮物雙倍券", count: 1 },
   ]);
   assert.equal(isCouponInventoryItem({ item_name: "心動值禮物雙倍券" }), true);
+});
+
+test("exclusive membership cards follow the member's one-time variant", () => {
+  const tier = { tier_key: "exclusive", card_image_url: "fallback" };
+  assert.match(
+    resolveMembershipCardImage({ exclusive_card_variant: "white" }, tier),
+    /exclusive\.png$/,
+  );
+  assert.match(
+    resolveMembershipCardImage({ exclusive_card_variant: "black" }, tier),
+    /exclusive-black\.png$/,
+  );
+  assert.equal(resolveMembershipCardImage({}, tier), null);
 });

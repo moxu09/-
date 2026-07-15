@@ -7,6 +7,16 @@ const ALLIANCE_TIER_ORDER = [
   "exclusive",
 ];
 
+const EXCLUSIVE_CARD_URLS = {
+  white: "https://www.wearestilllhere.com/membership-cards/exclusive.png",
+  black: "https://www.wearestilllhere.com/membership-cards/exclusive-black.png",
+};
+
+function resolveMembershipCardImage(member, currentTier) {
+  if (currentTier?.tier_key !== "exclusive") return currentTier?.card_image_url || null;
+  return EXCLUSIVE_CARD_URLS[member?.exclusive_card_variant] || null;
+}
+
 function createAllianceMembership(supabase, guildId) {
   async function getMembership(discordUserId) {
     const [{ data: member, error }, { data: tiers, error: tiersError }] =
@@ -38,7 +48,10 @@ function createAllianceMembership(supabase, guildId) {
         ALLIANCE_TIER_ORDER.indexOf(tier.tier_key) > currentIndex &&
         Number(tier.threshold_points || 0) > Number(member?.lifetime_points || 0),
     );
-    return { member, currentTier, nextTier, tiers: sortedTiers };
+    const resolvedTier = currentTier
+      ? { ...currentTier, card_image_url: resolveMembershipCardImage(member, currentTier) }
+      : null;
+    return { member, currentTier: resolvedTier, nextTier, tiers: sortedTiers };
   }
 
   async function applyActivity({
@@ -117,4 +130,4 @@ function createAllianceMembership(supabase, guildId) {
   return { adjustCumulative, applyActivity, formatSummary, getMembership };
 }
 
-module.exports = { createAllianceMembership };
+module.exports = { createAllianceMembership, resolveMembershipCardImage };
