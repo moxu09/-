@@ -235,7 +235,7 @@ function createWorkReportSystem({
   async function sendReportCard(
     report,
     staff,
-    { allowGiftEdit = true, completed = false } = {},
+    { completed = false } = {},
   ) {
     const channelId = staff?.report_channel_id || staff?.salary_channel_id;
     if (!channelId)
@@ -278,10 +278,10 @@ function createWorkReportSystem({
       .setCustomId(`work_report_edit_${report.id}`)
       .setLabel("改時長及金額")
       .setStyle(ButtonStyle.Secondary);
-    const initialButtons = isGift || completed
-      ? allowGiftEdit
+    const initialButtons = isGift
+      ? []
+      : completed
         ? [editButton]
-        : []
       : [
           new ButtonBuilder()
             .setCustomId(`work_report_start_${report.id}`)
@@ -445,7 +445,7 @@ function createWorkReportSystem({
         ),
         expected_duration_minutes: 0,
       };
-      await sendReportCard(report, staff, { allowGiftEdit: false });
+      await sendReportCard(report, staff);
       reports.push(report);
     }
     return reports;
