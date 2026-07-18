@@ -232,7 +232,11 @@ function createWorkReportSystem({
     return data?.[0] || null;
   }
 
-  async function sendReportCard(report, staff) {
+  async function sendReportCard(
+    report,
+    staff,
+    { allowGiftEdit = true, completed = false } = {},
+  ) {
     const channelId = staff?.report_channel_id || staff?.salary_channel_id;
     if (!channelId)
       throw new Error(`陪陪 <@${report.staff_id}> 尚未設定個人薪資頻道 ID`);
@@ -274,26 +278,24 @@ function createWorkReportSystem({
       .setCustomId(`work_report_edit_${report.id}`)
       .setLabel("改時長及金額")
       .setStyle(ButtonStyle.Secondary);
-    const components = [
-      new ActionRowBuilder().addComponents(
-        ...(isGift
-          ? []
-          : [
-              new ButtonBuilder()
-                .setCustomId(`work_report_start_${report.id}`)
-                .setLabel("輸入開始時間")
-                .setStyle(ButtonStyle.Primary),
-              new ButtonBuilder()
-                .setCustomId(`work_report_end_${report.id}`)
-                .setLabel("輸入結束時間")
-                .setStyle(ButtonStyle.Success),
-            ]),
-        editButton,
-      ),
-    ];
+    const initialButtons = isGift || completed
+      ? allowGiftEdit
+        ? [editButton]
+        : []
+      : [
+          new ButtonBuilder()
+            .setCustomId(`work_report_start_${report.id}`)
+            .setLabel("輸入開始時間")
+            .setStyle(ButtonStyle.Primary),
+        ];
+    const components = initialButtons.length
+      ? [new ActionRowBuilder().addComponents(...initialButtons)]
+      : [];
     await channel.send({
       content: isGift
         ? `<@${report.staff_id}> 你有一筆打賞紀錄，已直接送到薪資後台等待審核。`
+        : completed
+          ? `<@${report.staff_id}> 新增的時長及金額已建立為一筆新報單，並送到薪資後台等待審核。`
         : `<@${report.staff_id}> 請填寫這筆服務的開始與結束時間。`,
       embeds: [
         new EmbedBuilder()
@@ -303,6 +305,8 @@ function createWorkReportSystem({
           .setDescription(
             isGift
               ? "打賞不需填寫時間，客服送出後已同步進入薪資後台審核。"
+              : completed
+                ? "這是結束時間後追加的新報單，不會覆蓋原本的報單。"
               : "填寫完成後會自動計算時長，並送到薪資後台等待審核。",
           ),
       ],
@@ -419,6 +423,120 @@ function createWorkReportSystem({
       },
       staffIds,
     );
+  }
+
+  async function sendForCompletedTipOrders(orders, payload = {}) {
+    const reports = [];
+    for (const order of (orders || []).filter(Boolean)) {
+      const staffId = String(order.discord_id || order.assigned_player || "");
+      if (!staffId) continue;
+      const staff = await findStaff(staffId);
+      if (!staff) throw new Error(`找不到陪陪 <@${staffId}> 的員工資料`);
+      const report = {
+        id: order.id,
+        staff_id: staffId,
+        customer_id: payload.customerId || order.customer_id || null,
+        customer_name: payload.customerName || order.customer_name || null,
+        order_type: "打賞",
+        service_name:
+          payload.serviceName || order.service_name || order.service || "打賞",
+        order_amount: Number(
+          payload.amount || order.order_amount || order.final_price || 0,
+        ),
+        expected_duration_minutes: 0,
+      };
+      await sendReportCard(report, staff, { allowGiftEdit: false });
+      reports.push(report);
+    }
+    return reports;
+  }
+
+  async function createAdditionalReport(current, meta, durationMinutes, amount, actorId) {
+    const createdAt = new Date().toISOString();
+    const staffId = String(current.discord_id || current.assigned_player || "");
+    if (!staffId) throw new Error("原始報單缺少陪陪資料");
+    const reportKey = `WORK-ADD-${current.id}-${Date.now()}`;
+    const nextMeta = {
+      sourceKind: "additional_work_report",
+      sourceOrderId: current.order_id || current.order_no || current.id,
+      parentReportId: current.id,
+      customerId: meta.customerId || current.customer_id || null,
+      customerName: meta.customerName || current.customer_name || null,
+      orderType: meta.orderType || current.order_type || "訂單追加",
+      serviceName:
+        meta.serviceName || current.service_name || current.service || "追加服務",
+      expectedDurationMinutes: durationMinutes,
+      durationMinutes,
+      segments: [],
+      createdBy: actorId,
+      createdAt,
+    };
+    const basePayload = {
+      order_id: reportKey,
+      discord_id: staffId,
+      staff_name: current.staff_name || staffId,
+      customer_name:
+        nextMeta.customerName || nextMeta.customerId || "追加報單",
+      service_name: nextMeta.serviceName,
+      order_amount: amount,
+      staff_salary: 0,
+      bonus_amount: 0,
+      salary_rate: 0,
+      platform_income: amount,
+      platform_expense: 0,
+      order_finished_at: createdAt,
+      is_deleted: true,
+    };
+    const insertPayload =
+      appKey === "deepnight"
+        ? {
+            ...basePayload,
+            order_no: reportKey,
+            customer_id: nextMeta.customerId || "manual",
+            service: nextMeta.serviceName,
+            assigned_player: staffId,
+            price: amount,
+            final_price: amount,
+            order_type: "訂單追加",
+            status: "work_pending",
+            quote_status: "work_report",
+            duration_minutes: durationMinutes,
+            completed_at: createdAt,
+            guild_id: guildId,
+            note: JSON.stringify(nextMeta),
+          }
+        : {
+            ...basePayload,
+            status: "工時待審核",
+            admin_note: JSON.stringify(nextMeta),
+          };
+    const { data, error } = await supabase
+      .from(salaryTable)
+      .insert(insertPayload)
+      .select()
+      .single();
+    if (error) throw error;
+    const staff = await findStaff(staffId);
+    if (!staff) throw new Error(`找不到陪陪 <@${staffId}> 的員工資料`);
+    const report = {
+      id: data.id,
+      staff_id: staffId,
+      customer_id: nextMeta.customerId,
+      customer_name: nextMeta.customerName,
+      order_type: "訂單追加",
+      service_name: nextMeta.serviceName,
+      order_amount: amount,
+      expected_duration_minutes: durationMinutes,
+    };
+    try {
+      await sendReportCard(report, staff, { completed: true });
+    } catch (sendError) {
+      try {
+        await supabase.from(salaryTable).delete().eq("id", data.id);
+      } catch {}
+      throw sendError;
+    }
+    return report;
   }
 
   async function sendManualPanel() {
@@ -565,6 +683,107 @@ function createWorkReportSystem({
 
     if (
       interaction.isButton() &&
+      interaction.customId.startsWith("work_report_add_")
+    ) {
+      if (!isStaff(interaction)) {
+        return interaction.reply({
+          content: "只有客服或管理員可以新增追加報單。",
+          flags: 64,
+        });
+      }
+      const reportId = interaction.customId.replace("work_report_add_", "");
+      const { data: report, error } = await supabase
+        .from(salaryTable)
+        .select("*")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (error || !report) {
+        return interaction.reply({ content: "找不到原始報單。", flags: 64 });
+      }
+      const modal = new ModalBuilder()
+        .setCustomId(`submit_work_report_add_${reportId}`)
+        .setTitle("新增時長及金額")
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("add_duration")
+              .setLabel("新增時長（例如 1小時或30分鐘）")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true),
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("add_amount")
+              .setLabel("新增金額")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true),
+          ),
+        );
+      await interaction.showModal(modal);
+      return true;
+    }
+
+    if (
+      interaction.isModalSubmit() &&
+      interaction.customId.startsWith("submit_work_report_add_")
+    ) {
+      if (!isStaff(interaction)) {
+        return interaction.reply({
+          content: "只有客服或管理員可以新增追加報單。",
+          flags: 64,
+        });
+      }
+      const reportId = interaction.customId.replace(
+        "submit_work_report_add_",
+        "",
+      );
+      const durationMinutes = parseDurationMinutes(
+        interaction.fields.getTextInputValue("add_duration"),
+      );
+      const amount = parseMoney(
+        interaction.fields.getTextInputValue("add_amount"),
+      );
+      if (!durationMinutes || !amount) {
+        return interaction.reply({
+          content: "新增時長或金額格式不正確，請輸入大於 0 的內容。",
+          flags: 64,
+        });
+      }
+      const { data: current, error } = await supabase
+        .from(salaryTable)
+        .select("*")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (error || !current) {
+        return interaction.reply({ content: "找不到原始報單。", flags: 64 });
+      }
+      let meta = {};
+      try {
+        meta = JSON.parse(current.note || current.admin_note || "{}");
+      } catch {}
+      try {
+        await createAdditionalReport(
+          current,
+          meta,
+          durationMinutes,
+          amount,
+          interaction.user.id,
+        );
+      } catch (createError) {
+        return interaction.reply({
+          content: `新增報單失敗：${createError.message || createError}`,
+          flags: 64,
+        });
+      }
+      await interaction.reply({
+        content: `已新增 ${durationText(durationMinutes)}、NT$${amount.toLocaleString("zh-TW")} 的新報單，並自動發送到陪陪的報單頻道。`,
+        flags: 64,
+      });
+      return true;
+    }
+
+    if (
+      interaction.isButton() &&
       interaction.customId.startsWith("work_report_edit_")
     ) {
       if (!isStaff(interaction)) {
@@ -585,7 +804,11 @@ function createWorkReportSystem({
           flags: 64,
         });
       }
-      if (!["work_pending", "工時待審核"].includes(report.status)) {
+      if (
+        !["work_pending", "工時待審核", "work_draft", "工時待填"].includes(
+          report.status,
+        )
+      ) {
         return interaction.reply({
           content: "這筆申報尚未送到後台待審核，暫時不能修改。",
           flags: 64,
@@ -650,7 +873,9 @@ function createWorkReportSystem({
       if (
         fetchError ||
         !current ||
-        !["work_pending", "工時待審核"].includes(current.status)
+        !["work_pending", "工時待審核", "work_draft", "工時待填"].includes(
+          current.status,
+        )
       ) {
         return interaction.reply({
           content: "這筆申報已不在待審核狀態，無法修改。",
@@ -713,7 +938,7 @@ function createWorkReportSystem({
         .from(salaryTable)
         .update(updatePayload)
         .eq("id", reportId)
-        .in("status", ["work_pending", "工時待審核"])
+        .in("status", ["work_pending", "工時待審核", "work_draft", "工時待填"])
         .select()
         .maybeSingle();
       if (updateError || !updated) {
@@ -1030,13 +1255,14 @@ function createWorkReportSystem({
         )
         .setTitle(isStart ? "填寫開始時間" : "填寫結束時間");
       const now = getTaipeiNowParts();
+      const defaultDateTime = `${now.year}-${now.month}-${now.day} ${now.hour}:${now.minute}`;
       modal.addComponents(
         new ActionRowBuilder().addComponents(
           new TextInputBuilder()
             .setCustomId("work_time")
-            .setLabel(`${isStart ? "開始" : "結束"}時間（台北當天 HH:mm）`)
-            .setPlaceholder(isStart ? "20:30" : "22:00")
-            .setValue(`${now.hour}:${now.minute}`)
+            .setLabel(`${isStart ? "開始" : "結束"}日期時間（台北）`)
+            .setPlaceholder(isStart ? "2026-07-19 20:30" : "2026-07-19 22:00")
+            .setValue(defaultDateTime)
             .setStyle(TextInputStyle.Short)
             .setRequired(true),
         ),
@@ -1062,7 +1288,8 @@ function createWorkReportSystem({
       );
       if (!enteredTime)
         return interaction.reply({
-          content: "時間格式不正確，請使用 HH:mm，例如 20:30。",
+          content:
+            "時間格式不正確，請使用 YYYY-MM-DD HH:mm，例如 2026-07-19 20:30；也可只輸入 HH:mm。",
           flags: 64,
         });
       const { data: current } = await supabase
@@ -1158,10 +1385,21 @@ function createWorkReportSystem({
                 .setCustomId(`work_report_end_${reportId}`)
                 .setLabel(`輸入第 ${segments.length + 1} 段結束時間`)
                 .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`work_report_edit_${reportId}`)
+                .setLabel("改時長及金額")
+                .setStyle(ButtonStyle.Secondary),
             ),
           ]
         : isComplete
-          ? []
+          ? [
+              new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                  .setCustomId(`work_report_add_${reportId}`)
+                  .setLabel("新增時長及金額")
+                  .setStyle(ButtonStyle.Secondary),
+              ),
+            ]
           : [
               new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -1176,6 +1414,10 @@ function createWorkReportSystem({
                   .setCustomId(`work_report_close_${reportId}`)
                   .setLabel("結單（客服）")
                   .setStyle(ButtonStyle.Danger),
+                new ButtonBuilder()
+                  .setCustomId(`work_report_add_${reportId}`)
+                  .setLabel("新增時長及金額")
+                  .setStyle(ButtonStyle.Secondary),
               ),
             ];
       await interaction.message
@@ -1189,7 +1431,12 @@ function createWorkReportSystem({
     return false;
   }
 
-  return { handleInteraction, sendForAcceptedOrder, sendManualPanel };
+  return {
+    handleInteraction,
+    sendForAcceptedOrder,
+    sendForCompletedTipOrders,
+    sendManualPanel,
+  };
 }
 
 module.exports = {
