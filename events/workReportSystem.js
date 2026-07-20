@@ -23,6 +23,55 @@ function parseRoleIds(...values) {
   ];
 }
 
+function normalizeStaffLookup(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .trim()
+    .replace(/^@/, "")
+    .replace(/\s+/g, " ")
+    .toLocaleLowerCase("zh-TW");
+}
+
+function splitStaffLookupInput(value) {
+  return String(value || "")
+    .split(/[\n,，、;；]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function getStaffLookupValues(staff, member) {
+  return [
+    staff?.id,
+    staff?.discord_id,
+    staff?.display_name,
+    staff?.real_name,
+    staff?.discord_name,
+    staff?.name,
+    member?.nickname,
+    member?.displayName,
+    member?.user?.globalName,
+    member?.user?.username,
+    member?.user?.tag,
+  ]
+    .map(normalizeStaffLookup)
+    .filter(Boolean);
+}
+
+function matchStaffLookup(records, input) {
+  const raw = String(input || "").trim();
+  const discordId = parseUserIds(raw)[0];
+  const keyword = normalizeStaffLookup(raw);
+  const exactMatches = records.filter(({ staff, member }) => {
+    if (discordId && String(staff?.discord_id || "") === discordId) return true;
+    return getStaffLookupValues(staff, member).includes(keyword);
+  });
+  if (exactMatches.length) return exactMatches;
+  if (keyword.length < 2) return [];
+  return records.filter(({ staff, member }) =>
+    getStaffLookupValues(staff, member).some((value) => value.includes(keyword)),
+  );
+}
+
 function memberHasRole(member, roleId) {
   if (!member || !roleId) return false;
   if (member.roles?.cache?.has) return member.roles.cache.has(roleId);
@@ -221,15 +270,86 @@ function createWorkReportSystem({
 }) {
   const pendingManualReports = new Map();
   async function findStaff(discordId) {
+    const normalizedId = String(discordId || "").trim();
     let query = supabase
       .from(staffTable)
       .select("*")
-      .eq("discord_id", String(discordId))
+      .eq("discord_id", normalizedId)
       .limit(1);
     if (staffTable === "players") query = query.eq("guild_id", guildId);
     const { data, error } = await query;
     if (error) throw error;
-    return data?.[0] || null;
+    if (data?.[0]) return data[0];
+
+    // 舊資料可能沒有 guild_id，或曾被寫入另一個環境的 guild_id。
+    // Discord ID 本身是全域唯一值，因此精準 ID 查詢可以安全作為備援。
+    if (staffTable === "players") {
+      const fallback = await supabase
+        .from(staffTable)
+        .select("*")
+        .eq("discord_id", normalizedId)
+        .limit(1);
+      if (fallback.error) throw fallback.error;
+      return fallback.data?.[0] || null;
+    }
+    return null;
+  }
+
+  async function resolveManualStaffInput(interaction, input) {
+    const lookups = splitStaffLookupInput(input);
+    if (!lookups.length) throw new Error("請輸入至少一位陪陪。");
+
+    const { data: staffRows, error } = await supabase
+      .from(staffTable)
+      .select("*")
+      .not("discord_id", "is", null);
+    if (error) throw error;
+
+    const members = await interaction.guild.members.fetch().catch(() => null);
+    const records = (staffRows || []).map((staff) => ({
+      staff,
+      member: members?.get(String(staff.discord_id || "").trim()) || null,
+    }));
+    const selectedIds = [];
+    const unresolved = [];
+    const ambiguous = [];
+
+    for (const lookup of lookups) {
+      const matches = matchStaffLookup(records, lookup);
+      const uniqueMatches = [
+        ...new Map(
+          matches.map((record) => [String(record.staff.discord_id), record]),
+        ).values(),
+      ];
+      if (uniqueMatches.length === 0) {
+        unresolved.push(lookup);
+        continue;
+      }
+      if (uniqueMatches.length > 1) {
+        ambiguous.push(lookup);
+        continue;
+      }
+      const staff = uniqueMatches[0].staff;
+      const staffId = String(staff.discord_id || "").trim();
+      if (!staff.report_channel_id && !staff.salary_channel_id) {
+        throw new Error(
+          `${lookup} 已有員工資料，但尚未填寫個人填單區／薪資頻道 ID。`,
+        );
+      }
+      selectedIds.push(staffId);
+    }
+
+    if (unresolved.length) {
+      throw new Error(
+        `找不到以下陪陪：${unresolved.join("、")}。可輸入暱稱、帳號名稱、@提及、Discord 數字 ID 或薪資網員工 ID。`,
+      );
+    }
+    if (ambiguous.length) {
+      throw new Error(
+        `以下名稱對應到多位員工：${ambiguous.join("、")}。請改用 @提及、Discord 數字 ID 或薪資網員工 ID。`,
+      );
+    }
+    return [...new Set(selectedIds)];
   }
 
   async function sendReportCard(
@@ -666,16 +786,22 @@ function createWorkReportSystem({
           TextInputStyle.Short,
         ]);
       }
+      fields.push([
+        "manual_staff",
+        "陪陪（暱稱、帳號名稱或數字 ID）",
+        TextInputStyle.Short,
+        "多人請用逗號分隔，也可貼上 @提及",
+      ]);
       modal.addComponents(
-        ...fields.map(([id, label, style]) =>
-          new ActionRowBuilder().addComponents(
-            new TextInputBuilder()
+        ...fields.map(([id, label, style, placeholder]) => {
+          const input = new TextInputBuilder()
               .setCustomId(id)
               .setLabel(label)
               .setStyle(style)
-              .setRequired(true),
-          ),
-        ),
+              .setRequired(true);
+          if (placeholder) input.setPlaceholder(placeholder);
+          return new ActionRowBuilder().addComponents(input);
+        }),
       );
       await interaction.showModal(modal);
       return true;
@@ -1008,6 +1134,22 @@ function createWorkReportSystem({
           content: "時長格式不正確，可輸入 2小時、1.5 或 90分鐘。",
           flags: 64,
         });
+      const staffInput =
+        interaction.fields.fields.get("manual_staff")?.value || "";
+      let selectedStaffIds = null;
+      if (staffInput) {
+        try {
+          selectedStaffIds = await resolveManualStaffInput(
+            interaction,
+            staffInput,
+          );
+        } catch (error) {
+          return interaction.reply({
+            content: `陪陪搜尋失敗：${error.message}`,
+            flags: 64,
+          });
+        }
+      }
       const flowId = `${interaction.user.id}_${Date.now()}`;
       pendingManualReports.set(flowId, {
         creatorId: interaction.user.id,
@@ -1019,8 +1161,30 @@ function createWorkReportSystem({
         serviceName: interaction.fields.getTextInputValue("manual_service"),
         orderAmount: amount,
         expectedDurationMinutes,
+        selectedStaffIds,
       });
       setTimeout(() => pendingManualReports.delete(flowId), ORDER_FLOW_TTL_MS);
+      if (selectedStaffIds?.length) {
+        await interaction.reply({
+          content: `已找到 ${selectedStaffIds.length} 位陪陪：${selectedStaffIds.map((id) => `<@${id}>`).join("、")}\n確認名單後請按「確定送出」。`,
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`manual_work_confirm_${flowId}`)
+                .setLabel("確定送出")
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`manual_work_cancel_${flowId}`)
+                .setLabel("取消")
+                .setStyle(ButtonStyle.Secondary),
+            ),
+          ],
+          flags: 64,
+        });
+        return true;
+      }
+
+      // 相容部署前已開啟、尚未送出的舊版表單。
       const menu = new UserSelectMenuBuilder()
         .setCustomId(`manual_work_staff_${flowId}`)
         .setPlaceholder("搜尋並選擇陪陪（可複選）")
@@ -1443,7 +1607,10 @@ module.exports = {
   buildReportAmounts,
   createWorkReportSystem,
   isStaffInteraction,
+  matchStaffLookup,
+  normalizeStaffLookup,
   parseTaipeiWorkTime,
   parseDurationMinutes,
   parseMoney,
+  splitStaffLookupInput,
 };

@@ -16,9 +16,12 @@ const {
 const {
   buildReportAmounts,
   isStaffInteraction,
+  matchStaffLookup,
+  normalizeStaffLookup,
   parseTaipeiWorkTime,
   parseDurationMinutes,
   parseMoney,
+  splitStaffLookupInput,
 } = require("../events/workReportSystem");
 const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 const {
@@ -100,6 +103,40 @@ test("order flows remain active for 24 hours", () => {
 test("manual gifts keep the full amount for every selected staff member", () => {
   assert.deepEqual(buildReportAmounts(1000, 3, false), [334, 333, 333]);
   assert.deepEqual(buildReportAmounts(1000, 3, true), [1000, 1000, 1000]);
+});
+
+test("manual work reports find staff consistently across Discord clients", () => {
+  const records = [
+    {
+      staff: {
+        id: 42,
+        discord_id: "123456789012345678",
+        display_name: "小 雨",
+        discord_name: "rain.staff",
+      },
+      member: {
+        nickname: "深夜小雨",
+        displayName: "深夜小雨",
+        user: { username: "rain930", globalName: "Rain" },
+      },
+    },
+  ];
+  for (const input of [
+    "深夜小雨",
+    "rain930",
+    "RAIN.STAFF",
+    "42",
+    "123456789012345678",
+    "<@123456789012345678>",
+  ]) {
+    assert.equal(matchStaffLookup(records, input).length, 1, input);
+  }
+  assert.equal(normalizeStaffLookup("＠Test User"), "test user");
+  assert.deepEqual(splitStaffLookupInput("小雨，42\n<@123456789012345678>"), [
+    "小雨",
+    "42",
+    "<@123456789012345678>",
+  ]);
 });
 
 test("work report edits parse duration and formatted money", () => {
