@@ -23,6 +23,7 @@ const { ORDER_FLOW_TTL_MS } = require("./utils/orderFlow");
 const {
   isCouponInventoryItem,
   parseVipCouponReward,
+  qualifiesForVipLevel,
 } = require("./utils/vipRewards");
 const {
   buildRedPacketShares,
@@ -2551,8 +2552,12 @@ async function checkAndUpgradeVip(
   triggerType,
   amount,
   guildId = process.env.GUILD_ID,
+  absoluteTotal = null,
 ) {
   const triggerAmount = Number(amount || 0);
+  const normalizedAbsoluteTotal = Number(absoluteTotal);
+  const useAbsoluteTotal =
+    absoluteTotal !== null && Number.isFinite(normalizedAbsoluteTotal);
 
   if (!userId || !guildId) {
     return null;
@@ -2575,13 +2580,21 @@ async function checkAndUpgradeVip(
   const oldHighestTopup = Number(currentVip?.highest_single_topup || 0);
 
   const newTotalSpent =
-    triggerType === "spend" ? oldTotalSpent + triggerAmount : oldTotalSpent;
+    triggerType === "spend"
+      ? useAbsoluteTotal
+        ? Math.max(0, normalizedAbsoluteTotal)
+        : oldTotalSpent + triggerAmount
+      : oldTotalSpent;
 
   const newTotalTopup =
-    triggerType === "topup" ? oldTotalTopup + triggerAmount : oldTotalTopup;
+    triggerType === "topup"
+      ? useAbsoluteTotal
+        ? Math.max(0, normalizedAbsoluteTotal)
+        : oldTotalTopup + triggerAmount
+      : oldTotalTopup;
 
   const newHighestTopup =
-    triggerType === "topup"
+    triggerType === "topup" && !useAbsoluteTotal
       ? Math.max(oldHighestTopup, triggerAmount)
       : oldHighestTopup;
 
@@ -2608,11 +2621,12 @@ async function checkAndUpgradeVip(
 
     const topupRequired = Number(level.single_topup_required || 0);
 
-    return (
-      newTotalSpent >= spendRequired ||
-      newTotalTopup >= topupRequired ||
-      newHighestTopup >= topupRequired
-    );
+    return qualifiesForVipLevel({
+      totalSpent: newTotalSpent,
+      highestSingleTopup: newHighestTopup,
+      totalSpendRequired: spendRequired,
+      singleTopupRequired: topupRequired,
+    });
   });
 
   if (!availableLevels.length) {
@@ -6346,6 +6360,17 @@ async function handleSlashCommand(interaction) {
         sourceKey: `staff-adjust:${interaction.id}`,
         note: `${note}｜操作人員 ${interaction.user.tag}`,
       });
+      const guildId = getGuildId(interaction);
+      if (!guildId) {
+        throw new Error("找不到群組 ID，無法同步 VIP 累積資料");
+      }
+      await checkAndUpgradeVip(
+        target.id,
+        isTopup ? "topup" : "spend",
+        result.newTotal - result.oldTotal,
+        guildId,
+        result.newTotal,
+      );
       return interaction.editReply({
         embeds: [
           new EmbedBuilder()
@@ -6534,10 +6559,7 @@ async function handleSlashCommand(interaction) {
 
     const oldHighestSingleTopup = Number(oldVip?.highest_single_topup || 0);
 
-    const newHighestSingleTopup =
-      mode === "add"
-        ? Math.max(oldHighestSingleTopup, amount)
-        : oldHighestSingleTopup;
+    const newHighestSingleTopup = oldHighestSingleTopup;
 
     const payload = {
       guild_id: guildId,

@@ -27,6 +27,7 @@ const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 const {
   isCouponInventoryItem,
   parseVipCouponReward,
+  qualifiesForVipLevel,
 } = require("../utils/vipRewards");
 const { resolveMembershipCardImage } = require("../utils/allianceMembership");
 
@@ -35,6 +36,23 @@ test("service settings support arrays, JSON, and comma-separated values", () => 
   assert.deepEqual(parseAllowedServices('["a","b"]'), ["a", "b"]);
   assert.deepEqual(parseAllowedServices("a, b,, "), ["a", "b"]);
   assert.deepEqual(parseAllowedServices(null), []);
+});
+
+test("VIP upgrades accept cumulative spend or a single topup, never cumulative topup", () => {
+  const level = {
+    totalSpendRequired: 5000,
+    singleTopupRequired: 3000,
+  };
+
+  assert.equal(qualifiesForVipLevel({ ...level, totalSpent: 5000 }), true);
+  assert.equal(
+    qualifiesForVipLevel({ ...level, highestSingleTopup: 3000 }),
+    true,
+  );
+  assert.equal(
+    qualifiesForVipLevel({ ...level, totalTopup: 999999 }),
+    false,
+  );
 });
 
 test("tip helpers preserve multi-staff behavior", () => {

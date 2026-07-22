@@ -38,8 +38,25 @@ function isCouponInventoryItem(item) {
   );
 }
 
+function qualifiesForVipLevel({
+  totalSpent = 0,
+  highestSingleTopup = 0,
+  totalSpendRequired = 0,
+  singleTopupRequired = 0,
+} = {}) {
+  const spendRequired = Number(totalSpendRequired || 0);
+  const topupRequired = Number(singleTopupRequired || 0);
+
+  return (
+    (spendRequired > 0 && Number(totalSpent || 0) >= spendRequired) ||
+    (topupRequired > 0 &&
+      Number(highestSingleTopup || 0) >= topupRequired)
+  );
+}
+
 module.exports = {
   isCouponInventoryItem,
   normalizeVipRewardName,
   parseVipCouponReward,
+  qualifiesForVipLevel,
 };

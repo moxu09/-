@@ -1,13 +1,14 @@
-function getGrowthVip(totalTopup, totalSpent) {
-  if (totalTopup >= 75000 || totalSpent >= 75000) {
+function getGrowthVip(totalTopup, totalSpent, highestSingleTopup = 0) {
+  void totalTopup;
+  if (highestSingleTopup >= 75000 || totalSpent >= 75000) {
     return "vvip";
   }
 
-  if (totalTopup >= 50000 || totalSpent >= 50000) {
+  if (highestSingleTopup >= 50000 || totalSpent >= 50000) {
     return "vip_plus";
   }
 
-  if (totalTopup >= 18000 || totalSpent >= 18000) {
+  if (highestSingleTopup >= 18000 || totalSpent >= 18000) {
     return "vip";
   }
 

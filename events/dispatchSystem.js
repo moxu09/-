@@ -7125,13 +7125,14 @@ async function acceptPlayOrder(interaction) {
   }
 }
 function getGrowthVipLevel(totalTopup, singleTopup = 0) {
-  if (singleTopup >= 50000 || totalTopup >= 75000) {
+  void totalTopup;
+  if (singleTopup >= 50000) {
     return "vvip";
   }
-  if (singleTopup >= 30000 || totalTopup >= 50000) {
+  if (singleTopup >= 30000) {
     return "vip_plus";
   }
-  if (singleTopup >= 10000 || totalTopup >= 18000) {
+  if (singleTopup >= 10000) {
     return "vip";
   }
   return "none";
