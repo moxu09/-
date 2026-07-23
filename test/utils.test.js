@@ -30,6 +30,17 @@ const {
   qualifiesForVipLevel,
 } = require("../utils/vipRewards");
 const { resolveMembershipCardImage } = require("../utils/allianceMembership");
+const {
+  parseChatDropReward,
+  shouldCreateChatDrop,
+} = require("../utils/randomEvents");
+const {
+  createHealthState,
+  createNonOverlappingTask,
+  createTtlSet,
+  scheduleMapExpiry,
+  validateEnvironment,
+} = require("../utils/runtime");
 
 test("service settings support arrays, JSON, and comma-separated values", () => {
   assert.deepEqual(parseAllowedServices(["a", "b"]), ["a", "b"]);
@@ -211,4 +222,67 @@ test("exclusive membership cards follow the member's one-time variant", () => {
     /\/api\/membership\/card\/123456789012345678$/,
   );
   assert.equal(resolveMembershipCardImage({}, tier), null);
+});
+
+test("chat drops use an exact 0.5% threshold and validate rewards", () => {
+  assert.equal(shouldCreateChatDrop(0), true);
+  assert.equal(shouldCreateChatDrop(0.004999), true);
+  assert.equal(shouldCreateChatDrop(0.005), false);
+  assert.equal(shouldCreateChatDrop(1), false);
+  assert.equal(parseChatDropReward("claim_1"), 1);
+  assert.equal(parseChatDropReward("claim_20"), 20);
+  assert.equal(parseChatDropReward("claim_0"), null);
+  assert.equal(parseChatDropReward("claim_999"), null);
+  assert.equal(parseChatDropReward("claim_red_packet_1"), null);
+});
+
+test("runtime validation reports missing variable names without values", () => {
+  assert.doesNotThrow(() => validateEnvironment({ TOKEN: "set" }, ["TOKEN"]));
+  assert.throws(
+    () => validateEnvironment({ TOKEN: "" }, ["TOKEN", "GUILD_ID"]),
+    /TOKEN, GUILD_ID/,
+  );
+});
+
+test("runtime health records degraded startup without exposing messages", () => {
+  const health = createHealthState("test-bot");
+  health.addFailure("optional panel", new Error("private detail"));
+  health.markReady();
+  assert.deepEqual(health.snapshot().startupFailures[0].name, "optional panel");
+  assert.equal(health.snapshot().status, "degraded");
+  assert.equal(JSON.stringify(health.snapshot()).includes("private detail"), false);
+});
+
+test("runtime guards duplicate events and overlapping scheduler runs", async () => {
+  const dedupe = createTtlSet(1000);
+  assert.equal(dedupe.add("interaction-1"), true);
+  assert.equal(dedupe.add("interaction-1"), false);
+  assert.equal(dedupe.delete("interaction-1"), true);
+  assert.equal(dedupe.add("interaction-1"), true);
+
+  let release;
+  let runs = 0;
+  const firstRun = new Promise((resolve) => {
+    release = resolve;
+  });
+  const task = createNonOverlappingTask("test", async () => {
+    runs += 1;
+    await firstRun;
+  });
+  const pending = task();
+  await task();
+  assert.equal(runs, 1);
+  release();
+  await pending;
+});
+
+test("runtime map expiry only removes the value it scheduled", async () => {
+  const map = new Map();
+  const first = { value: 1 };
+  const replacement = { value: 2 };
+  map.set("flow", first);
+  scheduleMapExpiry(map, "flow", first, 5);
+  map.set("flow", replacement);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.equal(map.get("flow"), replacement);
 });

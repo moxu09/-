@@ -1,20 +1,27 @@
 {
-  "name": "rainbot",
+  "name": "deepnight-rainbot",
   "version": "1.0.0",
-  "description": "",
+  "description": "深夜不關燈 Discord 營運機器人",
+  "private": true,
   "main": "index.js",
   "scripts": {
-    "test": "node --test"
+    "start": "node index.js",
+    "check": "node scripts/check.js",
+    "test": "node --test",
+    "verify": "npm run check && npm test && npm audit --omit=dev"
+  },
+  "engines": {
+    "node": ">=20 <25"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@supabase/supabase-js": "^2.105.4",
-    "discord.js": "^14.26.4",
+    "@supabase/supabase-js": "^2.110.8",
+    "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
-    "node-cron": "^4.4.1",
+    "node-cron": "^4.6.0",
     "sqlite3": "^6.0.1"
   }
 }

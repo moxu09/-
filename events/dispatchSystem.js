@@ -6324,9 +6324,10 @@ async function submitTopupForm(interaction) {
     note,
   });
 
-  setTimeout(() => {
+  const expiryTimer = setTimeout(() => {
     pendingTopups.delete(topupId);
   }, 30 * 60 * 1000);
+  expiryTimer.unref?.();
 
   const menu = new StringSelectMenuBuilder()
     .setCustomId(`topup_payment_method_${topupId}`)

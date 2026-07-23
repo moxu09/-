@@ -595,6 +595,8 @@ function startDeepNightSalaryReportCron(client, supabase) {
     },
     {
       timezone,
+      noOverlap: true,
+      name: "deepnight-daily-salary-report",
     },
   );
 

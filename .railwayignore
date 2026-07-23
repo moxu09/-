@@ -1,0 +1,8 @@
+node_modules
+coverage
+test
+*.log
+*.tmp
+*.save
+bcakup.txt
+data.json
