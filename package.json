@@ -11,7 +11,7 @@
     "verify": "npm run check && npm test && npm audit --omit=dev"
   },
   "engines": {
-    "node": ">=20 <25"
+    "node": ">=22 <25"
   },
   "keywords": [],
   "author": "",

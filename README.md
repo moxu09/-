@@ -9,7 +9,7 @@ npm ci
 npm run verify
 ```
 
-正式環境使用 Node.js 20–24。必要設定請參考 `.env.example`，真實憑證只應放在 Railway Variables，不得提交至 Git。
+正式環境使用 Node.js 22–24。必要設定請參考 `.env.example`，真實憑證只應放在 Railway Variables，不得提交至 Git。
 
 ## 服務狀態
 
