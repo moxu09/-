@@ -17,10 +17,13 @@ const {
   createNonOverlappingTask,
   createTtlSet,
   installProcessHandlers,
-  runStartupTask,
   scheduleMapExpiry,
   validateEnvironment,
 } = require("./utils/runtime");
+const {
+  syncApplicationCommands,
+} = require("./runtime/commandRegistry");
+const { runStartupGroup } = require("./runtime/startupOrchestrator");
 const { createClient } = require("@supabase/supabase-js");
 const { createAccountingLedger } = require("./utils/accounting");
 const { createAllianceMembership } = require("./utils/allianceMembership");
@@ -64,8 +67,6 @@ const {
   TextInputBuilder,
   TextInputStyle,
   SlashCommandBuilder,
-  REST,
-  Routes,
   PermissionFlagsBits,
   ChannelType,
 } = require("discord.js");
@@ -4749,56 +4750,52 @@ async function processLegacyVipBackfillQueue() {
 client.once(Events.ClientReady, async () => {
   console.log("🚀 星雨系統啟動中...");
 
-  await runStartupTask("陪玩控制面板", async () => {
-    const playerChannel = await client.channels.fetch(
-      process.env.PLAYER_CONTROL_CHANNEL,
-    );
-    await dispatchSystem.sendPlayerPanel(playerChannel);
-  }, runtimeHealth);
+  const startupSummary = await runStartupGroup(
+    [
+      {
+        name: "陪玩控制面板",
+        run: async () => {
+          const playerChannel = await client.channels.fetch(
+            process.env.PLAYER_CONTROL_CHANNEL,
+          );
+          await dispatchSystem.sendPlayerPanel(playerChannel);
+        },
+      },
+      {
+        name: "Slash Commands 同步",
+        run: () =>
+          syncApplicationCommands({
+            token: process.env.TOKEN,
+            applicationId: client.user.id,
+            commands,
+          }),
+      },
+      { name: "分區下單面板", run: () => dispatchSystem.sendGameOrderPanels() },
+      { name: "報單面板", run: () => dispatchSystem.sendWorkReportPanel() },
+      { name: "商店面板", run: () => refreshShop(client) },
+      { name: "儲值面板", run: () => sendTopupPanel(client) },
+      { name: "ATM 面板", run: () => sendAtmPanel(client) },
+      { name: "簽到面板", run: () => sendCheckinPanel(client) },
+      { name: "扭蛋面板", run: () => sendGachaPanel(client) },
+      { name: "私人房間面板", run: () => sendPrivateRoomPanel(client) },
+      { name: "舊 VIP 回填", run: processLegacyVipBackfillQueue },
+    ],
+    { concurrency: 3, healthState: runtimeHealth },
+  );
+  console.log(
+    `[STARTUP] 面板與指令完成 ${startupSummary.succeeded}/${startupSummary.total}，耗時 ${startupSummary.elapsedMs}ms`,
+  );
 
-  await runStartupTask("Slash Commands 註冊", async () => {
-    const rest = new REST({
-      version: "10",
-    }).setToken(process.env.TOKEN);
-    await rest.put(Routes.applicationCommands(client.user.id), {
-      body: commands,
-    });
-  }, runtimeHealth);
-
-  await runStartupTask("分區下單面板", async () => {
-    await dispatchSystem.sendGameOrderPanels();
-  }, runtimeHealth);
-  await runStartupTask("報單面板", async () => {
-    await dispatchSystem.sendWorkReportPanel();
-  }, runtimeHealth);
-  await runStartupTask("商店面板", async () => {
-    await refreshShop(client);
-  }, runtimeHealth);
-  await runStartupTask("儲值面板", async () => {
-    await sendTopupPanel(client);
-  }, runtimeHealth);
-  await runStartupTask("ATM 面板", async () => {
-    await sendAtmPanel(client);
-  }, runtimeHealth);
-  await runStartupTask("簽到面板", async () => {
-    await sendCheckinPanel(client);
-  }, runtimeHealth);
-  await runStartupTask("扭蛋面板", async () => {
-    await sendGachaPanel(client);
-  }, runtimeHealth);
-  await runStartupTask("私人房間面板", async () => {
-    await sendPrivateRoomPanel(client);
-  }, runtimeHealth);
-  await runStartupTask("舊 VIP 回填", async () => {
-    await processLegacyVipBackfillQueue();
-  }, runtimeHealth);
-
-  await runStartupTask("月結帳單排程", async () => {
-    startMonthlyBillScheduler();
-  }, runtimeHealth);
-  await runStartupTask("深夜薪資每日報告排程", async () => {
-    startDeepNightSalaryReportCron(client, supabase);
-  }, runtimeHealth);
+  await runStartupGroup(
+    [
+      { name: "月結帳單排程", run: startMonthlyBillScheduler },
+      {
+        name: "深夜薪資每日報告排程",
+        run: () => startDeepNightSalaryReportCron(client, supabase),
+      },
+    ],
+    { concurrency: 2, healthState: runtimeHealth },
+  );
   console.log("ℹ️ rainbot 舊版每日陪玩總結已停用，保留 salary 端每日報告。");
 
   setInterval(

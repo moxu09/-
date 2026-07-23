@@ -41,6 +41,11 @@ const {
   scheduleMapExpiry,
   validateEnvironment,
 } = require("../utils/runtime");
+const {
+  commandDefinitionsMatch,
+  syncApplicationCommands,
+} = require("../runtime/commandRegistry");
+const { runStartupGroup } = require("../runtime/startupOrchestrator");
 
 test("service settings support arrays, JSON, and comma-separated values", () => {
   assert.deepEqual(parseAllowedServices(["a", "b"]), ["a", "b"]);
@@ -285,4 +290,78 @@ test("runtime map expiry only removes the value it scheduled", async () => {
   map.set("flow", replacement);
   await new Promise((resolve) => setTimeout(resolve, 15));
   assert.equal(map.get("flow"), replacement);
+});
+
+test("command registry skips unchanged Discord definitions and syncs changes", async () => {
+  const local = [{ name: "ping", description: "測試", options: [] }];
+  const remote = [
+    {
+      id: "server-id",
+      application_id: "app-id",
+      version: "1",
+      type: 1,
+      name: "ping",
+      description: "測試",
+      options: [],
+    },
+  ];
+  assert.equal(commandDefinitionsMatch(remote, local), true);
+  assert.equal(
+    commandDefinitionsMatch(
+      [{ ...remote[0], description: "已變更" }],
+      local,
+    ),
+    false,
+  );
+
+  const calls = [];
+  const rest = {
+    async get() {
+      calls.push("get");
+      return remote;
+    },
+    async put() {
+      calls.push("put");
+    },
+  };
+  const logger = { log() {}, warn() {} };
+  const unchanged = await syncApplicationCommands({
+    token: "test",
+    applicationId: "app",
+    commands: local,
+    rest,
+    logger,
+  });
+  assert.deepEqual(unchanged, { changed: false, count: 1 });
+  assert.deepEqual(calls, ["get"]);
+});
+
+test("startup orchestrator limits concurrency and preserves every task result", async () => {
+  let active = 0;
+  let maxActive = 0;
+  const completed = [];
+  const tasks = Array.from({ length: 6 }, (_, index) => ({
+    name: `task-${index}`,
+    run: async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      completed.push(index);
+      active -= 1;
+    },
+  }));
+
+  const summary = await runStartupGroup(tasks, {
+    concurrency: 2,
+    runner: async (name, run) => {
+      await run();
+      return name !== "task-5";
+    },
+  });
+
+  assert.equal(maxActive, 2);
+  assert.equal(completed.length, 6);
+  assert.equal(summary.total, 6);
+  assert.equal(summary.succeeded, 5);
+  assert.equal(summary.failed, 1);
 });
