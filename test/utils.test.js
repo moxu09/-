@@ -46,6 +46,52 @@ const {
   syncApplicationCommands,
 } = require("../runtime/commandRegistry");
 const { runStartupGroup } = require("../runtime/startupOrchestrator");
+const {
+  claimDailyCheckinReward,
+} = require("../utils/dailyCheckin");
+
+test("concurrent daily check-ins award exactly once", async () => {
+  const state = {
+    user_id: "123456789012345678",
+    coins: 0,
+    last_checkin: null,
+  };
+  const readUser = async () => ({ ...state });
+  const compareAndSwap = async ({
+    expectedCoins,
+    expectedCheckin,
+    nextCoins,
+    nextCheckin,
+  }) => {
+    if (
+      state.coins !== expectedCoins ||
+      state.last_checkin !== expectedCheckin
+    ) {
+      return null;
+    }
+
+    state.coins = nextCoins;
+    state.last_checkin = nextCheckin;
+    return { coins: state.coins, last_checkin: state.last_checkin };
+  };
+
+  const results = await Promise.all(
+    Array.from({ length: 20 }, () =>
+      claimDailyCheckinReward({
+        readUser,
+        compareAndSwap,
+        userId: state.user_id,
+        date: "2026-07-26",
+        reward: 10,
+      }),
+    ),
+  );
+
+  assert.equal(results.filter((result) => result.claimed).length, 1);
+  assert.equal(results.filter((result) => !result.claimed).length, 19);
+  assert.equal(state.coins, 10);
+  assert.equal(state.last_checkin, "2026-07-26");
+});
 
 test("service settings support arrays, JSON, and comma-separated values", () => {
   assert.deepEqual(parseAllowedServices(["a", "b"]), ["a", "b"]);

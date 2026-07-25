@@ -30,6 +30,9 @@ const { createAllianceMembership } = require("./utils/allianceMembership");
 const { parseAllowedServices } = require("./utils/services");
 const { ORDER_FLOW_TTL_MS } = require("./utils/orderFlow");
 const {
+  createSupabaseDailyCheckinClaimer,
+} = require("./utils/dailyCheckin");
+const {
   parseChatDropReward,
   shouldCreateChatDrop,
 } = require("./utils/randomEvents");
@@ -2967,18 +2970,10 @@ async function applyVipOrderBenefits(order, guildId = process.env.GUILD_ID) {
     })
     .eq("id", order.id);
 }
-// 更新簽到
-async function updateCheckin(userId, date) {
-  const { error } = await supabase
-    .from("users")
-    .update({ last_checkin: date })
-    .eq("user_id", userId);
-
-  if (error) {
-    console.error("[DB] 更新簽到失敗:", error);
-    throw new Error("無法更新簽到");
-  }
-}
+const claimDailyCheckinReward = createSupabaseDailyCheckinClaimer({
+  supabase,
+  getUser,
+});
 
 // 新增交易紀錄
 // 錯誤回覆 (自動判斷回覆或追蹤)
@@ -7993,6 +7988,8 @@ async function createMonthlyBillPaymentChannel(interaction, bill) {
 
   return payChannel;
 }
+const dailyCheckinInFlight = new Set();
+
 // ===== 完整按鈕交互處理 =====
 async function handleButtonInteraction(interaction) {
   const customId = interaction.customId;
@@ -8075,37 +8072,46 @@ async function handleButtonInteraction(interaction) {
     }
     // ===== 每日簽到 =====
     if (customId === "daily_checkin") {
-      const today = getTodayDateString();
-      const userData = await getUser(interaction.user.id);
-
-      if (userData.last_checkin === today) {
+      const userId = interaction.user.id;
+      if (dailyCheckinInFlight.has(userId)) {
         return await interaction.editReply({
-          content: "❌ 今天已經簽到過了",
+          content: "⏳ 簽到正在處理中，請勿重複點擊",
         });
       }
 
-      const reward = 10;
+      dailyCheckinInFlight.add(userId);
+      try {
+        const today = getTodayDateString();
+        const reward = 10;
+        const result = await claimDailyCheckinReward(userId, today, reward);
 
-      const finalCoins = await changeCoins(interaction.user.id, reward);
+        if (!result.claimed) {
+          return await interaction.editReply({
+            content: "❌ 今天已經簽到過了",
+          });
+        }
 
-      await sendWalletLog(
-        interaction.user.id,
-        "每日簽到",
-        reward,
-        finalCoins,
-        "☔ 每日簽到獎勵",
-      );
+        await sendWalletLog(
+          userId,
+          "每日簽到",
+          reward,
+          result.balance,
+          "☔ 每日簽到獎勵",
+        );
 
-      await updateCheckin(interaction.user.id, today);
-
-      return await interaction.editReply({
-        embeds: [
-          new EmbedBuilder()
-            .setColor("#57F287")
-            .setTitle("☔ 每日簽到成功")
-            .setDescription(`獲得 ${reward} 星雨幣`),
-        ],
-      });
+        return await interaction.editReply({
+          embeds: [
+            new EmbedBuilder()
+              .setColor("#57F287")
+              .setTitle("☔ 每日簽到成功")
+              .setDescription(
+                `獲得 ${reward} 星雨幣\n目前餘額：${result.balance} 星雨幣`,
+              ),
+          ],
+        });
+      } finally {
+        dailyCheckinInFlight.delete(userId);
+      }
     }
 
     // ===== ATM 餘額 =====
