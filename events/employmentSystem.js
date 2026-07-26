@@ -884,10 +884,10 @@ function createEmploymentSystem(client, config) {
       flow.track,
     );
     const mentions = roles.map((role) => `<@&${role.id}>`);
-    const missingText =
-      roles.length === 0
-        ? `\n⚠️ 找不到審核身分組：${names.join("、") || "未設定"}`
-        : "";
+    const examinerNotice =
+      roles.length > 0
+        ? `${mentions.join(" ")} 請協助審核上方的陪玩入職申請。`
+        : `⚠️ 找不到審核身分組：${names.join("、") || "未設定"}`;
     const reviewRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId("employment_review_approve")
@@ -920,10 +920,11 @@ function createEmploymentSystem(client, config) {
     }
 
     const reviewMessage = await reviewThread.send({
-      content:
-        `${mentions.join(" ")} 新的陪玩入職申請，請協助審核。${missingText}`.trim(),
       embeds: [buildApplicationEmbed(flow)],
       components: [reviewRow],
+    });
+    await reviewThread.send({
+      content: examinerNotice,
       allowedMentions: { roles: roles.map((role) => role.id) },
     });
 
