@@ -899,7 +899,27 @@ function createEmploymentSystem(client, config) {
         .setStyle(ButtonStyle.Danger),
     );
 
-    const reviewMessage = await reviewChannel.send({
+    const applicantName =
+      interaction.member?.displayName ||
+      interaction.user.globalName ||
+      interaction.user.username;
+    const threadStarter = await reviewChannel.send({
+      content: `<@${interaction.user.id}> 已提交陪玩入職申請。`,
+      allowedMentions: { users: [interaction.user.id] },
+    });
+    let reviewThread;
+    try {
+      reviewThread = await threadStarter.startThread({
+        name: `入職申請｜${applicantName}`.slice(0, 100),
+        autoArchiveDuration: 1440,
+        reason: `${config.brandName} 陪玩入職申請`,
+      });
+    } catch (error) {
+      await threadStarter.delete().catch(() => null);
+      throw new Error(`無法建立入職申請討論串：${error.message}`);
+    }
+
+    const reviewMessage = await reviewThread.send({
       content:
         `${mentions.join(" ")} 新的陪玩入職申請，請協助審核。${missingText}`.trim(),
       embeds: [buildApplicationEmbed(flow)],

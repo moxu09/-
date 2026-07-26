@@ -1,6 +1,6 @@
 module.exports = {
   brandName: "深夜不關燈",
-  panelChannelId: "1530927850801205290",
+  panelChannelId: "1530927944594227260",
   reviewChannelId: "1502056385255444671",
   archiveChannelId: "1530915224926818404",
   workGuildInvite: "https://discord.gg/d3mMRMTFJ2",
