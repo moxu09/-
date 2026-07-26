@@ -1533,36 +1533,95 @@ async function sendTipCloseButtons(channel) {
     components: [row],
   });
 }
+function buildOrderReviewComponents(orderId, anonymous = false) {
+  const makeButton = (rating, label, style) =>
+    new ButtonBuilder()
+      .setCustomId(
+        `order_review_${rating}_${orderId}_${anonymous ? "anon" : "public"}`,
+      )
+      .setLabel(label)
+      .setStyle(style);
+  return [
+    new ActionRowBuilder().addComponents(
+      makeButton(5, "🌟🌟🌟🌟🌟 超級滿意", ButtonStyle.Success),
+      makeButton(4, "🌟🌟🌟🌟 很滿意", ButtonStyle.Primary),
+      makeButton(3, "🌟🌟🌟 普通", ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
+      makeButton(2, "🌟🌟 不太滿意", ButtonStyle.Secondary),
+      makeButton(1, "🌟 很不滿意", ButtonStyle.Danger),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(
+          `review_privacy_order_${anonymous ? "public" : "anon"}_${orderId}`,
+        )
+        .setLabel(
+          anonymous
+            ? "🕶️ 已選匿名｜切換為公開"
+            : "👤 目前公開｜切換為匿名",
+        )
+        .setStyle(anonymous ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+function buildManualReviewComponents(
+  customerId,
+  staffId,
+  surveyId,
+  anonymous = false,
+) {
+  const makeButton = (rating, label, style) =>
+    new ButtonBuilder()
+      .setCustomId(
+        `manual_review_${rating}_${customerId}_${staffId}_${surveyId}_${anonymous ? "anon" : "public"}`,
+      )
+      .setLabel(label)
+      .setStyle(style);
+  return [
+    new ActionRowBuilder().addComponents(
+      makeButton(5, "🌟🌟🌟🌟🌟 超級滿意", ButtonStyle.Success),
+      makeButton(4, "🌟🌟🌟🌟 很滿意", ButtonStyle.Primary),
+      makeButton(3, "🌟🌟🌟 普通", ButtonStyle.Secondary),
+    ),
+    new ActionRowBuilder().addComponents(
+      makeButton(2, "🌟🌟 不太滿意", ButtonStyle.Secondary),
+      makeButton(1, "🌟 很不滿意", ButtonStyle.Danger),
+    ),
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(
+          `review_privacy_manual_${anonymous ? "public" : "anon"}_${customerId}_${staffId}_${surveyId}`,
+        )
+        .setLabel(
+          anonymous
+            ? "🕶️ 已選匿名｜切換為公開"
+            : "👤 目前公開｜切換為匿名",
+        )
+        .setStyle(anonymous ? ButtonStyle.Primary : ButtonStyle.Secondary),
+    ),
+  ];
+}
+
+async function finalizeReviewPrompt(interaction, customerId, anonymous) {
+  const message = interaction.message;
+  if (!message) return;
+  const embeds = message.embeds.map((source) => {
+    const embed = EmbedBuilder.from(source);
+    if (!anonymous || !embed.data.description) return embed;
+    return embed.setDescription(
+      embed.data.description.replace(`<@${customerId}>`, "匿名"),
+    );
+  });
+  const content =
+    anonymous && String(message.content || "").includes(`<@${customerId}>`)
+      ? "匿名評價"
+      : message.content;
+  await message.edit({ content, embeds, components: [] }).catch(() => {});
+}
+
 async function sendOrderReviewPanel(channel, order, assignedPlayers = []) {
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`order_review_5_${order.id}`)
-      .setLabel("🌟🌟🌟🌟🌟 超級滿意")
-      .setStyle(ButtonStyle.Success),
-
-    new ButtonBuilder()
-      .setCustomId(`order_review_4_${order.id}`)
-      .setLabel("🌟🌟🌟🌟 很滿意")
-      .setStyle(ButtonStyle.Primary),
-
-    new ButtonBuilder()
-      .setCustomId(`order_review_3_${order.id}`)
-      .setLabel("🌟🌟🌟 普通")
-      .setStyle(ButtonStyle.Secondary),
-  );
-
-  const row2 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`order_review_2_${order.id}`)
-      .setLabel("🌟🌟 不太滿意")
-      .setStyle(ButtonStyle.Secondary),
-
-    new ButtonBuilder()
-      .setCustomId(`order_review_1_${order.id}`)
-      .setLabel("🌟 很不滿意")
-      .setStyle(ButtonStyle.Danger),
-  );
-
   await channel.send({
     embeds: [
       new EmbedBuilder()
@@ -1579,22 +1638,15 @@ async function sendOrderReviewPanel(channel, order, assignedPlayers = []) {
             }`,
         )
         .setFooter({
-          text: "評價送出後，會提供填寫文字心得的選項",
+          text: "可先選擇公開或匿名，再選擇評分並填寫文字心得",
         })
         .setTimestamp(),
     ],
-    components: [row, row2],
+    components: buildOrderReviewComponents(order.id),
   });
 }
 async function sendManualOrderReviewPanel(channel, customer, staff) {
   const surveyId = Date.now().toString(36);
-  const makeButton = (rating, label, style) =>
-    new ButtonBuilder()
-      .setCustomId(
-        `manual_review_${rating}_${customer.id}_${staff.id}_${surveyId}`,
-      )
-      .setLabel(label)
-      .setStyle(style);
 
   await channel.send({
     content: `<@${customer.id}>`,
@@ -1606,20 +1658,14 @@ async function sendManualOrderReviewPanel(channel, customer, staff) {
           `<@${customer.id}> 請為 <@${staff.id}> 的服務留下評價。\n\n` +
             "這份調查由客服手動建立，不需要對應訂單。",
         )
-        .setFooter({ text: "選擇評分後即可填寫文字心得" })
+        .setFooter({ text: "可先選擇公開或匿名，再選擇評分並填寫文字心得" })
         .setTimestamp(),
     ],
-    components: [
-      new ActionRowBuilder().addComponents(
-        makeButton(5, "🌟🌟🌟🌟🌟 超級滿意", ButtonStyle.Success),
-        makeButton(4, "🌟🌟🌟🌟 很滿意", ButtonStyle.Primary),
-        makeButton(3, "🌟🌟🌟 普通", ButtonStyle.Secondary),
-      ),
-      new ActionRowBuilder().addComponents(
-        makeButton(2, "🌟🌟 不太滿意", ButtonStyle.Secondary),
-        makeButton(1, "🌟 很不滿意", ButtonStyle.Danger),
-      ),
-    ],
+    components: buildManualReviewComponents(
+      customer.id,
+      staff.id,
+      surveyId,
+    ),
   });
 }
 async function handleSatisfactionSurveyCommand(interaction) {
@@ -5306,6 +5352,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const customerId = parts[4];
         const staffId = parts[5];
         const surveyId = parts[6];
+        const anonymous = parts[7] === "anon";
         const orderId = `manual-${surveyId}`;
         const comment = interaction.fields.getTextInputValue("comment") || "";
         if (interaction.user.id !== customerId) {
@@ -5345,18 +5392,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
           });
         }
         await interaction.reply({
-          content: `✅ 感謝你的評價！你給了 ${"🌟".repeat(
+          content: `✅ 感謝你的${anonymous ? "匿名" : ""}評價！你給了 ${"🌟".repeat(
             rating,
           )}（${rating} 星）`,
           flags: 64,
         });
+        await finalizeReviewPrompt(interaction, customerId, anonymous);
         await interaction.channel.send({
           embeds: [
             new EmbedBuilder()
               .setColor("#ffd166")
               .setTitle("💬 已收到滿意度調查")
               .setDescription(
-                `老闆：<@${customerId}>\n陪陪：<@${staffId}>\n` +
+                `老闆：${anonymous ? "匿名" : `<@${customerId}>`}\n陪陪：<@${staffId}>\n` +
                   `評分：${"🌟".repeat(rating)} ${rating}/5\n心得：${
                     comment || "未填寫"
                   }`,
@@ -5373,6 +5421,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const parts = interaction.customId.split("_");
         const rating = Number(parts[3]);
         const orderId = parts[4];
+        const anonymous = parts[5] === "anon";
         const comment = interaction.fields.getTextInputValue("comment") || "";
         const { data: order, error } = await supabase
           .from("play_orders")
@@ -5427,12 +5476,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
         await interaction.reply({
           content:
-            `✅ 感謝你的評價！\n` +
+            `✅ 感謝你的${anonymous ? "匿名" : ""}評價！\n` +
             `你給了 ${"🌟".repeat(rating)}${
               rating < 5 ? `（${rating} 星）` : ""
             }`,
           flags: 64,
         });
+        await finalizeReviewPrompt(
+          interaction,
+          interaction.user.id,
+          anonymous,
+        );
         await interaction.channel.send({
           embeds: [
             new EmbedBuilder()
@@ -5440,7 +5494,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
               .setTitle("💬 已收到訂單評價")
               .setDescription(
                 `訂單編號：${order.order_no || order.id}\n` +
-                  `闆闆：<@${interaction.user.id}>\n` +
+                  `闆闆：${anonymous ? "匿名" : `<@${interaction.user.id}>`}\n` +
                   `評分：${"🌟".repeat(rating)} ${rating}/5\n` +
                   `心得：${comment || "未填寫"}`,
               )
@@ -5526,7 +5580,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // ===== 訂單評價按鈕：會開 Modal，不能先 defer =====
       if (
         customId.startsWith("order_review_") ||
-        customId.startsWith("manual_review_")
+        customId.startsWith("manual_review_") ||
+        customId.startsWith("review_privacy_")
       ) {
         await handleButtonInteraction(interaction);
         return;
@@ -5705,7 +5760,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // ===== 訂單評價按鈕：會開 Modal，不能先 defer =====
       if (
         interaction.customId.startsWith("order_review_") ||
-        interaction.customId.startsWith("manual_review_")
+        interaction.customId.startsWith("manual_review_") ||
+        interaction.customId.startsWith("review_privacy_")
       ) {
         await handleButtonInteraction(interaction);
         return;
@@ -8001,12 +8057,59 @@ const dailyCheckinInFlight = new Set();
 // ===== 完整按鈕交互處理 =====
 async function handleButtonInteraction(interaction) {
   const customId = interaction.customId;
+  if (customId.startsWith("review_privacy_order_")) {
+    const parts = customId.split("_");
+    const anonymous = parts[3] === "anon";
+    const orderId = parts[4];
+    const { data: order, error } = await supabase
+      .from("play_orders")
+      .select("id, customer_id")
+      .eq("id", orderId)
+      .maybeSingle();
+    if (error || !order) {
+      return await interaction.reply({
+        content: "❌ 找不到這張訂單",
+        flags: 64,
+      });
+    }
+    if (interaction.user.id !== order.customer_id) {
+      return await interaction.reply({
+        content: "❌ 只有下單的闆闆可以選擇評價是否匿名",
+        flags: 64,
+      });
+    }
+    return await interaction.update({
+      components: buildOrderReviewComponents(orderId, anonymous),
+    });
+  }
+  if (customId.startsWith("review_privacy_manual_")) {
+    const parts = customId.split("_");
+    const anonymous = parts[3] === "anon";
+    const customerId = parts[4];
+    const staffId = parts[5];
+    const surveyId = parts[6];
+    if (interaction.user.id !== customerId) {
+      return await interaction.reply({
+        content: "❌ 只有這份調查指定的老闆可以選擇是否匿名",
+        flags: 64,
+      });
+    }
+    return await interaction.update({
+      components: buildManualReviewComponents(
+        customerId,
+        staffId,
+        surveyId,
+        anonymous,
+      ),
+    });
+  }
   if (customId.startsWith("manual_review_")) {
     const parts = customId.split("_");
     const rating = Number(parts[2]);
     const customerId = parts[3];
     const staffId = parts[4];
     const surveyId = parts[5];
+    const anonymous = parts[6] === "anon";
     if (interaction.user.id !== customerId) {
       return await interaction.reply({
         content: "❌ 只有這份調查指定的老闆可以填寫",
@@ -8015,9 +8118,9 @@ async function handleButtonInteraction(interaction) {
     }
     const modal = new ModalBuilder()
       .setCustomId(
-        `submit_manual_review_${rating}_${customerId}_${staffId}_${surveyId}`,
+        `submit_manual_review_${rating}_${customerId}_${staffId}_${surveyId}_${anonymous ? "anon" : "public"}`,
       )
-      .setTitle("填寫滿意度調查");
+      .setTitle(anonymous ? "填寫匿名滿意度調查" : "填寫滿意度調查");
     const commentInput = new TextInputBuilder()
       .setCustomId("comment")
       .setLabel("想給這次服務什麼回饋？")
@@ -8032,6 +8135,7 @@ async function handleButtonInteraction(interaction) {
     const parts = customId.split("_");
     const rating = Number(parts[2]);
     const orderId = parts[3];
+    const anonymous = parts[4] === "anon";
     const { data: order, error } = await supabase
       .from("play_orders")
       .select("*")
@@ -8062,8 +8166,10 @@ async function handleButtonInteraction(interaction) {
       });
     }
     const modal = new ModalBuilder()
-      .setCustomId(`submit_order_review_${rating}_${order.id}`)
-      .setTitle("填寫訂單評價");
+      .setCustomId(
+        `submit_order_review_${rating}_${order.id}_${anonymous ? "anon" : "public"}`,
+      )
+      .setTitle(anonymous ? "填寫匿名訂單評價" : "填寫訂單評價");
     const commentInput = new TextInputBuilder()
       .setCustomId("comment")
       .setLabel("想給這次服務什麼回饋？")
