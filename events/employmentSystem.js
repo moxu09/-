@@ -29,6 +29,8 @@ const EMPLOYMENT_CONTRACT_PATH = path.join(
 );
 const EMPLOYMENT_CONTRACT_FILENAME =
   "深夜不關燈及秋奈電競_陪陪承攬合作契約書_v1.1.pdf";
+const EMPLOYMENT_CONTRACT_RETURN_NOTE =
+  "備註：請填寫並簽署後於入群後三天內發送到個人填單區以完成入職手續（無論電子簽署或紙本簽署掃描上傳皆可）";
 
 const pendingApplications = new Map();
 const processingReviews = new Set();
@@ -1085,9 +1087,7 @@ function createEmploymentSystem(client, config) {
               }),
             ],
           });
-          await applicant.send(
-            "備註：請填寫並於入群後三天內發送到個人填單區以完成入職手續",
-          );
+          await applicant.send(EMPLOYMENT_CONTRACT_RETURN_NOTE);
         } else {
           await applicant.send(
             "經綜合考量，您的資料尚不符合我方所需之職位\n" +
@@ -1293,6 +1293,7 @@ function createEmploymentSystem(client, config) {
 }
 
 module.exports = {
+  EMPLOYMENT_CONTRACT_RETURN_NOTE,
   GAMES,
   buildApplicationEmbed,
   buildApprovedEmploymentDmContent,

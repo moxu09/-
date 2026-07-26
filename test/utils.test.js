@@ -50,6 +50,7 @@ const {
 } = require("../runtime/commandRegistry");
 const { runStartupGroup } = require("../runtime/startupOrchestrator");
 const {
+  EMPLOYMENT_CONTRACT_RETURN_NOTE,
   GAMES,
   buildApprovedEmploymentDmContent,
   buildEmploymentPdfBuffer,
@@ -461,6 +462,10 @@ test("approved employment DM includes deadlines and bundled contract", () => {
   });
   assert.match(content, /48小時內入群報到/);
   assert.match(content, /新人入職必看頻道/);
+  assert.equal(
+    EMPLOYMENT_CONTRACT_RETURN_NOTE,
+    "備註：請填寫並簽署後於入群後三天內發送到個人填單區以完成入職手續（無論電子簽署或紙本簽署掃描上傳皆可）",
+  );
   const contract = fs.readFileSync(
     path.join(
       __dirname,
