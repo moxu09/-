@@ -1,4 +1,6 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const test = require("node:test");
 
 const gifts = require("../config/tipGifts");
@@ -49,6 +51,7 @@ const {
 const { runStartupGroup } = require("../runtime/startupOrchestrator");
 const {
   GAMES,
+  buildApprovedEmploymentDmContent,
   buildEmploymentPdfBuffer,
   getApplicationFields,
   normalizeRoleName,
@@ -448,6 +451,27 @@ test("employment applications expose ten games and complete field schemas", () =
   assert.equal(getApplicationFields("honor_of_kings").length, 9);
   assert.equal(getApplicationFields("other").length, 9);
   assert.equal(normalizeRoleName("｜｜・遊戲審核官"), "遊戲審核官");
+});
+
+test("approved employment DM includes deadlines and bundled contract", () => {
+  const content = buildApprovedEmploymentDmContent({
+    brandName: "深夜不關燈",
+    workGuildInvite: "https://discord.gg/example",
+    newcomerChannelId: "123456789012345678",
+  });
+  assert.match(content, /48小時內入群報到/);
+  assert.match(content, /新人入職必看頻道/);
+  const contract = fs.readFileSync(
+    path.join(
+      __dirname,
+      "..",
+      "assets",
+      "employment",
+      "陪陪承攬合作契約書_v1.1.pdf",
+    ),
+  );
+  assert.equal(contract.subarray(0, 4).toString(), "%PDF");
+  assert.ok(contract.length > 300_000);
 });
 
 test("employment PDF generation returns a valid Chinese PDF", async () => {

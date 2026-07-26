@@ -20,6 +20,15 @@ const FONT_PATH = path.join(
   "fonts",
   "NotoSansCJKtc-Regular.otf",
 );
+const EMPLOYMENT_CONTRACT_PATH = path.join(
+  __dirname,
+  "..",
+  "assets",
+  "employment",
+  "陪陪承攬合作契約書_v1.1.pdf",
+);
+const EMPLOYMENT_CONTRACT_FILENAME =
+  "深夜不關燈及秋奈電競_陪陪承攬合作契約書_v1.1.pdf";
 
 const pendingApplications = new Map();
 const processingReviews = new Set();
@@ -572,6 +581,15 @@ function safeFilename(value) {
     .slice(0, 60);
 }
 
+function buildApprovedEmploymentDmContent(config) {
+  return (
+    `恭喜成功入職${config.brandName}\n\n` +
+    `以下為工作群連結：${config.workGuildInvite}\n` +
+    "請於收到此連結48小時內入群報到\n\n" +
+    `新人入職必看頻道：<#${config.newcomerChannelId}>`
+  );
+}
+
 function buildEmploymentPdfBuffer({
   brandName,
   applicantId,
@@ -1059,10 +1077,16 @@ function createEmploymentSystem(client, config) {
       let dmDelivered = true;
       try {
         if (result === "通過") {
+          await applicant.send({
+            content: buildApprovedEmploymentDmContent(config),
+            files: [
+              new AttachmentBuilder(EMPLOYMENT_CONTRACT_PATH, {
+                name: EMPLOYMENT_CONTRACT_FILENAME,
+              }),
+            ],
+          });
           await applicant.send(
-            `恭喜成功入職${config.brandName}\n\n` +
-              `以下為工作群連結：${config.workGuildInvite}\n\n` +
-              `新人入職必看頻道：<#${config.newcomerChannelId}>`,
+            "備註：請填寫並於入群後三天內發送到個人填單區以完成入職手續",
           );
         } else {
           await applicant.send(
@@ -1075,6 +1099,12 @@ function createEmploymentSystem(client, config) {
         dmDelivered = false;
         console.error("[入職審核] 私訊申請人失敗", error);
       }
+
+      await interaction.channel.send({
+        content:
+          "已發送面試結果，通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官",
+        allowedMentions: { parse: [] },
+      });
 
       await interaction.editReply({
         content:
@@ -1265,6 +1295,7 @@ function createEmploymentSystem(client, config) {
 module.exports = {
   GAMES,
   buildApplicationEmbed,
+  buildApprovedEmploymentDmContent,
   buildEmploymentPdfBuffer,
   buildRulesEmbeds,
   createEmploymentSystem,
