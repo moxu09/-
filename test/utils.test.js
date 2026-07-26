@@ -47,6 +47,12 @@ const {
 } = require("../runtime/commandRegistry");
 const { runStartupGroup } = require("../runtime/startupOrchestrator");
 const {
+  GAMES,
+  buildEmploymentPdfBuffer,
+  getApplicationFields,
+  normalizeRoleName,
+} = require("../events/employmentSystem");
+const {
   claimDailyCheckinReward,
 } = require("../utils/dailyCheckin");
 
@@ -410,4 +416,35 @@ test("startup orchestrator limits concurrency and preserves every task result", 
   assert.equal(summary.total, 6);
   assert.equal(summary.succeeded, 5);
   assert.equal(summary.failed, 1);
+});
+
+test("employment applications expose ten games and complete field schemas", () => {
+  assert.equal(GAMES.length, 10);
+  assert.equal(getApplicationFields("valorant").length, 14);
+  assert.equal(getApplicationFields("delta").length, 14);
+  assert.equal(getApplicationFields("naraka").length, 7);
+  assert.equal(getApplicationFields("cs2").length, 13);
+  assert.equal(getApplicationFields("honor_of_kings").length, 9);
+  assert.equal(getApplicationFields("other").length, 9);
+  assert.equal(normalizeRoleName("｜｜・遊戲審核官"), "遊戲審核官");
+});
+
+test("employment PDF generation returns a valid Chinese PDF", async () => {
+  const buffer = await buildEmploymentPdfBuffer({
+    brandName: "深夜不關燈",
+    applicantId: "123456789012345678",
+    gameKey: "valorant",
+    track: "technical",
+    fields: [
+      { name: "填寫日期", value: "2026/07/26 21:00:00" },
+      { name: "填寫人", value: "測試申請人" },
+      { name: "是否同意陪玩共同守則", value: "同意" },
+    ],
+    result: "通過",
+    reviewer: "測試審核官",
+    reviewedAt: "2026/07/26 21:10:00",
+  });
+
+  assert.equal(buffer.subarray(0, 4).toString(), "%PDF");
+  assert.ok(buffer.length > 20_000);
 });

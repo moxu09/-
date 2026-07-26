@@ -49,6 +49,10 @@ const {
   normalizeRedPacketMode,
 } = require("./utils/redPackets");
 const TIP_GIFTS = require("./config/tipGifts");
+const employmentConfig = require("./config/employment");
+const {
+  createEmploymentSystem,
+} = require("./events/employmentSystem");
 const {
   formatTipStaffMentions,
   getTipGiftByKey: findTipGiftByKey,
@@ -106,6 +110,7 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+const employmentSystem = createEmploymentSystem(client, employmentConfig);
 const runtimeHealth = createHealthState("rainbot-deepnight");
 const runtimeServer = createHealthServer(runtimeHealth);
 const shutdownRuntime = installProcessHandlers({
@@ -4773,6 +4778,7 @@ client.once(Events.ClientReady, async () => {
       { name: "簽到面板", run: () => sendCheckinPanel(client) },
       { name: "扭蛋面板", run: () => sendGachaPanel(client) },
       { name: "私人房間面板", run: () => sendPrivateRoomPanel(client) },
+      { name: "入職申請面板", run: () => employmentSystem.sendPanel() },
       { name: "舊 VIP 回填", run: processLegacyVipBackfillQueue },
     ],
     { concurrency: 3, healthState: runtimeHealth },
@@ -5191,6 +5197,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       await interaction.respond([]);
       return;
     }
+
+    if (await employmentSystem.handleInteraction(interaction)) return;
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
