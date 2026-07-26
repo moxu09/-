@@ -15,6 +15,7 @@ const {
 } = require("../utils/redPackets");
 const {
   buildReportAmounts,
+  canCorrectFirstSegmentStart,
   isStaffInteraction,
   matchStaffLookup,
   normalizeStaffLookup,
@@ -243,6 +244,26 @@ test("time-only work reports use the latest Taipei occurrence", () => {
     parseTaipeiWorkTime("00:20", justAfterMidnight).toISOString(),
     "2026-07-14T16:20:00.000Z",
   );
+});
+
+test("first work-report start time can be corrected exactly once", () => {
+  const pending = {
+    segments: [],
+    pendingSegmentStart: "2026-07-27T12:00:00.000Z",
+  };
+  assert.equal(canCorrectFirstSegmentStart(pending), true);
+  assert.equal(
+    canCorrectFirstSegmentStart({ ...pending, startTimeEditCount: 1 }),
+    false,
+  );
+  assert.equal(
+    canCorrectFirstSegmentStart({
+      ...pending,
+      segments: [{ startedAt: pending.pendingSegmentStart, minutes: 60 }],
+    }),
+    false,
+  );
+  assert.equal(canCorrectFirstSegmentStart({ segments: [] }), false);
 });
 
 test("VIP rewards normalize suffix coupons and never auto-grant gift cards", () => {

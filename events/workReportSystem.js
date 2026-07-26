@@ -176,6 +176,33 @@ function formatTaipeiDateTime(value) {
   }).format(new Date(value));
 }
 
+function formatTaipeiWorkTimeInput(value) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Taipei",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date(value))
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, part.value]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function canCorrectFirstSegmentStart(meta) {
+  const segments = Array.isArray(meta?.segments) ? meta.segments : [];
+  return (
+    segments.length === 0 &&
+    Boolean(meta?.pendingSegmentStart) &&
+    Number(meta?.startTimeEditCount || 0) < 1
+  );
+}
+
 function parseDurationMinutes(value) {
   const text = String(value || "")
     .trim()
@@ -1391,6 +1418,156 @@ function createWorkReportSystem({
 
     if (
       interaction.isButton() &&
+      interaction.customId.startsWith("work_report_correct_start_")
+    ) {
+      const reportId = interaction.customId.replace(
+        "work_report_correct_start_",
+        "",
+      );
+      const { data: report } = await supabase
+        .from(salaryTable)
+        .select("*")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (
+        !report ||
+        report.discord_id !== interaction.user.id ||
+        !["work_draft", "工時待填"].includes(report.status)
+      ) {
+        return interaction.reply({
+          content: "這筆申報無法修改，可能已送出或不是你的訂單。",
+          flags: 64,
+        });
+      }
+      let meta = {};
+      try {
+        meta = JSON.parse(report.note || report.admin_note || "{}");
+      } catch {}
+      if (!canCorrectFirstSegmentStart(meta)) {
+        return interaction.reply({
+          content: "第一段開始時間只能在輸入結束時間前修改一次。",
+          flags: 64,
+        });
+      }
+      const modal = new ModalBuilder()
+        .setCustomId(`submit_work_report_correct_start_${reportId}`)
+        .setTitle("修改第一段開始時間");
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId("work_time")
+            .setLabel("開始日期時間（台北，限修改一次）")
+            .setPlaceholder("2026-07-19 20:30")
+            .setValue(formatTaipeiWorkTimeInput(meta.pendingSegmentStart))
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true),
+        ),
+      );
+      await interaction.showModal(modal);
+      return true;
+    }
+
+    if (
+      interaction.isModalSubmit() &&
+      interaction.customId.startsWith("submit_work_report_correct_start_")
+    ) {
+      const reportId = interaction.customId.replace(
+        "submit_work_report_correct_start_",
+        "",
+      );
+      const enteredTime = parseTaipeiWorkTime(
+        interaction.fields.getTextInputValue("work_time"),
+      );
+      if (!enteredTime) {
+        return interaction.reply({
+          content:
+            "時間格式不正確，請使用 YYYY-MM-DD HH:mm，例如 2026-07-19 20:30；也可只輸入 HH:mm。",
+          flags: 64,
+        });
+      }
+      const { data: current } = await supabase
+        .from(salaryTable)
+        .select("*")
+        .eq("id", reportId)
+        .maybeSingle();
+      if (
+        !current ||
+        current.discord_id !== interaction.user.id ||
+        !["work_draft", "工時待填"].includes(current.status)
+      ) {
+        return interaction.reply({
+          content: "這筆申報無法修改，可能已送出或不是你的訂單。",
+          flags: 64,
+        });
+      }
+      let meta = {};
+      try {
+        meta = JSON.parse(current.note || current.admin_note || "{}");
+      } catch {}
+      if (!canCorrectFirstSegmentStart(meta)) {
+        return interaction.reply({
+          content: "第一段開始時間的修改機會已使用，或本段已經結束。",
+          flags: 64,
+        });
+      }
+      const nextMeta = {
+        ...meta,
+        pendingSegmentStart: enteredTime.toISOString(),
+        startedAt: enteredTime.toISOString(),
+        startTimeEditCount: 1,
+        startTimeEditedBy: interaction.user.id,
+        startTimeEditedAt: new Date().toISOString(),
+      };
+      const updatePayload =
+        appKey === "deepnight"
+          ? {
+              accepted_at: enteredTime.toISOString(),
+              note: JSON.stringify(nextMeta),
+            }
+          : {
+              paid_at: enteredTime.toISOString(),
+              admin_note: JSON.stringify(nextMeta),
+            };
+      const { data: updated, error } = await supabase
+        .from(salaryTable)
+        .update(updatePayload)
+        .eq("id", reportId)
+        .eq("discord_id", interaction.user.id)
+        .in("status", ["work_draft", "工時待填"])
+        .select()
+        .maybeSingle();
+      if (error || !updated) {
+        return interaction.reply({
+          content: "修改開始時間失敗，請稍後再試。",
+          flags: 64,
+        });
+      }
+      await interaction.reply({
+        content: `第一段開始時間已修改為 ${formatTaipeiDateTime(enteredTime)}，本次修改機會已使用。`,
+        flags: 64,
+      });
+      await interaction.message
+        ?.edit({
+          embeds: [buildUpdatedReportEmbed(interaction.message, nextMeta)],
+          components: [
+            new ActionRowBuilder().addComponents(
+              new ButtonBuilder()
+                .setCustomId(`work_report_end_${reportId}`)
+                .setLabel("輸入第 1 段結束時間")
+                .setStyle(ButtonStyle.Success),
+              new ButtonBuilder()
+                .setCustomId(`work_report_edit_${reportId}`)
+                .setLabel("改時長及金額")
+                .setStyle(ButtonStyle.Secondary),
+            ),
+          ],
+        })
+        .catch(() => {});
+      return true;
+    }
+
+    if (
+      interaction.isButton() &&
       (interaction.customId.startsWith("work_report_start_") ||
         interaction.customId.startsWith("work_report_end_"))
     ) {
@@ -1549,6 +1726,14 @@ function createWorkReportSystem({
                 .setCustomId(`work_report_end_${reportId}`)
                 .setLabel(`輸入第 ${segments.length + 1} 段結束時間`)
                 .setStyle(ButtonStyle.Success),
+              ...(canCorrectFirstSegmentStart(nextMeta)
+                ? [
+                    new ButtonBuilder()
+                      .setCustomId(`work_report_correct_start_${reportId}`)
+                      .setLabel("修改開始時間（限 1 次）")
+                      .setStyle(ButtonStyle.Primary),
+                  ]
+                : []),
               new ButtonBuilder()
                 .setCustomId(`work_report_edit_${reportId}`)
                 .setLabel("改時長及金額")
@@ -1605,6 +1790,7 @@ function createWorkReportSystem({
 
 module.exports = {
   buildReportAmounts,
+  canCorrectFirstSegmentStart,
   createWorkReportSystem,
   isStaffInteraction,
   matchStaffLookup,
