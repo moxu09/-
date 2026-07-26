@@ -586,7 +586,7 @@ function buildEmploymentPdfBuffer({
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: "A4",
-      margins: { top: 54, bottom: 90, left: 52, right: 52 },
+      margins: { top: 36, bottom: 36, left: 36, right: 36 },
       bufferPages: true,
       info: {
         Title: `${brandName}陪玩入職申請紀錄`,
@@ -601,16 +601,33 @@ function buildEmploymentPdfBuffer({
 
     doc.registerFont("NotoSansTC", FONT_PATH);
     doc.font("NotoSansTC");
+
+    const pageWidth = doc.page.width;
+    const pageHeight = doc.page.height;
+    const sideMargin = 36;
+    const columnGap = 16;
+    const columnWidth =
+      (pageWidth - sideMargin * 2 - columnGap) / 2;
+    const contentTop = 142;
+    const resultTop = pageHeight - 104;
+    const availableFieldHeight = resultTop - contentTop;
+
     doc
-      .fontSize(20)
+      .fontSize(17)
       .fillColor("#312e81")
-      .text(`${brandName}｜陪玩入職申請紀錄`, { align: "center" });
-    doc.moveDown(0.6);
+      .text(`${brandName}｜陪玩入職申請紀錄`, sideMargin, 34, {
+        align: "center",
+        width: pageWidth - sideMargin * 2,
+        lineBreak: false,
+      });
     doc
-      .fontSize(10)
+      .fontSize(8.5)
       .fillColor("#6b7280")
-      .text(`申請人 Discord ID：${applicantId}`, { align: "center" });
-    doc.moveDown(1.2);
+      .text(`申請人 Discord ID：${applicantId}`, sideMargin, 63, {
+        align: "center",
+        width: pageWidth - sideMargin * 2,
+        lineBreak: false,
+      });
 
     const game = getGame(gameKey);
     const summary = [
@@ -620,67 +637,173 @@ function buildEmploymentPdfBuffer({
         ? [["遊戲平台", PLATFORM_LABELS[platform] || platform]]
         : []),
     ];
-
-    for (const [label, value] of summary) {
+    const summaryWidth = (pageWidth - sideMargin * 2) / summary.length;
+    summary.forEach(([label, value], index) => {
+      const x = sideMargin + summaryWidth * index;
       doc
-        .fontSize(11)
-        .fillColor("#111827")
-        .text(`${label}：`, { continued: true })
-        .fillColor("#374151")
-        .text(String(value || "未填寫"));
-    }
-
-    doc.moveDown(0.8);
-    doc
-      .fontSize(14)
-      .fillColor("#312e81")
-      .text("申請內容", { underline: true });
-    doc.moveDown(0.4);
-
-    for (const entry of fields) {
-      doc
-        .fontSize(10)
+        .fontSize(7)
         .fillColor("#6b7280")
-        .text(entry.name)
-        .fontSize(11)
+        .text(label, x, 88, {
+          align: "center",
+          width: summaryWidth,
+          lineBreak: false,
+        })
+        .fontSize(9)
         .fillColor("#111827")
-        .text(String(entry.value || "未填寫"), {
-          indent: 10,
-          paragraphGap: 7,
+        .text(String(value || "未填寫"), x, 101, {
+          align: "center",
+          width: summaryWidth,
+          lineBreak: false,
         });
+    });
+
+    doc
+      .fontSize(11)
+      .fillColor("#312e81")
+      .text("申請內容", sideMargin, 122, {
+        width: pageWidth - sideMargin * 2,
+        lineBreak: false,
+      });
+
+    const summaryNames = new Set(["遊戲項目", "娛樂／技術", "遊戲平台"]);
+    const detailFields = fields.filter(
+      (entry) => !summaryNames.has(entry.name),
+    );
+
+    function measureEntry(entry, fontSize) {
+      const labelSize = Math.max(4.5, fontSize - 1.2);
+      const width = columnWidth - 12;
+      const labelHeight = doc
+        .fontSize(labelSize)
+        .heightOfString(String(entry.name || "欄位"), {
+          width,
+          lineGap: 0,
+        });
+      const valueHeight = doc
+        .fontSize(fontSize)
+        .heightOfString(String(entry.value || "未填寫"), {
+          width,
+          lineGap: 0.3,
+        });
+      return {
+        entry,
+        labelHeight,
+        valueHeight,
+        totalHeight: labelHeight + valueHeight + 7,
+      };
     }
 
-    doc.moveDown(0.8);
+    function findLayout(fontSize) {
+      const measured = detailFields.map((entry) =>
+        measureEntry(entry, fontSize),
+      );
+      let best = null;
+      for (let split = 1; split < measured.length; split += 1) {
+        const leftHeight = measured
+          .slice(0, split)
+          .reduce((sum, item) => sum + item.totalHeight, 0);
+        const rightHeight = measured
+          .slice(split)
+          .reduce((sum, item) => sum + item.totalHeight, 0);
+        const height = Math.max(leftHeight, rightHeight);
+        if (!best || height < best.height) {
+          best = { measured, split, height };
+        }
+      }
+      return best || { measured, split: measured.length, height: 0 };
+    }
+
+    let fieldFontSize = 9;
+    let layout = findLayout(fieldFontSize);
+    while (layout.height > availableFieldHeight && fieldFontSize > 4.5) {
+      fieldFontSize -= 0.25;
+      layout = findLayout(fieldFontSize);
+    }
+
+    function drawColumn(items, x) {
+      let y = contentTop;
+      const labelSize = Math.max(4.5, fieldFontSize - 1.2);
+      const width = columnWidth - 12;
+
+      for (const item of items) {
+        doc
+          .fontSize(labelSize)
+          .fillColor("#6b7280")
+          .text(String(item.entry.name || "欄位"), x, y, {
+            width,
+            lineGap: 0,
+          });
+        y += item.labelHeight + 1;
+        doc
+          .fontSize(fieldFontSize)
+          .fillColor("#111827")
+          .text(String(item.entry.value || "未填寫"), x + 6, y, {
+            width: width - 6,
+            lineGap: 0.3,
+          });
+        y += item.valueHeight + 3;
+        doc
+          .moveTo(x, y)
+          .lineTo(x + width, y)
+          .lineWidth(0.35)
+          .strokeColor("#e5e7eb")
+          .stroke();
+        y += 3;
+      }
+    }
+
+    drawColumn(layout.measured.slice(0, layout.split), sideMargin);
+    drawColumn(
+      layout.measured.slice(layout.split),
+      sideMargin + columnWidth + columnGap,
+    );
+
     doc
-      .fontSize(14)
+      .roundedRect(
+        sideMargin,
+        resultTop + 4,
+        pageWidth - sideMargin * 2,
+        48,
+        5,
+      )
+      .fill(result === "通過" ? "#ecfdf5" : "#fef2f2");
+    doc
+      .fontSize(12)
       .fillColor(result === "通過" ? "#15803d" : "#b91c1c")
-      .text(`審核結果：${result}`, { underline: true });
+      .text(`審核結果：${result}`, sideMargin + 12, resultTop + 12, {
+        width: 150,
+        lineBreak: false,
+      });
     doc
-      .fontSize(10)
+      .fontSize(7.5)
       .fillColor("#374151")
-      .text(`審核人：${reviewer}`)
-      .text(`審核日期：${reviewedAt}`);
+      .text(`審核人：${reviewer}`, sideMargin + 174, resultTop + 11, {
+        width: pageWidth - sideMargin * 2 - 186,
+        lineBreak: false,
+      })
+      .text(`審核日期：${reviewedAt}`, sideMargin + 174, resultTop + 27, {
+        width: pageWidth - sideMargin * 2 - 186,
+        lineBreak: false,
+      });
 
     const range = doc.bufferedPageRange();
-    for (let index = range.start; index < range.start + range.count; index += 1) {
-      doc.switchToPage(index);
-      const bottomMargin = doc.page.margins.bottom;
-      doc.page.margins.bottom = 0;
-      doc
-        .fontSize(9)
-        .fillColor("#9ca3af")
-        .text(
-          `${brandName} 入職申請紀錄  |  第 ${index + 1} / ${range.count} 頁`,
-          52,
-          doc.page.height - 42,
-          {
-            align: "center",
-            width: doc.page.width - 104,
-            lineBreak: false,
-          },
-        );
-      doc.page.margins.bottom = bottomMargin;
-    }
+    doc.switchToPage(range.start);
+    const bottomMargin = doc.page.margins.bottom;
+    doc.page.margins.bottom = 0;
+    doc
+      .fontSize(7)
+      .fillColor("#9ca3af")
+      .text(
+        `${brandName} 入職申請紀錄  |  1 / 1`,
+        sideMargin,
+        pageHeight - 24,
+        {
+          align: "center",
+          width: pageWidth - sideMargin * 2,
+          lineBreak: false,
+        },
+      );
+    doc.page.margins.bottom = bottomMargin;
 
     doc.end();
   });
@@ -888,14 +1011,12 @@ function createEmploymentSystem(client, config) {
           `${config.brandName}_${game?.label || record.gameKey}_${record.applicantId}_${Date.now()}`,
         ) + ".pdf";
 
-      await archiveChannel.send({
-        content:
-          `📁 入職申請完整紀錄\n` +
-          `申請人：<@${record.applicantId}>\n` +
-          `審核結果：**${result}**\n` +
-          `審核人：<@${interaction.user.id}>`,
+      const pdfMessage = await archiveChannel.send({
         files: [new AttachmentBuilder(pdfBuffer, { name: filename })],
-        allowedMentions: { users: [record.applicantId, interaction.user.id] },
+      });
+      await pdfMessage.reply({
+        content: `<@${record.applicantId}> 審核${result}`,
+        allowedMentions: { users: [record.applicantId] },
       });
 
       const updatedEmbed = EmbedBuilder.from(record.embed)
