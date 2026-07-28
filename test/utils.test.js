@@ -15,10 +15,13 @@ const {
 } = require("../utils/reviews");
 const { parseAllowedServices } = require("../utils/services");
 const {
+  buildTipAllocations,
   formatTipStaffMentions,
+  getTipAllocationTotal,
   getTipGiftByKey,
   getTipStaffIds,
   getTipTotalAmount,
+  parseTipQuantityList,
 } = require("../utils/tips");
 const {
   buildRedPacketShares,
@@ -220,6 +223,36 @@ test("tip helpers preserve multi-staff behavior", () => {
   assert.equal(getTipTotalAmount(50, ["1", "2"]), 100);
   assert.equal(getTipTotalAmount(50, []), 50);
   assert.equal(getTipGiftByKey(gifts, gifts[0].key), gifts[0]);
+});
+
+test("tip helpers calculate multi-gift and separate staff quantities", () => {
+  assert.deepEqual(parseTipQuantityList("2, 3", 2), [2, 3]);
+  assert.throws(() => parseTipQuantityList("2", 2), /2 個/);
+
+  const tipData = {
+    selectedStaffIds: ["1", "2"],
+    gifts: [
+      { key: "a", name: "禮物 A", price: 10 },
+      { key: "b", name: "禮物 B", price: 20 },
+    ],
+    sharedQuantities: [1, 1],
+    quantitiesByStaff: {
+      1: [2, 1],
+      2: [1, 3],
+    },
+  };
+  assert.deepEqual(
+    buildTipAllocations(tipData).map(({ staffId, item, amount }) => ({
+      staffId,
+      item,
+      amount,
+    })),
+    [
+      { staffId: "1", item: "禮物 A×2、禮物 B×1", amount: 40 },
+      { staffId: "2", item: "禮物 A×1、禮物 B×3", amount: 70 },
+    ],
+  );
+  assert.equal(getTipAllocationTotal(tipData), 110);
 });
 
 test("red packet shares preserve totals and stay near the average", () => {
