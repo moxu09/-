@@ -299,17 +299,22 @@ function getTipStaffSelectionContent(tipData = {}) {
   if (!staffIds.length) {
     return (
       "目前尚未選擇受賞陪陪。\n" +
-      "可以從上方任一個選單選擇陪陪，選完請按「選好了，下一步」。"
+      "可以從上方選單選擇，或按「搜尋陪陪」輸入名字／Discord ID。"
     );
   }
 
   return (
     `目前已選擇：${formatTipStaffMentions(staffIds)}\n` +
-    "可以繼續從上方其他選單加入陪陪，選完請按「選好了，下一步」。"
+    "可以繼續從選單或搜尋加入陪陪，選完請按「選好了，下一步」。"
   );
 }
 function buildTipStaffSelectionRow(tipId) {
   return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`tip_staff_search_${tipId}`)
+      .setLabel("搜尋陪陪")
+      .setEmoji("🔎")
+      .setStyle(ButtonStyle.Primary),
     new ButtonBuilder()
       .setCustomId(`tip_staff_done_${tipId}`)
       .setLabel("選好了，下一步")
@@ -755,10 +760,16 @@ async function handleTipStaffSelect(interaction) {
     });
   }
 
-  const rawTipId = interaction.customId.replace("tip_staff_", "");
-  const tipId = rawTipId.includes("_page_")
-    ? rawTipId.split("_page_")[0]
-    : rawTipId;
+  const isSearchResult = interaction.customId.startsWith(
+    "tip_staff_search_result_",
+  );
+  const rawTipId = isSearchResult
+    ? interaction.customId.replace("tip_staff_search_result_", "")
+    : interaction.customId.replace("tip_staff_", "");
+  const tipId =
+    !isSearchResult && rawTipId.includes("_page_")
+      ? rawTipId.split("_page_")[0]
+      : rawTipId;
   const tipData = pendingTips.get(tipId);
 
   if (!tipData) {
@@ -799,6 +810,165 @@ async function handleTipStaffSelect(interaction) {
     content:
       `✅ 已加入：${formatTipStaffMentions(incomingStaffIds)}\n` +
       `目前已選：${selectedStaffText}`,
+  });
+}
+
+async function openTipStaffSearchModal(interaction) {
+  const tipId = interaction.customId.replace("tip_staff_search_", "");
+  const tipData = pendingTips.get(tipId);
+
+  if (!tipData) {
+    return interaction.reply({
+      content: "❌ 這筆打賞流程已過期，請重新建立打賞頻道。",
+      flags: 64,
+    });
+  }
+  if (interaction.user.id !== tipData.createdBy) {
+    return interaction.reply({
+      content: "❌ 只有建立這筆打賞的人可以操作。",
+      flags: 64,
+    });
+  }
+  if (tipData.staffSelectionCompleted) {
+    return interaction.reply({
+      content: "✅ 已進入付款方式選擇，若要更換陪陪請重新建立打賞流程。",
+      flags: 64,
+    });
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`tip_staff_search_modal_${tipId}`)
+    .setTitle("搜尋受賞陪陪");
+  const queryInput = new TextInputBuilder()
+    .setCustomId("query")
+    .setLabel("陪陪名字或 Discord ID")
+    .setPlaceholder("例如：小喵、230540391531")
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(100)
+    .setRequired(true);
+  modal.addComponents(new ActionRowBuilder().addComponents(queryInput));
+
+  return interaction.showModal(modal);
+}
+
+function getTipStaffSearchLabel(staff) {
+  return String(
+    staff.display_name ||
+      staff.real_name ||
+      staff.discord_name ||
+      staff.name ||
+      staff.discord_id ||
+      "未命名陪陪",
+  );
+}
+
+async function handleTipStaffSearchModal(interaction) {
+  await interaction.deferReply({ flags: 64 });
+  const tipId = interaction.customId.replace("tip_staff_search_modal_", "");
+  const tipData = pendingTips.get(tipId);
+
+  if (!tipData) {
+    return interaction.editReply({
+      content: "❌ 這筆打賞流程已過期，請重新建立打賞頻道。",
+    });
+  }
+  if (interaction.user.id !== tipData.createdBy) {
+    return interaction.editReply({
+      content: "❌ 只有建立這筆打賞的人可以操作。",
+    });
+  }
+  if (tipData.staffSelectionCompleted) {
+    return interaction.editReply({
+      content: "✅ 已進入付款方式選擇，若要更換陪陪請重新建立打賞流程。",
+    });
+  }
+
+  const query = interaction.fields
+    .getTextInputValue("query")
+    .trim()
+    .toLocaleLowerCase("zh-Hant");
+  const seenIds = new Set();
+  const matches = (await listActiveStaff())
+    .filter((staff) => staff.is_active !== false && staff.discord_id)
+    .filter((staff) => {
+      const id = String(staff.discord_id).trim();
+      if (!id || seenIds.has(id)) return false;
+      seenIds.add(id);
+      return [
+        staff.display_name,
+        staff.real_name,
+        staff.discord_name,
+        staff.name,
+        id,
+      ]
+        .filter(Boolean)
+        .some((value) =>
+          String(value).toLocaleLowerCase("zh-Hant").includes(query),
+        );
+    })
+    .sort((a, b) => {
+      const aExact = [
+        a.display_name,
+        a.real_name,
+        a.discord_name,
+        a.name,
+        a.discord_id,
+      ].some(
+        (value) =>
+          String(value || "").toLocaleLowerCase("zh-Hant") === query,
+      );
+      const bExact = [
+        b.display_name,
+        b.real_name,
+        b.discord_name,
+        b.name,
+        b.discord_id,
+      ].some(
+        (value) =>
+          String(value || "").toLocaleLowerCase("zh-Hant") === query,
+      );
+      return Number(bExact) - Number(aExact);
+    });
+
+  if (!matches.length) {
+    return interaction.editReply({
+      content: `❌ 找不到名稱或 Discord ID 包含「${query}」的啟用中陪陪。`,
+    });
+  }
+
+  if (matches.length === 1) {
+    const staffId = String(matches[0].discord_id);
+    const selectedStaffIds = [
+      ...new Set([...getTipStaffIds(tipData), staffId]),
+    ];
+    tipData.selectedStaffId = selectedStaffIds[0];
+    tipData.selectedStaffIds = selectedStaffIds;
+    setPendingTip(tipId, tipData);
+    await updateTipStaffSelectionStatus(interaction.channel, tipId, tipData);
+    return interaction.editReply({
+      content: `✅ 已加入搜尋結果：<@${staffId}>`,
+    });
+  }
+
+  const visibleMatches = matches.slice(0, 25);
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`tip_staff_search_result_${tipId}`)
+    .setPlaceholder(`找到 ${matches.length} 位，請選擇受賞陪陪`)
+    .setMinValues(1)
+    .setMaxValues(visibleMatches.length)
+    .addOptions(
+      visibleMatches.map((staff) => ({
+        label: getTipStaffSearchLabel(staff).slice(0, 100),
+        description: `Discord ID：${staff.discord_id}`.slice(0, 100),
+        value: String(staff.discord_id),
+      })),
+    );
+  return interaction.editReply({
+    content:
+      `🔎 找到 ${matches.length} 位符合「${query}」的陪陪` +
+      (matches.length > 25 ? "，目前顯示前 25 位。" : "。"),
+    components: [new ActionRowBuilder().addComponents(menu)],
   });
 }
 
@@ -4086,9 +4256,7 @@ async function sendOrderSystem(client) {
         `**下單區**\n` +
         `🎯 特戰英豪｜🎮 Steam｜🛡️ 三角洲｜💬 陪聊｜🧸 出氣包\n\n` +
         `**儲值區**\n` +
-        `💳 儲值 ASD\n\n` +
-        `**打賞區**\n` +
-        `💝 打賞陪陪禮物`,
+        `💳 儲值 ASD`,
     )
     .setFooter({
       text: "深夜不關燈｜We Are Still Here",
@@ -4137,12 +4305,6 @@ async function sendOrderSystem(client) {
       .setLabel("儲值")
       .setEmoji("💳")
       .setStyle(ButtonStyle.Success),
-
-    new ButtonBuilder()
-      .setCustomId("order_start_tip")
-      .setLabel("打賞")
-      .setEmoji("💝")
-      .setStyle(ButtonStyle.Danger),
   );
 
   const messages = await channel.messages.fetch({
@@ -4817,6 +4979,7 @@ client.once(Events.ClientReady, async () => {
           }),
       },
       { name: "分區下單面板", run: () => dispatchSystem.sendGameOrderPanels() },
+      { name: "打賞下單面板", run: () => dispatchSystem.sendTipOrderPanel() },
       { name: "報單面板", run: () => dispatchSystem.sendWorkReportPanel() },
       { name: "商店面板", run: () => refreshShop(client) },
       { name: "儲值面板", run: () => sendTopupPanel(client) },
@@ -5248,6 +5411,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith("tip_staff_search_modal_")) {
+        await handleTipStaffSearchModal(interaction);
+        return;
+      }
       // ===== 月結繳費金額輸入 =====
       if (interaction.customId === "submit_monthly_bill_pay_amount") {
         await interaction.deferReply({
@@ -5589,6 +5756,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       // ===== ATM 月結繳費：會開 Modal，不能先 defer =====
       if (customId === "monthly_bill_pay") {
         await handleButtonInteraction(interaction);
+        return;
+      }
+      if (customId.startsWith("tip_staff_search_")) {
+        await openTipStaffSearchModal(interaction);
         return;
       }
       if (
