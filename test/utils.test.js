@@ -4,6 +4,10 @@ const path = require("node:path");
 const test = require("node:test");
 
 const gifts = require("../config/tipGifts");
+const {
+  formatReviewCustomer,
+  shouldPublishReview,
+} = require("../utils/reviews");
 const { parseAllowedServices } = require("../utils/services");
 const {
   formatTipStaffMentions,
@@ -122,6 +126,15 @@ test("custom tips require customer service pricing", () => {
       customPrice: true,
     },
   );
+});
+
+test("only four and five star reviews are published with privacy respected", () => {
+  assert.equal(shouldPublishReview(5), true);
+  assert.equal(shouldPublishReview(4), true);
+  assert.equal(shouldPublishReview(3), false);
+  assert.equal(shouldPublishReview(0), false);
+  assert.equal(formatReviewCustomer("123456789", false), "<@123456789>");
+  assert.equal(formatReviewCustomer("123456789", true), "匿名");
 });
 
 test("VIP upgrades accept cumulative spend or a single topup, never cumulative topup", () => {
