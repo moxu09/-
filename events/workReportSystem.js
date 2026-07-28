@@ -1664,32 +1664,14 @@ function createWorkReportSystem({
       const reportId = interaction.customId.replace(
         "work_report_correct_start_",
         "",
-      );
-      const { data: report } = await supabase
-        .from(salaryTable)
-        .select("*")
-        .eq("id", reportId)
-        .maybeSingle();
-      if (
-        !report ||
-        report.discord_id !== interaction.user.id ||
-        !["work_draft", "工時待填"].includes(report.status)
-      ) {
-        return interaction.reply({
-          content: "這筆申報無法修改，可能已送出或不是你的訂單。",
-          flags: 64,
-        });
-      }
-      let meta = {};
-      try {
-        meta = JSON.parse(report.note || report.admin_note || "{}");
-      } catch {}
-      if (!canCorrectFirstSegmentStart(meta)) {
-        return interaction.reply({
-          content: "第一段開始時間只能在輸入結束時間前修改一次。",
-          flags: 64,
-        });
-      }
+      ).split(":")[0];
+      const encodedStart = interaction.customId.split(":")[1];
+      const now = getTaipeiNowParts();
+      const encodedDate = new Date(Number(encodedStart || 0));
+      const defaultDateTime =
+        encodedStart && Number.isFinite(encodedDate.getTime())
+        ? formatTaipeiWorkTimeInput(encodedDate)
+        : `${now.year}-${now.month}-${now.day} ${now.hour}:${now.minute}`;
       const modal = new ModalBuilder()
         .setCustomId(`submit_work_report_correct_start_${reportId}`)
         .setTitle("修改第一段開始時間");
@@ -1699,7 +1681,7 @@ function createWorkReportSystem({
             .setCustomId("work_time")
             .setLabel("開始日期時間（台北，限修改一次）")
             .setPlaceholder("2026-07-19 20:30")
-            .setValue(formatTaipeiWorkTimeInput(meta.pendingSegmentStart))
+            .setValue(defaultDateTime)
             .setStyle(TextInputStyle.Short)
             .setRequired(true),
         ),
@@ -1716,29 +1698,29 @@ function createWorkReportSystem({
         "submit_work_report_correct_start_",
         "",
       );
+      await interaction.deferReply({ flags: 64 });
       const enteredTime = parseTaipeiWorkTime(
         interaction.fields.getTextInputValue("work_time"),
       );
       if (!enteredTime) {
-        return interaction.reply({
+        return interaction.editReply({
           content:
             "時間格式不正確，請使用 YYYY-MM-DD HH:mm，例如 2026-07-19 20:30；也可只輸入 HH:mm。",
-          flags: 64,
         });
       }
-      const { data: current } = await supabase
+      const { data: current, error: readError } = await supabase
         .from(salaryTable)
         .select("*")
         .eq("id", reportId)
         .maybeSingle();
       if (
+        readError ||
         !current ||
         current.discord_id !== interaction.user.id ||
         !["work_draft", "工時待填"].includes(current.status)
       ) {
-        return interaction.reply({
+        return interaction.editReply({
           content: "這筆申報無法修改，可能已送出或不是你的訂單。",
-          flags: 64,
         });
       }
       let meta = {};
@@ -1746,9 +1728,8 @@ function createWorkReportSystem({
         meta = JSON.parse(current.note || current.admin_note || "{}");
       } catch {}
       if (!canCorrectFirstSegmentStart(meta)) {
-        return interaction.reply({
+        return interaction.editReply({
           content: "第一段開始時間的修改機會已使用，或本段已經結束。",
-          flags: 64,
         });
       }
       const nextMeta = {
@@ -1778,14 +1759,13 @@ function createWorkReportSystem({
         .select()
         .maybeSingle();
       if (error || !updated) {
-        return interaction.reply({
-          content: "修改開始時間失敗，請稍後再試。",
-          flags: 64,
+        console.error("[工時申報] 修改第一段開始時間失敗", error);
+        return interaction.editReply({
+          content: `修改開始時間失敗：${error?.message || "單據狀態已變更，請重新整理後再試"}`,
         });
       }
-      await interaction.reply({
+      await interaction.editReply({
         content: `第一段開始時間已修改為 ${formatTaipeiDateTime(enteredTime)}，本次修改機會已使用。`,
-        flags: 64,
       });
       await interaction.message
         ?.edit({
@@ -1970,7 +1950,9 @@ function createWorkReportSystem({
               ...(canCorrectFirstSegmentStart(nextMeta)
                 ? [
                     new ButtonBuilder()
-                      .setCustomId(`work_report_correct_start_${reportId}`)
+                      .setCustomId(
+                        `work_report_correct_start_${reportId}:${new Date(nextMeta.pendingSegmentStart).getTime()}`,
+                      )
                       .setLabel("修改開始時間（限 1 次）")
                       .setStyle(ButtonStyle.Primary),
                   ]
