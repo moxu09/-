@@ -151,6 +151,25 @@ function isGiftOrderType(value) {
   return /打賞|禮物|礼物|gift|tip/i.test(String(value || ""));
 }
 
+function parseCrownDurationHours(value) {
+  const match = String(value || "").match(/冠名時長\s*(\d+)\s*hrs/i);
+  const hours = Number(match?.[1] || 0);
+  return Number.isSafeInteger(hours) && hours > 0 ? hours : null;
+}
+
+function calculateCrownEndAt(startAt, durationHours) {
+  const start = new Date(startAt);
+  const hours = Number(durationHours);
+  if (
+    !Number.isFinite(start.getTime()) ||
+    !Number.isSafeInteger(hours) ||
+    hours <= 0
+  ) {
+    return null;
+  }
+  return new Date(start.getTime() + hours * 60 * 60 * 1000);
+}
+
 function buildReportAmounts(totalAmount, staffCount, isGift) {
   const count = Math.max(1, Number(staffCount || 0));
   const total = Number(totalAmount || 0);
@@ -296,6 +315,80 @@ function createWorkReportSystem({
   salaryTable,
 }) {
   const pendingManualReports = new Map();
+  let crownReminderTimer = null;
+
+  function readCrownMeta(order) {
+    try {
+      const parsed = JSON.parse(order?.note || "{}");
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  async function checkCrownReminders() {
+    const { data: orders, error } = await supabase
+      .from("play_orders")
+      .select("id, assigned_player, order_item, service, note")
+      .ilike("service", "%冠名單%")
+      .eq("status", "completed")
+      .not("note", "is", null)
+      .order("created_at", { ascending: false })
+      .limit(1000);
+    if (error) throw error;
+
+    const now = Date.now();
+    for (const order of orders || []) {
+      const meta = readCrownMeta(order);
+      const endAt = new Date(meta.crownReminderEndAt || 0);
+      if (
+        !meta.crownReminderChannelId ||
+        meta.crownReminderSent ||
+        !Number.isFinite(endAt.getTime()) ||
+        endAt.getTime() > now
+      ) {
+        continue;
+      }
+      const staffId =
+        String(meta.crownReminderStaffId || order.assigned_player || "")
+          .split(",")[0]
+          .trim();
+      const channel = await client.channels
+        .fetch(meta.crownReminderChannelId)
+        .catch(() => null);
+      if (!channel?.isTextBased() || !staffId) continue;
+      try {
+        await channel.send({
+          content:
+            `<@${staffId}> 👑 冠名時間已到！\n` +
+            `冠名品項：${order.order_item || order.service || "冠名單"}\n` +
+            `到期時間：${formatTaipeiDateTime(endAt)}\n` +
+            "請依冠名單內容處理雙方尾綴，並與客服確認後續。",
+          allowedMentions: { users: [staffId] },
+        });
+        meta.crownReminderSent = true;
+        meta.crownReminderSentAt = new Date().toISOString();
+        const { error: updateError } = await supabase
+          .from("play_orders")
+          .update({ note: JSON.stringify(meta) })
+          .eq("id", order.id);
+        if (updateError) throw updateError;
+      } catch (sendError) {
+        console.error("[冠名到期提醒失敗]", order.id, sendError);
+      }
+    }
+  }
+
+  async function startCrownReminderScheduler() {
+    if (crownReminderTimer) return;
+    await checkCrownReminders();
+    crownReminderTimer = setInterval(() => {
+      checkCrownReminders().catch((error) =>
+        console.error("[冠名到期排程錯誤]", error),
+      );
+    }, 60 * 1000);
+    crownReminderTimer.unref?.();
+  }
   async function findStaff(discordId) {
     const normalizedId = String(discordId || "").trim();
     let query = supabase
@@ -392,6 +485,7 @@ function createWorkReportSystem({
       throw new Error(`找不到陪陪 <@${report.staff_id}> 的填單頻道`);
 
     const isGift = isGiftOrderType(report.order_type);
+    const isCrown = String(report.service_name || "").includes("冠名單｜");
     const fields = [
       {
         name: "老闆",
@@ -425,8 +519,15 @@ function createWorkReportSystem({
       .setCustomId(`work_report_edit_${report.id}`)
       .setLabel("改時長及金額")
       .setStyle(ButtonStyle.Secondary);
-    const initialButtons = isGift
-      ? []
+    const initialButtons = isCrown
+      ? [
+          new ButtonBuilder()
+            .setCustomId(`work_report_crown_start_${report.id}`)
+            .setLabel("設定冠名開始時間")
+            .setStyle(ButtonStyle.Primary),
+        ]
+      : isGift
+        ? []
       : completed
         ? [editButton]
       : [
@@ -440,7 +541,9 @@ function createWorkReportSystem({
       : [];
     await channel.send({
       content: isGift
-        ? `<@${report.staff_id}> 你有一筆打賞紀錄，已直接送到薪資後台等待審核。`
+        ? isCrown
+          ? `<@${report.staff_id}> 你有一筆冠名單，請設定實際開始冠名及修改尾綴的時間。`
+          : `<@${report.staff_id}> 你有一筆打賞紀錄，已直接送到薪資後台等待審核。`
         : completed
           ? `<@${report.staff_id}> 新增的時長及金額已建立為一筆新報單，並送到薪資後台等待審核。`
         : `<@${report.staff_id}> 請填寫這筆服務的開始與結束時間。`,
@@ -451,7 +554,9 @@ function createWorkReportSystem({
           .addFields(...fields)
           .setDescription(
             isGift
-              ? "打賞不需填寫時間，客服送出後已同步進入薪資後台審核。"
+              ? isCrown
+                ? "請輸入實際開始冠名及修改尾綴的時間，系統會計算到期時間並在本填單區提醒。"
+                : "打賞不需填寫時間，客服送出後已同步進入薪資後台審核。"
               : completed
                 ? "這是結束時間後追加的新報單，不會覆蓋原本的報單。"
               : "填寫完成後會自動計算時長，並送到薪資後台等待審核。",
@@ -778,6 +883,142 @@ function createWorkReportSystem({
   }
 
   async function handleInteraction(interaction) {
+    if (
+      interaction.isButton() &&
+      interaction.customId.startsWith("work_report_crown_start_")
+    ) {
+      const orderId = interaction.customId.replace(
+        "work_report_crown_start_",
+        "",
+      );
+      const { data: order } = await supabase
+        .from("play_orders")
+        .select("*")
+        .eq("id", orderId)
+        .maybeSingle();
+      const staffId = String(order?.assigned_player || "").split(",")[0].trim();
+      if (!order || (interaction.user.id !== staffId && !isStaff(interaction))) {
+        return interaction.reply({
+          content: "只有這筆冠名單的陪陪或客服可以設定開始時間。",
+          flags: 64,
+        });
+      }
+      const durationHours = parseCrownDurationHours(
+        order.order_item || order.service,
+      );
+      if (!durationHours) {
+        return interaction.reply({
+          content: "找不到冠名時長，請聯繫客服確認冠名單內容。",
+          flags: 64,
+        });
+      }
+      const modal = new ModalBuilder()
+        .setCustomId(
+          `submit_work_report_crown_start_${orderId}_${interaction.message.id}`,
+        )
+        .setTitle("設定冠名開始時間")
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("crown_start_time")
+              .setLabel("開始冠名及修改尾綴時間（台北時間）")
+              .setPlaceholder("2026-07-28 20:30，或只輸入 20:30")
+              .setValue(formatTaipeiWorkTimeInput(new Date()))
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true),
+          ),
+        );
+      await interaction.showModal(modal);
+      return true;
+    }
+
+    if (
+      interaction.isModalSubmit() &&
+      interaction.customId.startsWith("submit_work_report_crown_start_")
+    ) {
+      const raw = interaction.customId.replace(
+        "submit_work_report_crown_start_",
+        "",
+      );
+      const [orderId, messageId] = raw.split("_");
+      const { data: order } = await supabase
+        .from("play_orders")
+        .select("*")
+        .eq("id", orderId)
+        .maybeSingle();
+      const staffId = String(order?.assigned_player || "").split(",")[0].trim();
+      if (!order || (interaction.user.id !== staffId && !isStaff(interaction))) {
+        return interaction.reply({
+          content: "只有這筆冠名單的陪陪或客服可以設定開始時間。",
+          flags: 64,
+        });
+      }
+      const durationHours = parseCrownDurationHours(
+        order.order_item || order.service,
+      );
+      const startAt = parseTaipeiWorkTime(
+        interaction.fields.getTextInputValue("crown_start_time"),
+      );
+      const endAt = calculateCrownEndAt(startAt, durationHours);
+      if (!startAt || !endAt) {
+        return interaction.reply({
+          content:
+            "時間格式不正確，請使用 YYYY-MM-DD HH:mm，例如 2026-07-28 20:30；也可只輸入 HH:mm。",
+          flags: 64,
+        });
+      }
+      const oldMeta = readCrownMeta(order);
+      const meta = {
+        ...oldMeta,
+        originalNote: oldMeta.originalNote || order.note || "打賞",
+        crownReminderChannelId: interaction.channel.id,
+        crownReminderStaffId: staffId,
+        crownReminderStartAt: startAt.toISOString(),
+        crownReminderEndAt: endAt.toISOString(),
+        crownReminderDurationHours: durationHours,
+        crownReminderSent: false,
+        crownReminderSetBy: interaction.user.id,
+        crownReminderSetAt: new Date().toISOString(),
+      };
+      const { error } = await supabase
+        .from("play_orders")
+        .update({ note: JSON.stringify(meta) })
+        .eq("id", order.id);
+      if (error) {
+        return interaction.reply({
+          content: `設定冠名時間失敗：${error.message}`,
+          flags: 64,
+        });
+      }
+      const message = await interaction.channel.messages
+        .fetch(messageId)
+        .catch(() => null);
+      if (message?.embeds[0]) {
+        const embed = EmbedBuilder.from(message.embeds[0]).addFields(
+          {
+            name: "冠名開始時間",
+            value: formatTaipeiDateTime(startAt),
+            inline: true,
+          },
+          {
+            name: "冠名到期時間",
+            value: formatTaipeiDateTime(endAt),
+            inline: true,
+          },
+        );
+        await message.edit({ embeds: [embed], components: [] }).catch(() => {});
+      }
+      await checkCrownReminders();
+      return interaction.reply({
+        content:
+          `✅ 冠名時間已設定\n` +
+          `開始：${formatTaipeiDateTime(startAt)}\n` +
+          `到期：${formatTaipeiDateTime(endAt)}\n` +
+          "時間到時會在這個填單區標註提醒你。",
+        flags: 64,
+      });
+    }
+
     if (
       interaction.isButton() &&
       [
@@ -1782,6 +2023,7 @@ function createWorkReportSystem({
 
   return {
     handleInteraction,
+    startCrownReminderScheduler,
     sendForAcceptedOrder,
     sendForCompletedTipOrders,
     sendManualPanel,
@@ -1791,12 +2033,14 @@ function createWorkReportSystem({
 module.exports = {
   buildReportAmounts,
   canCorrectFirstSegmentStart,
+  calculateCrownEndAt,
   createWorkReportSystem,
   isStaffInteraction,
   matchStaffLookup,
   normalizeStaffLookup,
   parseTaipeiWorkTime,
   parseDurationMinutes,
+  parseCrownDurationHours,
   parseMoney,
   splitStaffLookupInput,
 };

@@ -10517,6 +10517,8 @@ module.exports = {
   submitDispatchPlayers,
   handleSavedOrderEnd,
   sendWorkReportPanel: () => workReportSystem?.sendManualPanel(),
+  startCrownReminderScheduler: () =>
+    workReportSystem?.startCrownReminderScheduler(),
   sendTipWorkReports: (orders, payload) =>
     workReportSystem?.sendForCompletedTipOrders(orders, payload),
 };

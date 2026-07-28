@@ -5454,6 +5454,10 @@ client.once(Events.ClientReady, async () => {
     [
       { name: "月結帳單排程", run: startMonthlyBillScheduler },
       {
+        name: "冠名到期提醒排程",
+        run: () => dispatchSystem.startCrownReminderScheduler(),
+      },
+      {
         name: "深夜薪資每日報告排程",
         run: () => startDeepNightSalaryReportCron(client, supabase),
       },
@@ -6188,6 +6192,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId.startsWith("open_manual_work_report") ||
         interaction.customId.startsWith("manual_work_confirm_") ||
         interaction.customId.startsWith("manual_work_cancel_") ||
+        interaction.customId.startsWith("work_report_crown_start_") ||
         interaction.customId.startsWith("work_report_start_") ||
         interaction.customId.startsWith("work_report_end_") ||
         interaction.customId.startsWith("work_report_add_") ||

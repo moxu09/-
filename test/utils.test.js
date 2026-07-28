@@ -27,14 +27,34 @@ const {
 const {
   buildReportAmounts,
   canCorrectFirstSegmentStart,
+  calculateCrownEndAt,
   isStaffInteraction,
   matchStaffLookup,
   normalizeStaffLookup,
   parseTaipeiWorkTime,
+  parseCrownDurationHours,
   parseDurationMinutes,
   parseMoney,
   splitStaffLookupInput,
 } = require("../events/workReportSystem");
+
+test("冠名品項可解析時長並計算到期時間", () => {
+  assert.equal(
+    parseCrownDurationHours(
+      "冠名單｜半日冠｜贈送還單 6hrs｜冠名時長 12hrs",
+    ),
+    12,
+  );
+  assert.equal(
+    parseCrownDurationHours("冠名單｜月冠名｜冠名時長 720hrs"),
+    720,
+  );
+  assert.equal(parseCrownDurationHours("普通打賞"), null);
+  assert.equal(
+    calculateCrownEndAt("2026-07-28T12:00:00.000Z", 12).toISOString(),
+    "2026-07-29T00:00:00.000Z",
+  );
+});
 const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 const {
   isCouponInventoryItem,
