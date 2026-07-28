@@ -1789,11 +1789,6 @@ async function sendOrderToStaffChannel(order) {
         inline: true,
       },
       {
-        name: "👤 客人",
-        value: `<@${order.customer_id}>`,
-        inline: true,
-      },
-      {
         name: "🌟 指定陪陪",
         value: preferredText,
         inline: true,
@@ -1816,11 +1811,6 @@ async function sendOrderToStaffChannel(order) {
       {
         name: "🕒 預約時間",
         value: order.reserved_time || order.duration_text || "未填寫",
-        inline: true,
-      },
-      {
-        name: "💳 付款方式",
-        value: order.payment_method || "未填寫",
         inline: true,
       },
       {
