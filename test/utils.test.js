@@ -385,6 +385,18 @@ test("first work-report start time can be corrected exactly once", () => {
   assert.equal(canCorrectFirstSegmentStart({ segments: [] }), false);
 });
 
+test("work-report correction button opens its modal before any defer", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  const buttonRouter = source.slice(
+    source.indexOf("// ===== 一般 Button ====="),
+    source.indexOf("// ===== 派單 / 陪玩狀態按鈕"),
+  );
+  assert.match(
+    buttonRouter,
+    /interaction\.customId\.startsWith\("work_report_correct_start_"\)/,
+  );
+});
+
 test("VIP rewards normalize suffix coupons and never auto-grant gift cards", () => {
   assert.deepEqual(
     parseVipCouponReward(

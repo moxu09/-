@@ -6454,6 +6454,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId.startsWith("work_report_crown_start_") ||
         interaction.customId.startsWith("work_report_start_") ||
         interaction.customId.startsWith("work_report_end_") ||
+        interaction.customId.startsWith("work_report_correct_start_") ||
         interaction.customId.startsWith("work_report_add_") ||
         interaction.customId.startsWith("work_report_edit_") ||
         interaction.customId.startsWith("work_report_save_") ||
