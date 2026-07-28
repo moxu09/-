@@ -49,6 +49,7 @@ const {
   normalizeRedPacketMode,
 } = require("./utils/redPackets");
 const TIP_GIFTS = require("./config/tipGifts");
+const CROWN_PACKAGES = require("./config/crownPackages");
 const employmentConfig = require("./config/employment");
 const {
   createEmploymentSystem,
@@ -59,6 +60,10 @@ const {
   getTipStaffIds,
   getTipTotalAmount,
 } = require("./utils/tips");
+const {
+  buildCrownOrderItem,
+  getCrownPackageByKey,
+} = require("./utils/crownOrders");
 const {
   formatReviewCustomer,
   shouldPublishReview,
@@ -217,6 +222,7 @@ dispatchSystem.setup(supabase, client, {
   changeCoins,
   recordAccountingLedger,
   startTipFlowInChannel,
+  startCrownFlowInChannel,
   countOrderVipSpentOnce,
 });
 // ===== 轉帳冷卻 =====
@@ -662,6 +668,111 @@ async function startTipFlowInChannel(channel, user) {
 
   return tipId;
 }
+async function startCrownFlowInChannel(channel, user) {
+  const tipId = `${user.id}_${Date.now()}`;
+  setPendingTip(tipId, {
+    createdBy: user.id,
+    tipperId: user.id,
+    channelId: channel.id,
+    crownOrder: true,
+  });
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`crown_package_${tipId}`)
+    .setPlaceholder("請選擇冠名方案")
+    .addOptions(
+      CROWN_PACKAGES.map((item) => ({
+        label: item.custom
+          ? `${item.name}｜價格需議`
+          : `${item.name}｜${item.price} 元`,
+        description: item.custom
+          ? "價格、贈送還單時數及冠名時長由客服議定"
+          : `贈送還單 ${item.giftedHours}hrs｜冠名 ${item.durationHours}hrs`,
+        value: item.key,
+      })),
+    );
+  await channel.send({
+    content:
+      "👑 請選擇冠名方案\n" +
+      "品項標示的時數為贈送還單時數，冠名時長請以選單說明為準。",
+    components: [new ActionRowBuilder().addComponents(menu)],
+  });
+  return tipId;
+}
+
+async function handleCrownPackageSelect(interaction) {
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: 64 });
+  }
+  const tipId = interaction.customId.replace("crown_package_", "");
+  const tipData = pendingTips.get(tipId);
+  if (!tipData || !tipData.crownOrder) {
+    return interaction.editReply({ content: "❌ 冠名單流程已過期，請重新建立。" });
+  }
+  if (interaction.user.id !== tipData.createdBy) {
+    return interaction.editReply({ content: "❌ 只有建立冠名單的人可以操作。" });
+  }
+  const crownPackage = getCrownPackageByKey(
+    CROWN_PACKAGES,
+    interaction.values[0],
+  );
+  if (!crownPackage) {
+    return interaction.editReply({ content: "❌ 找不到這個冠名方案。" });
+  }
+  Object.assign(tipData, {
+    crownName: crownPackage.name,
+    giftedHours: crownPackage.giftedHours,
+    durationHours: crownPackage.durationHours,
+    amount: crownPackage.price,
+    customPriceRequired: crownPackage.custom,
+    item: `冠名單｜${crownPackage.name}`,
+  });
+  setPendingTip(tipId, tipData);
+
+  const players = await listActiveStaff();
+  const seen = new Set();
+  const options = (players || [])
+    .filter((player) => player.is_active !== false && player.discord_id)
+    .filter((player) => {
+      const id = String(player.discord_id).trim();
+      if (!id || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
+    .map((player) => ({
+      label: getTipStaffSearchLabel(player).slice(0, 100),
+      description: `Discord ID：${player.discord_id}`.slice(0, 100),
+      value: String(player.discord_id),
+    }));
+  if (!options.length) {
+    return interaction.editReply({ content: "❌ 目前沒有可選擇的陪陪資料。" });
+  }
+  const rows = [];
+  for (let index = 0; index < options.length; index += 25) {
+    const page = Math.floor(index / 25) + 1;
+    rows.push(
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`tip_staff_${tipId}_page_${page}`)
+          .setPlaceholder(`請選擇冠名陪陪｜第 ${page} 頁`)
+          .setMinValues(1)
+          .setMaxValues(1)
+          .addOptions(options.slice(index, index + 25)),
+      ),
+    );
+  }
+  await interaction.channel.send({
+    content:
+      `✅ 已選擇：${crownPackage.name}\n` +
+      (crownPackage.custom
+        ? "價格、贈送還單時數與冠名時長需由客服議定。"
+        : `價格：${crownPackage.price} 元｜贈送還單：${crownPackage.giftedHours}hrs｜冠名時長：${crownPackage.durationHours}hrs`) +
+      "\n\n請選擇一位冠名陪陪：",
+    components: rows.slice(0, 5),
+  });
+  await sendTipStaffSelectionStatus(interaction.channel, tipId, tipData);
+  return interaction.editReply({ content: "✅ 已選擇冠名方案" });
+}
 async function handleTipGiftSelect(interaction) {
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({
@@ -799,9 +910,9 @@ async function handleTipStaffSelect(interaction) {
       interaction.values.map((id) => String(id || "").trim()).filter(Boolean),
     ),
   ];
-  const selectedStaffIds = [
-    ...new Set([...getTipStaffIds(tipData), ...incomingStaffIds]),
-  ];
+  const selectedStaffIds = tipData.crownOrder
+    ? incomingStaffIds.slice(0, 1)
+    : [...new Set([...getTipStaffIds(tipData), ...incomingStaffIds])];
   const selectedStaffText = formatTipStaffMentions(selectedStaffIds);
 
   tipData.selectedStaffId = selectedStaffIds[0];
@@ -943,9 +1054,9 @@ async function handleTipStaffSearchModal(interaction) {
 
   if (matches.length === 1) {
     const staffId = String(matches[0].discord_id);
-    const selectedStaffIds = [
-      ...new Set([...getTipStaffIds(tipData), staffId]),
-    ];
+    const selectedStaffIds = tipData.crownOrder
+      ? [staffId]
+      : [...new Set([...getTipStaffIds(tipData), staffId])];
     tipData.selectedStaffId = selectedStaffIds[0];
     tipData.selectedStaffIds = selectedStaffIds;
     setPendingTip(tipId, tipData);
@@ -960,7 +1071,7 @@ async function handleTipStaffSearchModal(interaction) {
     .setCustomId(`tip_staff_search_result_${tipId}`)
     .setPlaceholder(`找到 ${matches.length} 位，請選擇受賞陪陪`)
     .setMinValues(1)
-    .setMaxValues(visibleMatches.length)
+    .setMaxValues(tipData.crownOrder ? 1 : visibleMatches.length)
     .addOptions(
       visibleMatches.map((staff) => ({
         label: getTipStaffSearchLabel(staff).slice(0, 100),
@@ -973,6 +1084,120 @@ async function handleTipStaffSearchModal(interaction) {
       `🔎 找到 ${matches.length} 位符合「${query}」的陪陪` +
       (matches.length > 25 ? "，目前顯示前 25 位。" : "。"),
     components: [new ActionRowBuilder().addComponents(menu)],
+  });
+}
+
+function updateCrownOrderItem(tipData) {
+  tipData.item = buildCrownOrderItem(tipData);
+  return tipData.item;
+}
+
+async function requestCustomTipPrice(channel, tipId, tipData) {
+  const priceMessage = await channel.send({
+    content: `<@&${process.env.STAFF_ROLE}> ${
+      tipData.crownOrder
+        ? "請與客人議定自定冠內容，再填寫價格與時數。"
+        : "請填寫這筆客製打賞的每位陪陪金額。"
+    }`,
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`tip_custom_price_${tipId}`)
+          .setLabel(tipData.crownOrder ? "客服填寫自定冠內容" : "客服填寫客製金額")
+          .setEmoji("💰")
+          .setStyle(ButtonStyle.Primary),
+      ),
+    ],
+  });
+  tipData.customPriceMessageId = priceMessage.id;
+  setPendingTip(tipId, tipData);
+}
+
+async function continueCrownOrder(channel, tipId, tipData) {
+  if (tipData.customPriceRequired) {
+    await requestCustomTipPrice(channel, tipId, tipData);
+    return "✅ 尾綴設定已完成，請等待客服議定自定冠內容。";
+  }
+  updateCrownOrderItem(tipData);
+  setPendingTip(tipId, tipData);
+  await sendTipPaymentSelectPrompt(
+    channel,
+    tipId,
+    formatTipStaffMentions(getTipStaffIds(tipData)),
+  );
+  return "✅ 冠名資料已完成，請選擇付款方式。";
+}
+
+async function handleCrownSuffixChoice(interaction) {
+  const wantsSuffix = interaction.customId.startsWith("crown_suffix_yes_");
+  const tipId = interaction.customId.replace(
+    wantsSuffix ? "crown_suffix_yes_" : "crown_suffix_no_",
+    "",
+  );
+  const tipData = pendingTips.get(tipId);
+  if (!tipData?.crownOrder || interaction.user.id !== tipData.createdBy) {
+    return interaction.reply({ content: "❌ 冠名單已失效或你不是建立者。", flags: 64 });
+  }
+  if (wantsSuffix) {
+    const modal = new ModalBuilder()
+      .setCustomId(`crown_suffix_modal_${tipId}`)
+      .setTitle("填寫雙方尾綴");
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("customer_suffix")
+          .setLabel("闆闆尾綴")
+          .setPlaceholder("請填寫要加在闆闆暱稱後方的文字")
+          .setStyle(TextInputStyle.Short)
+          .setMaxLength(20)
+          .setRequired(true),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("staff_suffix")
+          .setLabel("陪陪尾綴")
+          .setPlaceholder("請填寫要加在陪陪暱稱後方的文字")
+          .setStyle(TextInputStyle.Short)
+          .setMaxLength(20)
+          .setRequired(true),
+      ),
+    );
+    return interaction.showModal(modal);
+  }
+  tipData.changeSuffixes = false;
+  tipData.customerSuffix = null;
+  tipData.staffSuffix = null;
+  setPendingTip(tipId, tipData);
+  await interaction.update({ content: "✅ 已選擇不修改雙方尾綴", components: [] });
+  return interaction.followUp({
+    content: await continueCrownOrder(interaction.channel, tipId, tipData),
+    flags: 64,
+  });
+}
+
+async function handleCrownSuffixModal(interaction) {
+  await interaction.deferReply({ flags: 64 });
+  const tipId = interaction.customId.replace("crown_suffix_modal_", "");
+  const tipData = pendingTips.get(tipId);
+  if (!tipData?.crownOrder || interaction.user.id !== tipData.createdBy) {
+    return interaction.editReply({ content: "❌ 冠名單已失效或你不是建立者。" });
+  }
+  tipData.changeSuffixes = true;
+  tipData.customerSuffix = interaction.fields.getTextInputValue("customer_suffix").trim();
+  tipData.staffSuffix = interaction.fields.getTextInputValue("staff_suffix").trim();
+  setPendingTip(tipId, tipData);
+  if (tipData.suffixMessageId) {
+    const suffixMessage = await interaction.channel.messages
+      .fetch(tipData.suffixMessageId)
+      .catch(() => null);
+    if (suffixMessage) {
+      await suffixMessage
+        .edit({ content: "✅ 已填寫雙方尾綴", components: [] })
+        .catch(() => {});
+    }
+  }
+  return interaction.editReply({
+    content: await continueCrownOrder(interaction.channel, tipId, tipData),
   });
 }
 
@@ -995,16 +1220,36 @@ async function openTipCustomPriceModal(interaction) {
 
   const modal = new ModalBuilder()
     .setCustomId(`tip_custom_price_modal_${tipId}`)
-    .setTitle("填寫客製打賞金額");
+    .setTitle(tipData.crownOrder ? "填寫自定冠內容" : "填寫客製打賞金額");
   const amountInput = new TextInputBuilder()
     .setCustomId("amount")
-    .setLabel("每位陪陪的打賞金額")
+    .setLabel(tipData.crownOrder ? "冠名單議定金額" : "每位陪陪的打賞金額")
     .setPlaceholder("請輸入整數，例如：999")
     .setStyle(TextInputStyle.Short)
     .setMinLength(1)
     .setMaxLength(9)
     .setRequired(true);
   modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+  if (tipData.crownOrder) {
+    modal.addComponents(
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("gifted_hours")
+          .setLabel("贈送還單時數")
+          .setPlaceholder("請輸入整數，例如：20")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true),
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("duration_hours")
+          .setLabel("冠名時長")
+          .setPlaceholder("請輸入整數時數，例如：48")
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true),
+      ),
+    );
+  }
 
   return interaction.showModal(modal);
 }
@@ -1040,10 +1285,31 @@ async function handleTipCustomPriceModal(interaction) {
       content: "❌ 金額格式錯誤，請輸入大於 0 的整數。",
     });
   }
+  if (tipData.crownOrder) {
+    const giftedHours = Number(
+      interaction.fields.getTextInputValue("gifted_hours").trim(),
+    );
+    const durationHours = Number(
+      interaction.fields.getTextInputValue("duration_hours").trim(),
+    );
+    if (
+      !Number.isSafeInteger(giftedHours) ||
+      giftedHours <= 0 ||
+      !Number.isSafeInteger(durationHours) ||
+      durationHours <= 0
+    ) {
+      return interaction.editReply({
+        content: "❌ 贈送還單時數與冠名時長都必須是大於 0 的整數。",
+      });
+    }
+    tipData.giftedHours = giftedHours;
+    tipData.durationHours = durationHours;
+  }
 
   tipData.amount = amount;
   tipData.customPriceRequired = false;
   tipData.customPriceSet = true;
+  if (tipData.crownOrder) updateCrownOrderItem(tipData);
   setPendingTip(tipId, tipData);
 
   if (tipData.customPriceMessageId) {
@@ -1053,8 +1319,11 @@ async function handleTipCustomPriceModal(interaction) {
     if (message) {
       await message.edit({
         content:
-          `✅ 客製打賞已由客服完成定價\n` +
-          `每位陪陪：${amount.toLocaleString("zh-TW")} ASD`,
+          `✅ ${tipData.crownOrder ? "自定冠內容" : "客製打賞"}已由客服完成設定\n` +
+          `金額：${amount.toLocaleString("zh-TW")} ASD` +
+          (tipData.crownOrder
+            ? `｜贈送還單 ${tipData.giftedHours}hrs｜冠名 ${tipData.durationHours}hrs`
+            : ""),
         components: [],
       })
         .catch(() => {});
@@ -1068,7 +1337,7 @@ async function handleTipCustomPriceModal(interaction) {
   );
   return interaction.editReply({
     content:
-      `✅ 客製打賞金額已設定為每位 ${amount.toLocaleString("zh-TW")} ASD\n` +
+      `✅ ${tipData.crownOrder ? "自定冠" : "客製打賞"}金額已設定為 ${amount.toLocaleString("zh-TW")} ASD\n` +
       `已請客人繼續選擇付款方式。`,
   });
 }
@@ -1109,21 +1378,30 @@ async function handleTipStaffDone(interaction) {
     })
     .catch(() => {});
 
-  if (tipData.customPriceRequired) {
-    const priceMessage = await interaction.channel.send({
-      content: `<@&${process.env.STAFF_ROLE}> 請填寫這筆客製打賞的每位陪陪金額。`,
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`tip_custom_price_${tipId}`)
-            .setLabel("客服填寫客製金額")
-            .setEmoji("💰")
-            .setStyle(ButtonStyle.Primary),
-        ),
-      ],
+  if (tipData.crownOrder) {
+    const suffixRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`crown_suffix_yes_${tipId}`)
+        .setLabel("修改雙方尾綴")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`crown_suffix_no_${tipId}`)
+        .setLabel("不修改尾綴")
+        .setStyle(ButtonStyle.Secondary),
+    );
+    const suffixMessage = await interaction.channel.send({
+      content:
+        "是否要修改闆闆與陪陪雙方的暱稱尾綴？\n" +
+        "此處會記錄在冠名單內，付款後由客服依冠名時長執行。",
+      components: [suffixRow],
     });
-    tipData.customPriceMessageId = priceMessage.id;
+    tipData.suffixMessageId = suffixMessage.id;
     setPendingTip(tipId, tipData);
+    return interaction.editReply({ content: "✅ 已選擇冠名陪陪，請設定雙方尾綴。" });
+  }
+
+  if (tipData.customPriceRequired) {
+    await requestCustomTipPrice(interaction.channel, tipId, tipData);
     return interaction.editReply({
       content: "✅ 已選擇受賞陪陪，請等待客服填寫客製打賞金額。",
     });
@@ -5587,6 +5865,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith("crown_suffix_modal_")) {
+        await handleCrownSuffixModal(interaction);
+        return;
+      }
       if (interaction.customId.startsWith("tip_custom_price_modal_")) {
         await handleTipCustomPriceModal(interaction);
         return;
@@ -5958,6 +6240,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         await openTipStaffSearchModal(interaction);
         return;
       }
+      if (
+        customId.startsWith("crown_suffix_yes_") ||
+        customId.startsWith("crown_suffix_no_")
+      ) {
+        await handleCrownSuffixChoice(interaction);
+        return;
+      }
       if (customId.startsWith("tip_custom_price_")) {
         await openTipCustomPriceModal(interaction);
         return;
@@ -6022,7 +6311,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId === "order_start_chat" ||
         interaction.customId === "order_start_emotion" ||
         interaction.customId === "order_start_topup" ||
-        interaction.customId === "order_start_tip"
+        interaction.customId === "order_start_tip" ||
+        interaction.customId === "order_start_crown"
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
@@ -10447,6 +10737,10 @@ async function handleStringSelectInteraction(interaction) {
     }
     if (customId.startsWith("tip_gift_")) {
       await handleTipGiftSelect(interaction);
+      return;
+    }
+    if (customId.startsWith("crown_package_")) {
+      await handleCrownPackageSelect(interaction);
       return;
     }
     if (customId.startsWith("tip_staff_")) {

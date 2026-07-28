@@ -4,6 +4,11 @@ const path = require("node:path");
 const test = require("node:test");
 
 const gifts = require("../config/tipGifts");
+const crownPackages = require("../config/crownPackages");
+const {
+  buildCrownOrderItem,
+  getCrownPackageByKey,
+} = require("../utils/crownOrders");
 const {
   formatReviewCustomer,
   shouldPublishReview,
@@ -125,6 +130,37 @@ test("custom tips require customer service pricing", () => {
       description: "價格由客服填寫",
       customPrice: true,
     },
+  );
+});
+
+test("crown packages keep gifted hours separate from crown duration", () => {
+  assert.deepEqual(
+    crownPackages.map(({ name, price, giftedHours, durationHours }) => [
+      name,
+      price,
+      giftedHours,
+      durationHours,
+    ]),
+    [
+      ["半日冠", 1899, 6, 12],
+      ["一日冠", 3999, 12, 24],
+      ["三日冠", 12888, 36, 72],
+      ["周冠名", 26666, 84, 168],
+      ["月冠名", 188888, 336, 720],
+      ["自定冠", null, null, null],
+    ],
+  );
+  assert.equal(getCrownPackageByKey(crownPackages, "crown_week").name, "周冠名");
+  assert.equal(
+    buildCrownOrderItem({
+      crownName: "半日冠",
+      giftedHours: 6,
+      durationHours: 12,
+      changeSuffixes: true,
+      customerSuffix: "♡小奈",
+      staffSuffix: "♡闆闆",
+    }),
+    "冠名單｜半日冠｜贈送還單 6hrs｜冠名時長 12hrs｜雙方尾綴：闆闆「♡小奈」／陪陪「♡闆闆」",
   );
 });
 
