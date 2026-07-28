@@ -16,11 +16,13 @@ const gifts = [
     "1999 ASD｜可全體廣播，冠名三天，陪陪專屬語音感謝",
   ],
   ["tip_16888", "明燈三千盞", 16888, "16888 ASD｜詳情請詢問客服"],
+  ["tip_custom", "客製打賞", 0, "價格由客服填寫", true],
 ];
 
-module.exports = gifts.map(([key, name, price, description]) => ({
+module.exports = gifts.map(([key, name, price, description, customPrice]) => ({
   key,
   name,
   price,
   description: description || `${price} ASD`,
+  customPrice: Boolean(customPrice),
 }));

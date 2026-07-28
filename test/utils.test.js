@@ -111,6 +111,19 @@ test("service settings support arrays, JSON, and comma-separated values", () => 
   assert.deepEqual(parseAllowedServices(null), []);
 });
 
+test("custom tips require customer service pricing", () => {
+  assert.deepEqual(
+    gifts.find((gift) => gift.key === "tip_custom"),
+    {
+      key: "tip_custom",
+      name: "客製打賞",
+      price: 0,
+      description: "價格由客服填寫",
+      customPrice: true,
+    },
+  );
+});
+
 test("VIP upgrades accept cumulative spend or a single topup, never cumulative topup", () => {
   const level = {
     totalSpendRequired: 5000,

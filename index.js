@@ -617,7 +617,11 @@ async function sendTipGiftSelect(channel, tipId) {
     .setPlaceholder("請選擇要打賞的禮物")
     .addOptions(
       TIP_GIFTS.slice(0, 25).map((gift) => ({
-        label: `${gift.name}｜${gift.price} ASD`.slice(0, 100),
+        label: (
+          gift.customPrice
+            ? `${gift.name}｜價格由客服填寫`
+            : `${gift.name}｜${gift.price} ASD`
+        ).slice(0, 100),
         description: gift.description.slice(0, 100),
         value: gift.key,
       })),
@@ -625,17 +629,9 @@ async function sendTipGiftSelect(channel, tipId) {
 
   const selectRow = new ActionRowBuilder().addComponents(menu);
 
-  const cancelRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("owner_cancel_ticket")
-      .setLabel("我按錯了，關閉頻道")
-      .setEmoji("🗑️")
-      .setStyle(ButtonStyle.Danger),
-  );
-
   await channel.send({
     content: `💝 請選擇要打賞的禮物：`,
-    components: [selectRow, cancelRow],
+    components: [selectRow],
   });
 }
 async function startTipFlowInChannel(channel, user) {
@@ -693,7 +689,8 @@ async function handleTipGiftSelect(interaction) {
   }
 
   tipData.item = gift.name;
-  tipData.amount = gift.price;
+  tipData.amount = gift.customPrice ? null : gift.price;
+  tipData.customPriceRequired = Boolean(gift.customPrice);
   setPendingTip(tipId, tipData);
 
   const players = await listActiveStaff();
@@ -744,7 +741,9 @@ async function handleTipGiftSelect(interaction) {
   }
   await interaction.channel.send({
     content:
-      `✅ 已選擇禮物：${gift.name}｜${gift.price} ASD\n\n` +
+      `✅ 已選擇禮物：${gift.name}｜${
+        gift.customPrice ? "價格由客服填寫" : `${gift.price} ASD`
+      }\n\n` +
       `請選擇要打賞的陪陪：`,
     components: rows.slice(0, 5),
   });
@@ -972,6 +971,103 @@ async function handleTipStaffSearchModal(interaction) {
   });
 }
 
+async function openTipCustomPriceModal(interaction) {
+  const tipId = interaction.customId.replace("tip_custom_price_", "");
+  const tipData = pendingTips.get(tipId);
+
+  if (!isAdminOrStaff(interaction)) {
+    return interaction.reply({
+      content: "❌ 只有客服或管理員可以填寫客製打賞金額。",
+      flags: 64,
+    });
+  }
+  if (!tipData || !tipData.customPriceRequired) {
+    return interaction.reply({
+      content: "❌ 這筆客製打賞已失效或已完成定價。",
+      flags: 64,
+    });
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId(`tip_custom_price_modal_${tipId}`)
+    .setTitle("填寫客製打賞金額");
+  const amountInput = new TextInputBuilder()
+    .setCustomId("amount")
+    .setLabel("每位陪陪的打賞金額")
+    .setPlaceholder("請輸入整數，例如：999")
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(9)
+    .setRequired(true);
+  modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+
+  return interaction.showModal(modal);
+}
+
+async function handleTipCustomPriceModal(interaction) {
+  await interaction.deferReply({ flags: 64 });
+  const tipId = interaction.customId.replace(
+    "tip_custom_price_modal_",
+    "",
+  );
+  const tipData = pendingTips.get(tipId);
+
+  if (!isAdminOrStaff(interaction)) {
+    return interaction.editReply({
+      content: "❌ 只有客服或管理員可以填寫客製打賞金額。",
+    });
+  }
+  if (!tipData || !tipData.customPriceRequired) {
+    return interaction.editReply({
+      content: "❌ 這筆客製打賞已失效或已完成定價。",
+    });
+  }
+
+  const amountText = interaction.fields.getTextInputValue("amount");
+  if (!/^\d+$/.test(amountText.trim())) {
+    return interaction.editReply({
+      content: "❌ 金額格式錯誤，請輸入大於 0 的整數。",
+    });
+  }
+  const amount = Number(amountText);
+  if (!Number.isSafeInteger(amount) || amount <= 0) {
+    return interaction.editReply({
+      content: "❌ 金額格式錯誤，請輸入大於 0 的整數。",
+    });
+  }
+
+  tipData.amount = amount;
+  tipData.customPriceRequired = false;
+  tipData.customPriceSet = true;
+  setPendingTip(tipId, tipData);
+
+  if (tipData.customPriceMessageId) {
+    const message = await interaction.channel.messages
+      .fetch(tipData.customPriceMessageId)
+      .catch(() => null);
+    if (message) {
+      await message.edit({
+        content:
+          `✅ 客製打賞已由客服完成定價\n` +
+          `每位陪陪：${amount.toLocaleString("zh-TW")} ASD`,
+        components: [],
+      })
+        .catch(() => {});
+    }
+  }
+
+  await sendTipPaymentSelectPrompt(
+    interaction.channel,
+    tipId,
+    formatTipStaffMentions(getTipStaffIds(tipData)),
+  );
+  return interaction.editReply({
+    content:
+      `✅ 客製打賞金額已設定為每位 ${amount.toLocaleString("zh-TW")} ASD\n` +
+      `已請客人繼續選擇付款方式。`,
+  });
+}
+
 async function handleTipStaffDone(interaction) {
   const tipId = interaction.customId.replace("tip_staff_done_", "");
   const tipData = pendingTips.get(tipId);
@@ -1007,6 +1103,26 @@ async function handleTipStaffDone(interaction) {
       components: [],
     })
     .catch(() => {});
+
+  if (tipData.customPriceRequired) {
+    const priceMessage = await interaction.channel.send({
+      content: `<@&${process.env.STAFF_ROLE}> 請填寫這筆客製打賞的每位陪陪金額。`,
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder()
+            .setCustomId(`tip_custom_price_${tipId}`)
+            .setLabel("客服填寫客製金額")
+            .setEmoji("💰")
+            .setStyle(ButtonStyle.Primary),
+        ),
+      ],
+    });
+    tipData.customPriceMessageId = priceMessage.id;
+    setPendingTip(tipId, tipData);
+    return interaction.editReply({
+      content: "✅ 已選擇受賞陪陪，請等待客服填寫客製打賞金額。",
+    });
+  }
 
   await sendTipPaymentSelectPrompt(
     interaction.channel,
@@ -5411,6 +5527,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
+      if (interaction.customId.startsWith("tip_custom_price_modal_")) {
+        await handleTipCustomPriceModal(interaction);
+        return;
+      }
       if (interaction.customId.startsWith("tip_staff_search_modal_")) {
         await handleTipStaffSearchModal(interaction);
         return;
@@ -5760,6 +5880,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       }
       if (customId.startsWith("tip_staff_search_")) {
         await openTipStaffSearchModal(interaction);
+        return;
+      }
+      if (customId.startsWith("tip_custom_price_")) {
+        await openTipCustomPriceModal(interaction);
         return;
       }
       if (
