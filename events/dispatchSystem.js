@@ -412,7 +412,8 @@ async function sendTipOrderPanel() {
     .setTitle("💝 打賞下單區")
     .setDescription(
       `想支持喜歡的陪陪嗎？請點擊下方按鈕建立專屬打賞頻道。\n\n` +
-        `可建立一般打賞單或冠名單，完成後選擇陪陪及付款方式。`,
+        `可建立一般打賞單或冠名單，完成後選擇陪陪及付款方式。\n\n` +
+        `打賞與冠名商品介紹請查看：<#1528136121878446281>`,
     )
     .setFooter({ text: "深夜不關燈｜打賞系統" })
     .setTimestamp();
