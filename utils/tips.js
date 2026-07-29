@@ -12,6 +12,14 @@ function getTipStaffIds(tipData = {}) {
   ];
 }
 
+function hasSelfTip(tipperId, staffIds = []) {
+  const normalizedTipperId = String(tipperId || "").trim();
+  if (!normalizedTipperId) return false;
+  return staffIds.some(
+    (staffId) => String(staffId || "").trim() === normalizedTipperId,
+  );
+}
+
 function formatTipStaffMentions(staffIds = []) {
   return staffIds.map((staffId) => `<@${staffId}>`).join("、");
 }
@@ -102,5 +110,6 @@ module.exports = {
   getTipGiftSelections,
   getTipStaffIds,
   getTipTotalAmount,
+  hasSelfTip,
   parseTipQuantityList,
 };

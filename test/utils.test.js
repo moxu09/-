@@ -21,8 +21,15 @@ const {
   getTipGiftByKey,
   getTipStaffIds,
   getTipTotalAmount,
+  hasSelfTip,
   parseTipQuantityList,
 } = require("../utils/tips");
+
+test("tips cannot target the tipper", () => {
+  assert.equal(hasSelfTip("100", ["200", "100"]), true);
+  assert.equal(hasSelfTip("100", ["200", "300"]), false);
+  assert.equal(hasSelfTip("", ["200"]), false);
+});
 const {
   buildRedPacketShares,
   normalizeRedPacketMode,
