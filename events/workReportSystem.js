@@ -653,7 +653,11 @@ function createWorkReportSystem({
         order_amount: perStaffAmount,
         expected_duration_minutes: Number(payload.expectedDurationMinutes || 0),
       };
-      await sendReportCard(report, staff);
+      // 資料庫已經有同一張工時單時，不要再次把相同面板送進填單區。
+      // 接單按鈕或事件重送時仍會走到這裡，因此資料庫與 Discord 都要冪等。
+      if (!existing) {
+        await sendReportCard(report, staff);
+      }
       reports.push(report);
     }
     return reports;
@@ -672,6 +676,101 @@ function createWorkReportSystem({
         expectedDurationMinutes:
           Number(order.duration_minutes || 0) ||
           parseDurationMinutes(order.duration_text),
+      },
+      staffIds,
+    );
+  }
+
+  async function syncAcceptedOrder(order) {
+    const staffIds = String(order.assigned_player || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (!staffIds.length) return [];
+
+    const totalAmount = Number(
+      order.final_price || order.price || order.order_amount || 0,
+    );
+    const amounts = buildReportAmounts(totalAmount, staffIds.length, false);
+    const expectedDurationMinutes =
+      Number(order.duration_minutes || 0) ||
+      parseDurationMinutes(order.duration_text || order.reserved_time);
+    const synced = [];
+
+    for (const [index, staffId] of staffIds.entries()) {
+      const reportKey = `WORK-${order.id}-${staffId}`;
+      const { data: current, error: readError } = await supabase
+        .from(salaryTable)
+        .select("*")
+        .eq("order_id", reportKey)
+        .maybeSingle();
+      if (readError) throw readError;
+      if (!current) continue;
+
+      let meta = {};
+      try {
+        meta = JSON.parse(current.note || current.admin_note || "{}");
+      } catch {}
+      const amount = amounts[index];
+      const nextMeta = {
+        ...meta,
+        serviceName: order.service || order.service_name || order.order_item,
+        orderAmount: amount,
+        expectedDurationMinutes,
+        sourceOrderUpdatedAt: new Date().toISOString(),
+      };
+      const common = {
+        service_name:
+          order.service || order.service_name || order.order_item || "陪玩服務",
+        order_amount: amount,
+        platform_income: amount,
+      };
+      const updatePayload =
+        appKey === "deepnight"
+          ? {
+              ...common,
+              service:
+                order.service ||
+                order.service_name ||
+                order.order_item ||
+                "陪玩服務",
+              price: amount,
+              final_price: amount,
+              note: JSON.stringify(nextMeta),
+            }
+          : { ...common, admin_note: JSON.stringify(nextMeta) };
+      const { data: updated, error: updateError } = await supabase
+        .from(salaryTable)
+        .update(updatePayload)
+        .eq("id", current.id)
+        .in("status", ["work_draft", "work_pending", "工時待填", "工時待審核"])
+        .select()
+        .maybeSingle();
+      if (updateError) throw updateError;
+      if (updated) synced.push(updated);
+    }
+    return synced;
+  }
+
+  async function sendForPaidExtension(extension, order) {
+    const staffIds = String(order.assigned_player || "")
+      .split(",")
+      .map((id) => id.trim())
+      .filter(Boolean);
+    if (!staffIds.length) throw new Error("原訂單尚未有陪陪接單");
+
+    return createReports(
+      {
+        sourceKind: "order_extension",
+        sourceOrderId: `EXT-${extension.id}`,
+        customerId: order.customer_id,
+        customerName: order.customer_name || order.customer_username,
+        orderType: "訂單加時",
+        serviceName: `${order.service || order.order_item || "陪玩訂單"}｜加時：${
+          extension.extension_text || "加時"
+        }`,
+        orderAmount: Number(extension.amount || 0),
+        expectedDurationMinutes: parseDurationMinutes(extension.extension_text),
       },
       staffIds,
     );
@@ -2007,8 +2106,10 @@ function createWorkReportSystem({
     handleInteraction,
     startCrownReminderScheduler,
     sendForAcceptedOrder,
+    sendForPaidExtension,
     sendForCompletedTipOrders,
     sendManualPanel,
+    syncAcceptedOrder,
   };
 }
 

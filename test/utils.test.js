@@ -96,6 +96,16 @@ const {
   getApplicationFields,
   normalizeRoleName,
 } = require("../events/employmentSystem");
+const { formatComplaintSender } = require("../events/complaintSystem");
+
+test("anonymous complaints never include the sender identity", () => {
+  const user = { id: "123456789012345678", tag: "secret-user" };
+  const anonymousText = formatComplaintSender(true, user);
+  assert.equal(anonymousText, "匿名（未紀錄發送者）");
+  assert.equal(anonymousText.includes(user.id), false);
+  assert.equal(anonymousText.includes(user.tag), false);
+  assert.match(formatComplaintSender(false, user), /123456789012345678/);
+});
 const {
   claimDailyCheckinReward,
 } = require("../utils/dailyCheckin");

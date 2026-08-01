@@ -1061,15 +1061,7 @@ function createEmploymentSystem(client, config) {
       });
 
       const updatedEmbed = EmbedBuilder.from(record.embed)
-        .setColor(result === "通過" ? "#16a34a" : "#dc2626")
-        .addFields({
-          name: "審核結果",
-          value:
-            `**${result}**\n` +
-            `審核人：<@${interaction.user.id}>\n` +
-            `審核日期：${reviewedAt}`,
-          inline: false,
-        });
+        .setColor(result === "通過" ? "#16a34a" : "#dc2626");
       await interaction.message.edit({
         embeds: [updatedEmbed],
         components: disabledComponents(interaction.message),
