@@ -10674,7 +10674,11 @@ async function handleButtonInteraction(interaction) {
     }
 
     // ===== 完成訂單 =====
-    if (customId === "complete_order" || customId === "complete_topup") {
+    if (
+      customId === "complete_order" ||
+      customId.startsWith("complete_order_") ||
+      customId === "complete_topup"
+    ) {
       if (!isAdminOrStaff(interaction)) {
         return await safeReply(interaction, {
           content: "❌ 只有客服可以操作",
@@ -10682,14 +10686,56 @@ async function handleButtonInteraction(interaction) {
         });
       }
       // ===== 如果是陪玩訂單 =====
-      if (customId === "complete_order") {
-        const { data: order } = await supabase
-          .from("play_orders")
-          .select("*")
-          .eq("channel_id", interaction.channel.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
+      if (
+        customId === "complete_order" ||
+        customId.startsWith("complete_order_")
+      ) {
+        const requestedOrderId = customId.startsWith("complete_order_")
+          ? customId.slice("complete_order_".length)
+          : null;
+        let order = null;
+        if (requestedOrderId) {
+          const { data } = await supabase
+            .from("play_orders")
+            .select("*")
+            .eq("channel_id", interaction.channel.id)
+            .eq("id", requestedOrderId)
+            .maybeSingle();
+          order = data;
+        } else {
+          const { data: channelOrders } = await supabase
+            .from("play_orders")
+            .select("*")
+            .eq("channel_id", interaction.channel.id)
+            .order("created_at", { ascending: false });
+          const activeOrders = (channelOrders || []).filter(
+            (item) =>
+              !item.is_deleted &&
+              !String(item.order_id || "").startsWith("WORK-") &&
+              !["completed", "cancelled", "canceled"].includes(
+                String(item.status || "").toLowerCase(),
+              ),
+          );
+          if (activeOrders.length > 1) {
+            const rows = [];
+            for (let index = 0; index < activeOrders.length; index += 5) {
+              const buttons = activeOrders.slice(index, index + 5).map((item) =>
+                new ButtonBuilder()
+                  .setCustomId(`complete_order_${item.id}`)
+                  .setLabel(String(item.order_no || item.id).slice(0, 70))
+                  .setStyle(ButtonStyle.Success),
+              );
+              rows.push(new ActionRowBuilder().addComponents(buttons));
+              if (rows.length === 5) break;
+            }
+            return await safeReply(interaction, {
+              content: "此工單有多筆進行中的訂單，請選擇要完成的訂單：",
+              components: rows,
+              ephemeral: true,
+            });
+          }
+          order = activeOrders[0] || null;
+        }
         if (!order) {
           return await safeReply(interaction, {
             content:
@@ -10727,10 +10773,35 @@ async function handleButtonInteraction(interaction) {
             completed_at: new Date().toISOString(),
           })
           .eq("id", order.id);
+        const { data: channelOrders, error: remainingOrderError } =
+          await supabase
+            .from("play_orders")
+            .select("id, assigned_player, status, is_deleted, order_id")
+            .eq("channel_id", interaction.channel.id)
+            .neq("id", order.id);
+        const remainingOrders = (channelOrders || []).filter(
+          (item) =>
+            !item.is_deleted &&
+            !String(item.order_id || "").startsWith("WORK-") &&
+            !["completed", "cancelled", "canceled"].includes(
+              String(item.status || "").toLowerCase(),
+            ),
+        );
+        const remainingPlayerIds = new Set(
+          remainingOrders.flatMap((item) =>
+            String(item.assigned_player || "")
+              .split(",")
+              .map((id) => id.trim())
+              .filter(Boolean),
+          ),
+        );
+        const playersToRevoke = remainingOrderError
+          ? []
+          : assignedPlayers.filter((id) => !remainingPlayerIds.has(id));
         // 完成後立刻收回所有接單陪陪的頻道權限；客人與客服保留存取，
         // 讓後續關閉確認、補充說明與客服處理仍可在原頻道完成。
         const permissionResults = await Promise.allSettled(
-          assignedPlayers.map((playerId) =>
+          playersToRevoke.map((playerId) =>
             interaction.channel.permissionOverwrites.edit(playerId, {
               ViewChannel: false,
               SendMessages: false,
@@ -10835,6 +10906,12 @@ async function handleButtonInteraction(interaction) {
           ],
         });
         await sendOrderReviewPanel(interaction.channel, order, assignedPlayers);
+        if (remainingOrders.length > 0) {
+          return await safeReply(interaction, {
+            content: `✅ 已完成訂單 ${order.order_no || order.id}；此工單還有 ${remainingOrders.length} 筆訂單進行中，因此暫不關閉頻道。`,
+            ephemeral: true,
+          });
+        }
         // ===== 完成訂單後，先詢問客人是否關閉 =====
         const confirmCloseButton = new ButtonBuilder()
           .setCustomId("customer_confirm_close_order")
@@ -10855,16 +10932,7 @@ async function handleButtonInteraction(interaction) {
         );
         let closeTargetId = null;
         // 如果是陪玩訂單，從 play_orders 找客人
-        if (customId === "complete_order") {
-          const { data: closeOrder } = await supabase
-            .from("play_orders")
-            .select("customer_id")
-            .eq("channel_id", interaction.channel.id)
-            .order("created_at", { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          closeTargetId = closeOrder?.customer_id || null;
-        }
+        closeTargetId = order.customer_id || null;
         // 如果找不到，從頻道權限找客人
         if (!closeTargetId) {
           const ownerOverwrite =

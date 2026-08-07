@@ -1887,7 +1887,7 @@ async function sendStaffOrderControlPanel(channel, order) {
 
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId("complete_order")
+      .setCustomId(`complete_order_${order.id}`)
       .setLabel("完成訂單")
       .setEmoji("🏁")
       .setStyle(ButtonStyle.Success)
