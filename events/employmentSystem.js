@@ -13,6 +13,13 @@ const {
 } = require("discord.js");
 
 const FLOW_TTL_MS = 24 * 60 * 60 * 1000;
+const RESULT_THREAD_IDLE_DELETE_MS = 24 * 60 * 60 * 1000;
+const RESULT_THREAD_SWEEP_MS = 60 * 60 * 1000;
+const RESULT_THREAD_PREFIX = "已完成｜";
+
+function getCompletedThreadDeleteDelay(lastActivityAt, now = Date.now()) {
+  return Math.max(0, RESULT_THREAD_IDLE_DELETE_MS - (now - lastActivityAt));
+}
 const FONT_PATH = path.join(
   __dirname,
   "..",
@@ -840,6 +847,100 @@ function disabledComponents(message) {
 }
 
 function createEmploymentSystem(client, config) {
+  const completedThreadDeleteTimers = new Map();
+  const completedThreadIds = new Set();
+  let cleanupSweepTimer = null;
+
+  async function getThreadLastActivityAt(thread) {
+    const messages = await thread.messages.fetch({ limit: 1 }).catch(() => null);
+    return messages?.first()?.createdTimestamp || thread.createdTimestamp || Date.now();
+  }
+
+  function scheduleCompletedThreadDeletion(thread, delayMs = RESULT_THREAD_IDLE_DELETE_MS) {
+    const existingTimer = completedThreadDeleteTimers.get(thread.id);
+    if (existingTimer) clearTimeout(existingTimer);
+
+    completedThreadIds.add(thread.id);
+    const timer = setTimeout(() => {
+      completedThreadDeleteTimers.delete(thread.id);
+      void deleteCompletedThreadIfIdle(thread.id);
+    }, Math.max(1_000, delayMs));
+    timer.unref?.();
+    completedThreadDeleteTimers.set(thread.id, timer);
+  }
+
+  async function deleteCompletedThreadIfIdle(threadId) {
+    const thread = await client.channels.fetch(threadId).catch(() => null);
+    if (!thread?.isThread?.()) {
+      completedThreadIds.delete(threadId);
+      return;
+    }
+
+    const isCompleted =
+      completedThreadIds.has(threadId) ||
+      String(thread.name || "").startsWith(RESULT_THREAD_PREFIX);
+    if (!isCompleted || thread.parentId !== config.reviewChannelId) return;
+
+    const lastActivityAt = await getThreadLastActivityAt(thread);
+    const remainingMs = getCompletedThreadDeleteDelay(lastActivityAt);
+    if (remainingMs > 0) {
+      scheduleCompletedThreadDeletion(thread, remainingMs);
+      return;
+    }
+
+    try {
+      await thread.delete(`${config.brandName} 考核結果討論串閒置 24 小時`);
+      completedThreadIds.delete(threadId);
+      console.log(`[入職審核] 已刪除閒置討論串 ${threadId}`);
+    } catch (error) {
+      console.error(`[入職審核] 刪除閒置討論串失敗 ${threadId}`, error);
+    }
+  }
+
+  async function sweepCompletedThreads() {
+    const reviewChannel = await client.channels.fetch(config.reviewChannelId);
+    if (!reviewChannel?.threads) return;
+
+    const [active, archived] = await Promise.all([
+      reviewChannel.threads.fetchActive().catch(() => null),
+      reviewChannel.threads
+        .fetchArchived({ type: "public", limit: 100 })
+        .catch(() => null),
+    ]);
+    const threads = new Map();
+
+    for (const thread of active?.threads?.values?.() || []) {
+      threads.set(thread.id, thread);
+    }
+    for (const thread of archived?.threads?.values?.() || []) {
+      threads.set(thread.id, thread);
+    }
+
+    for (const thread of threads.values()) {
+      if (!String(thread.name || "").startsWith(RESULT_THREAD_PREFIX)) continue;
+      const lastActivityAt = await getThreadLastActivityAt(thread);
+      const remainingMs = getCompletedThreadDeleteDelay(lastActivityAt);
+
+      if (remainingMs <= 0) {
+        await deleteCompletedThreadIfIdle(thread.id);
+      } else {
+        scheduleCompletedThreadDeletion(thread, remainingMs);
+      }
+    }
+  }
+
+  async function startCleanupScheduler() {
+    await sweepCompletedThreads();
+    if (cleanupSweepTimer) return;
+
+    cleanupSweepTimer = setInterval(() => {
+      void sweepCompletedThreads().catch((error) =>
+        console.error("[入職審核] 掃描已完成討論串失敗", error),
+      );
+    }, RESULT_THREAD_SWEEP_MS);
+    cleanupSweepTimer.unref?.();
+  }
+
   async function sendPanel() {
     const channel = await client.channels.fetch(config.panelChannelId);
     if (!channel?.isTextBased() || typeof channel.send !== "function") {
@@ -1094,18 +1195,18 @@ function createEmploymentSystem(client, config) {
 
       await interaction.channel.send({
         content:
-          "已發送面試結果，通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官",
+          "已發送面試結果，通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官。此討論串閒置 24 小時後會自動刪除。",
         allowedMentions: { parse: [] },
       });
       if (interaction.channel.isThread?.()) {
+        const completedName = String(interaction.channel.name || "入職申請")
+          .replace(new RegExp(`^${RESULT_THREAD_PREFIX}`), "");
         await interaction.channel
-          .setAutoArchiveDuration(
-            1440,
-            `${config.brandName} 面試結果送出後 24 小時自動封存`,
-          )
+          .setName(`${RESULT_THREAD_PREFIX}${completedName}`.slice(0, 100))
           .catch((error) =>
-            console.error("[入職審核] 設定討論串自動封存失敗", error),
+            console.error("[入職審核] 標記已完成討論串失敗", error),
           );
+        scheduleCompletedThreadDeletion(interaction.channel);
       }
 
       await interaction.editReply({
@@ -1291,6 +1392,7 @@ function createEmploymentSystem(client, config) {
   return {
     handleInteraction,
     sendPanel,
+    startCleanupScheduler,
   };
 }
 
@@ -1302,6 +1404,7 @@ module.exports = {
   buildEmploymentPdfBuffer,
   buildRulesEmbeds,
   createEmploymentSystem,
+  getCompletedThreadDeleteDelay,
   getApplicationFields,
   normalizeRoleName,
 };

@@ -102,6 +102,7 @@ const {
   GAMES,
   buildApprovedEmploymentDmContent,
   buildEmploymentPdfBuffer,
+  getCompletedThreadDeleteDelay,
   getApplicationFields,
   normalizeRoleName,
 } = require("../events/employmentSystem");
@@ -605,6 +606,13 @@ test("employment applications expose ten games and complete field schemas", () =
   assert.equal(getApplicationFields("honor_of_kings").length, 9);
   assert.equal(getApplicationFields("other").length, 9);
   assert.equal(normalizeRoleName("｜｜・遊戲審核官"), "遊戲審核官");
+});
+
+test("completed employment threads delete after 24 hours of inactivity", () => {
+  const hour = 60 * 60 * 1000;
+  assert.equal(getCompletedThreadDeleteDelay(0, 23 * hour), hour);
+  assert.equal(getCompletedThreadDeleteDelay(0, 24 * hour), 0);
+  assert.equal(getCompletedThreadDeleteDelay(10 * hour, 25 * hour), 9 * hour);
 });
 
 test("approved employment DM includes deadlines and bundled contract", () => {
