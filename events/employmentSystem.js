@@ -897,7 +897,38 @@ function createEmploymentSystem(client, config) {
     }
   }
 
-  async function sweepCompletedThreads() {
+  async function isCompletedThread(thread, discoverLegacy) {
+    if (
+      completedThreadIds.has(thread.id) ||
+      String(thread.name || "").startsWith(RESULT_THREAD_PREFIX)
+    ) {
+      return true;
+    }
+    if (!discoverLegacy) return false;
+
+    const messages = await thread.messages.fetch({ limit: 100 }).catch(() => null);
+    const hasResultMessage = messages?.some(
+      (message) =>
+        message.author?.id === client.user?.id &&
+        String(message.content || "").startsWith("已發送面試結果"),
+    );
+    if (!hasResultMessage) return false;
+
+    completedThreadIds.add(thread.id);
+    await thread
+      .setName(
+        `${RESULT_THREAD_PREFIX}${String(thread.name || "入職申請")}`.slice(
+          0,
+          100,
+        ),
+      )
+      .catch((error) =>
+        console.error("[入職審核] 標記既有已完成討論串失敗", error),
+      );
+    return true;
+  }
+
+  async function sweepCompletedThreads({ discoverLegacy = false } = {}) {
     const reviewChannel = await client.channels.fetch(config.reviewChannelId);
     if (!reviewChannel?.threads) return;
 
@@ -917,7 +948,7 @@ function createEmploymentSystem(client, config) {
     }
 
     for (const thread of threads.values()) {
-      if (!String(thread.name || "").startsWith(RESULT_THREAD_PREFIX)) continue;
+      if (!(await isCompletedThread(thread, discoverLegacy))) continue;
       const lastActivityAt = await getThreadLastActivityAt(thread);
       const remainingMs = getCompletedThreadDeleteDelay(lastActivityAt);
 
@@ -930,7 +961,7 @@ function createEmploymentSystem(client, config) {
   }
 
   async function startCleanupScheduler() {
-    await sweepCompletedThreads();
+    await sweepCompletedThreads({ discoverLegacy: true });
     if (cleanupSweepTimer) return;
 
     cleanupSweepTimer = setInterval(() => {
