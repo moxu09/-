@@ -1097,6 +1097,16 @@ function createEmploymentSystem(client, config) {
           "已發送面試結果，通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官",
         allowedMentions: { parse: [] },
       });
+      if (interaction.channel.isThread?.()) {
+        await interaction.channel
+          .setAutoArchiveDuration(
+            1440,
+            `${config.brandName} 面試結果送出後 24 小時自動封存`,
+          )
+          .catch((error) =>
+            console.error("[入職審核] 設定討論串自動封存失敗", error),
+          );
+      }
 
       await interaction.editReply({
         content:

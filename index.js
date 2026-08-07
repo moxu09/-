@@ -24,6 +24,9 @@ const {
   syncApplicationCommands,
 } = require("./runtime/commandRegistry");
 const { runStartupGroup } = require("./runtime/startupOrchestrator");
+const {
+  startDailySelfCheckScheduler,
+} = require("./utils/dailySelfCheck");
 const { createClient } = require("@supabase/supabase-js");
 const { createAccountingLedger } = require("./utils/accounting");
 const { createAllianceMembership } = require("./utils/allianceMembership");
@@ -5781,6 +5784,23 @@ client.once(Events.ClientReady, async () => {
       {
         name: "深夜薪資每日報告排程",
         run: () => startDeepNightSalaryReportCron(client, supabase),
+      },
+      {
+        name: "每日自動偵錯排程",
+        run: () =>
+          startDailySelfCheckScheduler({
+            client,
+            supabase,
+            guildId: process.env.GUILD_ID,
+            healthState: runtimeHealth,
+            repairTasks: [
+              { name: "分區下單面板", run: () => dispatchSystem.sendGameOrderPanels() },
+              { name: "打賞下單面板", run: () => dispatchSystem.sendTipOrderPanel() },
+              { name: "報單面板", run: () => dispatchSystem.sendWorkReportPanel() },
+              { name: "入職申請面板", run: () => employmentSystem.sendPanel() },
+              { name: "投訴面板", run: () => complaintSystem.sendPanel() },
+            ],
+          }),
       },
     ],
     { concurrency: 2, healthState: runtimeHealth },

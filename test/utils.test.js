@@ -83,6 +83,15 @@ const {
   scheduleMapExpiry,
   validateEnvironment,
 } = require("../utils/runtime");
+const { getTaipeiScheduleParts } = require("../utils/dailySelfCheck");
+
+test("每日自動偵錯使用台北時間排程", () => {
+  assert.deepEqual(getTaipeiScheduleParts(new Date("2026-08-06T20:10:00Z")), {
+    date: "2026-08-07",
+    hour: 4,
+    minute: 10,
+  });
+});
 const {
   commandDefinitionsMatch,
   syncApplicationCommands,
