@@ -15,6 +15,12 @@ const {
 } = require("../utils/reviews");
 const { parseAllowedServices } = require("../utils/services");
 const {
+  buildTopupTopic,
+  getNextTopupNumber,
+  getTopupNumberFromTopic,
+  normalizeTopupNumber,
+} = require("../utils/topupNumbers");
+const {
   buildTipAllocations,
   formatTipStaffMentions,
   getTipAllocationTotal,
@@ -29,6 +35,23 @@ test("tips cannot target the tipper", () => {
   assert.equal(hasSelfTip("100", ["200", "100"]), true);
   assert.equal(hasSelfTip("100", ["200", "300"]), false);
   assert.equal(hasSelfTip("", ["200"]), false);
+});
+
+test("topup numbers use a validated ten-digit sequence", async () => {
+  const topic = buildTopupTopic("123", "TOP-0000000001");
+  assert.equal(topic, "owner:123;topup_no:TOP-0000000001");
+  assert.equal(getTopupNumberFromTopic(topic), "TOP-0000000001");
+  assert.equal(normalizeTopupNumber("top-10000000000"), "TOP-10000000000");
+  assert.equal(normalizeTopupNumber("TOP-123"), null);
+  assert.equal(
+    await getNextTopupNumber({
+      rpc: async (name) => ({
+        data: name === "next_topup_number" ? "TOP-0000000002" : null,
+        error: null,
+      }),
+    }),
+    "TOP-0000000002",
+  );
 });
 const {
   buildRedPacketShares,

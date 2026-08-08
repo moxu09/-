@@ -15,6 +15,11 @@ const {
   isStaffInteraction,
 } = require("./workReportSystem");
 const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
+const {
+  buildTopupTopic,
+  getNextTopupNumber,
+  getTopupNumberFromTopic,
+} = require("../utils/topupNumbers");
 
 let supabase;
 let client;
@@ -1984,12 +1989,16 @@ async function createTopupTicket(interaction) {
   }
 
   const guild = interaction.guild;
+  const topupNo = await getNextTopupNumber(supabase);
+  const safeName = interaction.user.username
+    .replace(/[^a-zA-Z0-9\u4e00-\u9fa5-_]/g, "")
+    .slice(0, 10);
 
   const channel = await guild.channels.create({
-    name: `儲值-${interaction.user.username}`.slice(0, 90),
+    name: `儲值-${topupNo.toLowerCase()}-${safeName}`.slice(0, 90),
     type: ChannelType.GuildText,
     parent: process.env.ORDER_CATEGORY || null,
-    topic: `owner:${interaction.user.id}`,
+    topic: buildTopupTopic(interaction.user.id, topupNo),
     permissionOverwrites: [
       {
         id: guild.id,
@@ -2037,7 +2046,9 @@ async function createTopupTicket(interaction) {
       new EmbedBuilder()
         .setColor("#ffd166")
         .setTitle("💳 儲值頻道")
-        .setDescription("請點擊下方按鈕填寫儲值資料。"),
+        .setDescription(
+          `儲值編號：${topupNo}\n請點擊下方按鈕填寫儲值資料。`,
+        ),
     ],
     components: [row],
   });
@@ -6411,12 +6422,26 @@ async function submitTopupForm(interaction) {
       content: "❌ 金額格式錯誤",
     });
   }
+  let topupNo = getTopupNumberFromTopic(interaction.channel?.topic);
+  if (!topupNo) {
+    topupNo = await getNextTopupNumber(supabase);
+    const safeName = interaction.user.username
+      .replace(/[^a-zA-Z0-9\u4e00-\u9fa5-_]/g, "")
+      .slice(0, 10);
+    await interaction.channel
+      ?.edit({
+        name: `儲值-${topupNo.toLowerCase()}-${safeName}`.slice(0, 90),
+        topic: buildTopupTopic(interaction.user.id, topupNo),
+      })
+      .catch(() => {});
+  }
   const topupId = `${interaction.user.id}_${Date.now()}`;
 
   pendingTopups.set(topupId, {
     userId: interaction.user.id,
     amount,
     note,
+    topupNo,
   });
 
   const expiryTimer = setTimeout(() => {
@@ -6459,6 +6484,7 @@ async function submitTopupForm(interaction) {
 
   return interaction.editReply({
     content:
+      `儲值編號：${topupNo}\n` +
       `✅ 已填寫儲值金額：NT$${amount}\n` +
       `📝 備註：${note}\n\n` +
       `請繼續選擇付款方式：`,
@@ -6493,7 +6519,7 @@ async function handleTopupPaymentMethodSelect(interaction) {
 
   const method = interaction.values[0];
 
-  const { amount, note } = pending;
+  const { amount, note, topupNo } = pending;
 
   pendingTopups.delete(topupId);
 
@@ -6502,6 +6528,7 @@ async function handleTopupPaymentMethodSelect(interaction) {
     .setTitle("💰 儲值申請")
     .setDescription(
       `👤 會員：${interaction.user}\n\n` +
+        `🔢 儲值編號：${topupNo}\n` +
         `💵 儲值金額：NT$${amount}\n` +
         `💳 付款方式：${method}\n` +
         `📝 備註：${note}`
@@ -6509,7 +6536,9 @@ async function handleTopupPaymentMethodSelect(interaction) {
 
   const row = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
-      .setCustomId(`confirm_topup_${interaction.user.id}_${amount}`)
+      .setCustomId(
+        `confirm_topup_${interaction.user.id}_${amount}_${topupNo}`,
+      )
       .setLabel("確認儲值")
       .setEmoji("✅")
       .setStyle(ButtonStyle.Success),
@@ -6572,10 +6601,12 @@ async function confirmTopup(interaction) {
 
   const parts = interaction.customId.split("_");
 
-  // confirm_topup_userId_amount
+  // confirm_topup_userId_amount_topupNo
   const userId = parts[2];
 
   const amount = Number(parts[3]);
+  const topupNo =
+    parts[4] || getTopupNumberFromTopic(interaction.channel?.topic) || null;
 
   if (!userId || !amount || amount <= 0) {
     return interaction.editReply({
@@ -6594,7 +6625,7 @@ async function confirmTopup(interaction) {
     });
   }
 
-  const topupKey = interaction.message?.id || interaction.customId;
+  const topupKey = topupNo || interaction.message?.id || interaction.customId;
   if (processingTopups.has(topupKey)) {
     return interaction.editReply({
       content: "這筆儲值已由客服確認，系統正在處理中。",
@@ -6649,14 +6680,14 @@ async function confirmTopup(interaction) {
     "儲值",
     amount,
     finalCoins,
-    "💳 自動儲值成功"
+    `💳 自動儲值成功｜${topupNo || "舊儲值單"}`
   );
 
   await paymentHelpers.recordMembershipActivity({
     userId,
     amount,
-    sourceKey: `dispatch-topup:${interaction.message?.id || interaction.id}:${userId}`,
-    note: `客服 <@${interaction.user.id}> 確認儲值`,
+    sourceKey: `dispatch-topup:${topupNo || interaction.message?.id || interaction.id}:${userId}`,
+    note: `${topupNo || "舊儲值單"}｜客服 <@${interaction.user.id}> 確認儲值`,
   });
   await paymentHelpers.checkAndUpgradeVip(
     userId,
@@ -6674,11 +6705,9 @@ async function confirmTopup(interaction) {
     payment_method: "客服確認儲值",
     customer_id: userId,
     source_table: "wallet_logs",
-    source_id: interaction.message?.id || interaction.id,
-    dedupe_key: `topup:${
-      interaction.message?.id || interaction.id
-    }:${userId}:${amount}`,
-    note: `客服 <@${interaction.user.id}> 確認儲值`,
+    source_id: topupNo || interaction.message?.id || interaction.id,
+    dedupe_key: `topup:${topupNo || interaction.message?.id || interaction.id}:${userId}:${amount}`,
+    note: `${topupNo || "舊儲值單"}｜客服 <@${interaction.user.id}> 確認儲值`,
     created_by: interaction.user.id,
   });
 
@@ -6689,6 +6718,7 @@ async function confirmTopup(interaction) {
         .setTitle("✅ 儲值已完成")
         .setDescription(
           `<@${userId}> 已成功儲值。\n\n` +
+            `儲值編號：${topupNo || "舊儲值單"}\n` +
             `儲值金額：${amount} ASD\n` +
             `目前餘額：${finalCoins} ASD\n` +
             `確認客服：<@${interaction.user.id}>`
@@ -6698,7 +6728,7 @@ async function confirmTopup(interaction) {
   });
 
   return interaction.editReply({
-    content: `✅ 已幫 <@${userId}> 儲值 ${amount} ASD`,
+    content: `✅ ${topupNo || "舊儲值單"} 已幫 <@${userId}> 儲值 ${amount} ASD`,
   });
 }
 async function submitSaveOrderNote(interaction) {

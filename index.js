@@ -36,6 +36,10 @@ const {
 const { parseAllowedServices } = require("./utils/services");
 const { ORDER_FLOW_TTL_MS } = require("./utils/orderFlow");
 const {
+  buildTopupTopic,
+  getNextTopupNumber,
+} = require("./utils/topupNumbers");
+const {
   createSupabaseDailyCheckinClaimer,
 } = require("./utils/dailyCheckin");
 const {
@@ -11396,17 +11400,23 @@ async function handleStringSelectInteraction(interaction) {
           STAFF_ROLE: process.env.STAFF_ROLE,
         });
         const ticketNumber = Date.now();
+        const topupNo =
+          value === "topup" ? await getNextTopupNumber(supabase) : null;
         const safeName = interaction.user.username
           .replace(/[^a-zA-Z0-9\u4e00-\u9fa5-_]/g, "")
           .slice(0, 10);
         const channelPrefix =
           value === "topup" ? "儲值" : value === "tip" ? "打賞" : "訂單";
-        const channelName = `${channelPrefix}-${safeName}-${ticketNumber}`;
+        const channelName = topupNo
+          ? `${channelPrefix}-${topupNo.toLowerCase()}-${safeName}`
+          : `${channelPrefix}-${safeName}-${ticketNumber}`;
         const orderChannel = await interaction.guild.channels.create({
           name: channelName,
           type: ChannelType.GuildText,
           parent: process.env.ORDER_CATEGORY,
-          topic: `owner:${interaction.user.id}`,
+          topic: topupNo
+            ? buildTopupTopic(interaction.user.id, topupNo)
+            : `owner:${interaction.user.id}`,
           permissionOverwrites: [
             {
               id: interaction.guild.roles.everyone,
@@ -11503,7 +11513,9 @@ async function handleStringSelectInteraction(interaction) {
           const embed = new EmbedBuilder()
             .setColor("#ffd166")
             .setTitle("💰 儲值系統")
-            .setDescription("請點擊下方按鈕填寫儲值資料");
+            .setDescription(
+              `儲值編號：${topupNo}\n請點擊下方按鈕填寫儲值資料`,
+            );
           const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
               .setCustomId("open_topup_modal")
