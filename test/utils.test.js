@@ -14,6 +14,7 @@ const {
   shouldPublishReview,
 } = require("../utils/reviews");
 const { parseAllowedServices } = require("../utils/services");
+const { getManualCommissionRate, getOrderCommissionBase } = require("../utils/salaryCommission");
 const {
   buildTopupTopic,
   getNextTopupNumber,
@@ -35,6 +36,12 @@ test("tips cannot target the tipper", () => {
   assert.equal(hasSelfTip("100", ["200", "100"]), true);
   assert.equal(hasSelfTip("100", ["200", "300"]), false);
   assert.equal(hasSelfTip("", ["200"]), false);
+});
+
+test("manual commission overrides and coupon salary uses the original price", () => {
+  assert.equal(getManualCommissionRate("manager_95"), 95);
+  assert.equal(getOrderCommissionBase({ price: 500, final_price: 400, discount_amount: 100 }), 500);
+  assert.equal(getOrderCommissionBase({ final_price: 400 }), 400);
 });
 
 test("topup numbers use a validated ten-digit sequence", async () => {

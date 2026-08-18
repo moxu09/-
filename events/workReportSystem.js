@@ -9,6 +9,7 @@ const {
   PermissionFlagsBits,
   UserSelectMenuBuilder,
 } = require("discord.js");
+const { getOrderCommissionBase } = require("../utils/salaryCommission");
 const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 
 function parseUserIds(value) {
@@ -672,7 +673,7 @@ function createWorkReportSystem({
         customerName: order.customer_name || order.customer_username,
         orderType: order.order_type || "訂單",
         serviceName: order.service || order.service_name || order.order_item,
-        orderAmount: order.final_price || order.price || order.order_amount,
+        orderAmount: getOrderCommissionBase(order),
         expectedDurationMinutes:
           Number(order.duration_minutes || 0) ||
           parseDurationMinutes(order.duration_text),
@@ -688,9 +689,7 @@ function createWorkReportSystem({
       .filter(Boolean);
     if (!staffIds.length) return [];
 
-    const totalAmount = Number(
-      order.final_price || order.price || order.order_amount || 0,
-    );
+    const totalAmount = getOrderCommissionBase(order);
     const amounts = buildReportAmounts(totalAmount, staffIds.length, false);
     const expectedDurationMinutes =
       Number(order.duration_minutes || 0) ||
