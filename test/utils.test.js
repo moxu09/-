@@ -22,6 +22,10 @@ const {
   normalizeTopupNumber,
 } = require("../utils/topupNumbers");
 const {
+  hasCustomerServicePointRole,
+  recordCustomerServicePoint,
+} = require("../utils/customerServicePoints");
+const {
   buildTipAllocations,
   formatTipStaffMentions,
   getTipAllocationTotal,
@@ -59,6 +63,25 @@ test("topup numbers use a validated ten-digit sequence", async () => {
     }),
     "TOP-0000000002",
   );
+});
+
+test("customer service points require the configured role and are idempotent per order", async () => {
+  assert.equal(
+    hasCustomerServicePointRole({ member: { roles: { cache: new Map([["1210642900355125288", {}]]) } } }),
+    true,
+  );
+  assert.equal(
+    hasCustomerServicePointRole({ member: { roles: { cache: new Map() } } }),
+    false,
+  );
+  let upsertCall;
+  const recorded = await recordCustomerServicePoint(
+    { from: () => ({ upsert: async (row, options) => ((upsertCall = { row, options }), { error: null }) }) },
+    { appKey: "deepnight", orderId: "ORD-0000000001", discordId: "staff-1", servedAt: "2026-08-22T00:00:00.000Z" },
+  );
+  assert.equal(recorded, true);
+  assert.equal(upsertCall.row.points, 1);
+  assert.deepEqual(upsertCall.options, { onConflict: "app_key,order_id", ignoreDuplicates: true });
 });
 const {
   buildRedPacketShares,

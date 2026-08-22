@@ -1226,8 +1226,10 @@ function createEmploymentSystem(client, config) {
 
       await interaction.channel.send({
         content:
-          "已發送面試結果，通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官。此討論串閒置 24 小時後會自動刪除。",
-        allowedMentions: { parse: [] },
+          `已發送面試結果：${result}\n` +
+          `審核官：${reviewer}（<@${interaction.user.id}>）\n` +
+          "通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官。此討論串閒置 24 小時後會自動刪除。",
+        allowedMentions: { users: [interaction.user.id] },
       });
       if (interaction.channel.isThread?.()) {
         const completedName = String(interaction.channel.name || "入職申請")
