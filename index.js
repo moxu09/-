@@ -5282,7 +5282,7 @@ const commands = sortCommandDefinitions([
     ),
   new SlashCommandBuilder()
     .setName("發錢")
-    .setDescription("給予玩家星雨幣")
+    .setDescription("管理員贈送星雨幣（不計入累積消費或儲值）")
     .addUserOption((option) =>
       option.setName("玩家").setDescription("選擇玩家").setRequired(true),
     )
@@ -5292,7 +5292,7 @@ const commands = sortCommandDefinitions([
 
   new SlashCommandBuilder()
     .setName("扣錢")
-    .setDescription("扣除玩家星雨幣")
+    .setDescription("扣除玩家星雨幣（不計入累積消費或儲值）")
     .addUserOption((option) =>
       option.setName("玩家").setDescription("選擇玩家").setRequired(true),
     )
@@ -7370,22 +7370,15 @@ async function handleSlashCommand(interaction) {
     }
 
     const finalCoins = await changeCoins(target.id, amount);
-    await sendWalletLog(target.id, "儲值", amount, finalCoins, "💳 儲值成功");
-    await allianceMembership.applyActivity({
-      discordUserId: target.id,
-      activityType: "topup",
-      amount,
-      sourceKey: `topup:${getGuildId(interaction)}:${target.id}:${Date.now()}`,
-      note: "客服發錢／儲值",
-    });
-    await checkAndUpgradeVip(
+    await sendWalletLog(
       target.id,
-      "topup",
+      "管理員發錢",
       amount,
-      getGuildId(interaction),
+      finalCoins,
+      "管理員贈送，不列入累積消費或儲值",
     );
     return interaction.editReply({
-      content: `✅ 已給予 <@${target.id}> ${amount} 星雨幣`,
+      content: `✅ 已給予 <@${target.id}> ${amount} 星雨幣（不列入累積消費或儲值）`,
     });
   }
   // 扣錢
@@ -7411,9 +7404,15 @@ async function handleSlashCommand(interaction) {
       );
     }
     const finalCoins = await changeCoins(target.id, -amount);
-    await sendWalletLog(target.id, "扣款", -amount, finalCoins, "後台扣款");
+    await sendWalletLog(
+      target.id,
+      "管理員扣錢",
+      -amount,
+      finalCoins,
+      "管理員扣款，不列入累積消費或儲值",
+    );
     return interaction.editReply({
-      content: `❌ 已扣除 <@${target.id}> ${amount} 星雨幣，目前餘額 ${finalCoins} 星雨幣`,
+      content: `✅ 已扣除 <@${target.id}> ${amount} 星雨幣，目前餘額 ${finalCoins} 星雨幣（不列入累積消費或儲值）`,
     });
   }
   if (interaction.commandName === "給與身份組") {

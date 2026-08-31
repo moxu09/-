@@ -16,6 +16,9 @@ const {
 const { parseAllowedServices } = require("../utils/services");
 const { getManualCommissionRate, getOrderCommissionBase } = require("../utils/salaryCommission");
 const {
+  calculateSalaryDeductionState,
+} = require("../utils/salaryDeduction");
+const {
   buildTopupTopic,
   getNextTopupNumber,
   getTopupNumberFromTopic,
@@ -46,6 +49,72 @@ test("manual commission overrides and coupon salary uses the original price", ()
   assert.equal(getManualCommissionRate("manager_95"), 95);
   assert.equal(getOrderCommissionBase({ price: 500, final_price: 400, discount_amount: 100 }), 500);
   assert.equal(getOrderCommissionBase({ final_price: 400 }), 400);
+});
+
+test("salary deduction uses net commissioned salary and caps advances at 1000", () => {
+  const enough = calculateSalaryDeductionState({
+    walletEntries: [{ amount: 500 }],
+    withdrawRequests: [{ amount: 100, status: "approved" }],
+    pendingOrders: [{ staff_salary: 700, bonus_amount: 50 }],
+    pendingAdjustments: [{ amount: -50 }],
+    amount: 1000,
+  });
+  assert.equal(enough.availableBefore, 1100);
+  assert.equal(enough.shortage, 0);
+  assert.equal(enough.canUse, true);
+
+  const advance = calculateSalaryDeductionState({
+    pendingOrders: [{ staff_salary: 300 }],
+    amount: 900,
+  });
+  assert.equal(advance.projectedAdvance, 600);
+  assert.equal(advance.canUse, true);
+
+  const overLimit = calculateSalaryDeductionState({
+    pendingAdjustments: [{ amount: -300 }],
+    amount: 800,
+  });
+  assert.equal(overLimit.projectedAdvance, 1100);
+  assert.equal(overLimit.canUse, false);
+});
+
+test("deepnight salary deduction covers quote, service, and extension payments", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "events", "dispatchSystem.js"),
+    "utf8",
+  );
+
+  assert.match(source, /\.eq\("app_key", "deepnight"\)/);
+  assert.match(source, /\.from\("players_bonus"\)/);
+  assert.match(source, /salary_quote_confirm_/);
+  assert.match(source, /salary_service_confirm_/);
+  assert.match(source, /salary_extension_confirm_/);
+  assert.match(source, /使用薪水續單/);
+});
+
+test("admin money changes never count as spend, topup, or VIP progress", () => {
+  const source = fs.readFileSync(
+    path.join(__dirname, "..", "index.js"),
+    "utf8",
+  );
+  const grantStart = source.indexOf('if (interaction.commandName === "發錢")');
+  const grantEnd = source.indexOf("// 扣錢", grantStart);
+  const grantFlow = source.slice(grantStart, grantEnd);
+  const deductionStart = source.indexOf(
+    'if (interaction.commandName === "扣錢")',
+  );
+  const deductionEnd = source.indexOf(
+    'if (interaction.commandName === "給與身份組")',
+    deductionStart,
+  );
+  const deductionFlow = source.slice(deductionStart, deductionEnd);
+
+  assert.match(grantFlow, /"管理員發錢"/);
+  assert.doesNotMatch(grantFlow, /allianceMembership\.applyActivity/);
+  assert.doesNotMatch(grantFlow, /checkAndUpgradeVip/);
+  assert.match(deductionFlow, /"管理員扣錢"/);
+  assert.doesNotMatch(deductionFlow, /allianceMembership\.applyActivity/);
+  assert.doesNotMatch(deductionFlow, /checkAndUpgradeVip/);
 });
 
 test("topup numbers use a validated ten-digit sequence", async () => {
