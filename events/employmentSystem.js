@@ -599,6 +599,14 @@ function buildApprovedEmploymentDmContent(config) {
   );
 }
 
+function buildEmploymentResultNotice(reviewer, reviewerId) {
+  return (
+    "已發送面試結果\n" +
+    `審核官：${reviewer}（<@${reviewerId}>）\n` +
+    "通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官。此討論串閒置 24 小時後會自動刪除。"
+  );
+}
+
 function buildEmploymentPdfBuffer({
   brandName,
   applicantId,
@@ -1225,10 +1233,7 @@ function createEmploymentSystem(client, config) {
       }
 
       await interaction.channel.send({
-        content:
-          `已發送面試結果：${result}\n` +
-          `審核官：${reviewer}（<@${interaction.user.id}>）\n` +
-          "通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官。此討論串閒置 24 小時後會自動刪除。",
+        content: buildEmploymentResultNotice(reviewer, interaction.user.id),
         allowedMentions: { users: [interaction.user.id] },
       });
       if (interaction.channel.isThread?.()) {
@@ -1435,6 +1440,7 @@ module.exports = {
   buildApplicationEmbed,
   buildApprovedEmploymentDmContent,
   buildEmploymentPdfBuffer,
+  buildEmploymentResultNotice,
   buildRulesEmbeds,
   createEmploymentSystem,
   getCompletedThreadDeleteDelay,

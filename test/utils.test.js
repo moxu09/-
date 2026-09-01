@@ -224,6 +224,7 @@ const {
   GAMES,
   buildApprovedEmploymentDmContent,
   buildEmploymentPdfBuffer,
+  buildEmploymentResultNotice,
   getCompletedThreadDeleteDelay,
   getApplicationFields,
   normalizeRoleName,
@@ -735,6 +736,17 @@ test("completed employment threads delete after 24 hours of inactivity", () => {
   assert.equal(getCompletedThreadDeleteDelay(0, 23 * hour), hour);
   assert.equal(getCompletedThreadDeleteDelay(0, 24 * hour), 0);
   assert.equal(getCompletedThreadDeleteDelay(10 * hour, 25 * hour), 9 * hour);
+});
+
+test("employment result notice does not reveal pass or fail", () => {
+  const notice = buildEmploymentResultNotice("幽語", "123456789012345678");
+  assert.equal(
+    notice,
+    "已發送面試結果\n" +
+      "審核官：幽語（<@123456789012345678>）\n" +
+      "通過面試者會額外收到入職相關資訊，若未收到面試結果請於此通知審核官。此討論串閒置 24 小時後會自動刪除。",
+  );
+  assert.doesNotMatch(notice, /結果：通過|結果：不通過/);
 });
 
 test("approved employment DM includes deadlines and bundled contract", () => {
