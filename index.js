@@ -5282,7 +5282,7 @@ const commands = sortCommandDefinitions([
     ),
   new SlashCommandBuilder()
     .setName("發錢")
-    .setDescription("管理員贈送星雨幣（不計入累積消費或儲值）")
+    .setDescription("管理員贈送星雨幣")
     .addUserOption((option) =>
       option.setName("玩家").setDescription("選擇玩家").setRequired(true),
     )
@@ -5292,7 +5292,7 @@ const commands = sortCommandDefinitions([
 
   new SlashCommandBuilder()
     .setName("扣錢")
-    .setDescription("扣除玩家星雨幣（不計入累積消費或儲值）")
+    .setDescription("扣除玩家星雨幣")
     .addUserOption((option) =>
       option.setName("玩家").setDescription("選擇玩家").setRequired(true),
     )
@@ -7378,7 +7378,7 @@ async function handleSlashCommand(interaction) {
       "管理員贈送，不列入累積消費或儲值",
     );
     return interaction.editReply({
-      content: `✅ 已給予 <@${target.id}> ${amount} 星雨幣（不列入累積消費或儲值）`,
+      content: `✅ 已給予 <@${target.id}> ${amount} 星雨幣`,
     });
   }
   // 扣錢
@@ -7412,7 +7412,7 @@ async function handleSlashCommand(interaction) {
       "管理員扣款，不列入累積消費或儲值",
     );
     return interaction.editReply({
-      content: `✅ 已扣除 <@${target.id}> ${amount} 星雨幣，目前餘額 ${finalCoins} 星雨幣（不列入累積消費或儲值）`,
+      content: `✅ 已扣除 <@${target.id}> ${amount} 星雨幣，目前餘額 ${finalCoins} 星雨幣`,
     });
   }
   if (interaction.commandName === "給與身份組") {
