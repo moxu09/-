@@ -35,6 +35,9 @@ test("虛擬 ATM 開放日前，按鈕隱藏且匯款仍走原帳號", () => {
     const selected = getPaymentMethodSelection({ customId: "quote_payment_method_123", values: ["匯款"] }, "quote_payment_method_");
     assert.equal(selected.paymentMethod, "匯款");
     assert.equal(selected.requestedMethod, undefined);
+    const oldButton = getPaymentMethodSelection({ customId: "quote_payment_method_123__pm_bank_account" }, "quote_payment_method_");
+    assert.equal(oldButton.paymentMethod, "匯款");
+    assert.equal(oldButton.requestedMethod, undefined);
   } finally {
     Date.now = originalNow;
     if (originalFlag === undefined) delete process.env.ECPAY_ACCEPT_PAYMENTS;
@@ -51,6 +54,9 @@ test("選擇匯款時改走綠界虛擬 ATM，不再提供固定帳號", () => {
     const selected = getPaymentMethodSelection({ customId: "quote_payment_method_123", values: ["匯款"] }, "quote_payment_method_");
     assert.equal(selected.paymentMethod, "綠界支付");
     assert.equal(selected.requestedMethod, "ATM");
+    const oldButton = getPaymentMethodSelection({ customId: "quote_payment_method_123__pm_bank_account" }, "quote_payment_method_");
+    assert.equal(oldButton.paymentMethod, "綠界支付");
+    assert.equal(oldButton.requestedMethod, "ATM");
   } finally {
     Date.now = originalNow;
     if (original === undefined) delete process.env.ECPAY_ACCEPT_PAYMENTS;
