@@ -2,11 +2,15 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { buildEcpayPaymentRows, handleEcpayDirect, sendPreferredEcpayDirect } = require("../utils/ecpayDiscord");
 const { getPaymentMethodSelection } = require("../utils/paymentMethodEmojis");
+const { ECPAY_ATM_START, isEcpayAtmAvailable } = require("../utils/ecpayAtmSchedule");
 
 const order = "QN123456789012345678";
 const payment = { platformOrderId: order, paymentUrl: `https://pay.example/payments/ecpay/service/checkout?order=${order}` };
 
 test("綠界刷卡留在站內；ATM 與超商由機器人直接取號", () => {
+  const originalNow = Date.now;
+  Date.now = () => ECPAY_ATM_START;
+  try {
   const rows = buildEcpayPaymentRows(payment, 100);
   const buttons = rows[0].components.map(button => button.toJSON());
   assert.equal(buttons[0].url, `https://pay.example/payments/ecpay/service/insite?order=${order}`);
@@ -15,22 +19,48 @@ test("綠界刷卡留在站內；ATM 與超商由機器人直接取號", () => {
     `ecpay_direct_ATM_${order}`, `ecpay_direct_CVS_${order}`, `ecpay_direct_BARCODE_${order}`,
   ]);
   assert.equal(buildEcpayPaymentRows(payment, 100, { topup: true })[0].components.length, 2);
+  } finally { Date.now = originalNow; }
+});
+
+test("虛擬 ATM 開放日前，按鈕隱藏且匯款仍走原帳號", () => {
+  assert.equal(isEcpayAtmAvailable(ECPAY_ATM_START - 1), false);
+  assert.equal(isEcpayAtmAvailable(ECPAY_ATM_START), true);
+  const originalNow = Date.now;
+  const originalFlag = process.env.ECPAY_ACCEPT_PAYMENTS;
+  Date.now = () => ECPAY_ATM_START - 1;
+  process.env.ECPAY_ACCEPT_PAYMENTS = "true";
+  try {
+    const buttons = buildEcpayPaymentRows(payment, 100)[0].components.map(button => button.toJSON());
+    assert.equal(buttons.some(button => button.custom_id?.includes("_ATM_")), false);
+    const selected = getPaymentMethodSelection({ customId: "quote_payment_method_123", values: ["匯款"] }, "quote_payment_method_");
+    assert.equal(selected.paymentMethod, "匯款");
+    assert.equal(selected.requestedMethod, undefined);
+  } finally {
+    Date.now = originalNow;
+    if (originalFlag === undefined) delete process.env.ECPAY_ACCEPT_PAYMENTS;
+    else process.env.ECPAY_ACCEPT_PAYMENTS = originalFlag;
+  }
 });
 
 test("選擇匯款時改走綠界虛擬 ATM，不再提供固定帳號", () => {
   const original = process.env.ECPAY_ACCEPT_PAYMENTS;
+  const originalNow = Date.now;
+  Date.now = () => ECPAY_ATM_START;
   process.env.ECPAY_ACCEPT_PAYMENTS = "true";
   try {
     const selected = getPaymentMethodSelection({ customId: "quote_payment_method_123", values: ["匯款"] }, "quote_payment_method_");
     assert.equal(selected.paymentMethod, "綠界支付");
     assert.equal(selected.requestedMethod, "ATM");
   } finally {
+    Date.now = originalNow;
     if (original === undefined) delete process.env.ECPAY_ACCEPT_PAYMENTS;
     else process.env.ECPAY_ACCEPT_PAYMENTS = original;
   }
 });
 
 test("虛擬 ATM 取號後直接發到原付款頻道，未標記已付款", async () => {
+  const originalNow = Date.now;
+  Date.now = () => ECPAY_ATM_START;
   const sent = [];
   const channel = { id: "456", async send(payload) { sent.push(payload); } };
   const supabase = { from(table) {
@@ -52,7 +82,7 @@ test("虛擬 ATM 取號後直接發到原付款頻道，未標記已付款", asy
     assert.equal(sent.length, 1);
     assert.match(sent[0].content, /虛擬帳號：`1234567890123456`/);
     assert.match(sent[0].content, /取號不代表已付款/);
-  } finally { global.fetch = originalFetch; if (originalSecret === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = originalSecret; }
+  } finally { Date.now = originalNow; global.fetch = originalFetch; if (originalSecret === undefined) delete process.env.SUPABASE_SERVICE_ROLE_KEY; else process.env.SUPABASE_SERVICE_ROLE_KEY = originalSecret; }
 });
 
 test("超商條碼在 Discord 直接產生三張 PNG", async () => {

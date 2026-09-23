@@ -1,6 +1,7 @@
 const { ActionRowBuilder, ButtonBuilder, ButtonStyle, AttachmentBuilder } = require("discord.js");
 const bwipjs = require("bwip-js");
 const { createHmac } = require("node:crypto");
+const { isEcpayAtmAvailable } = require("./ecpayAtmSchedule");
 
 const METHODS = Object.freeze({
   ATM: { label: "匯款／ATM 虛擬帳號", min: 16, max: 49_999 },
@@ -16,6 +17,7 @@ function buildEcpayPaymentRows(payment, amount, { topup = false } = {}) {
   const buttons = [new ButtonBuilder().setLabel("站內刷卡").setEmoji("💳")
     .setStyle(ButtonStyle.Link).setURL(`${base}/payments/ecpay/service/insite?order=${encodeURIComponent(order)}`)];
   for (const [method, limit] of Object.entries(METHODS)) {
+    if (method === "ATM" && !isEcpayAtmAvailable()) continue;
     if (topup && method !== "ATM") continue;
     if (amount < limit.min || amount > limit.max) continue;
     buttons.push(new ButtonBuilder().setCustomId(`ecpay_direct_${method}_${order}`)
@@ -30,6 +32,7 @@ async function handleEcpayDirect(interaction, supabase, baseUrl) {
   const [, method, order] = match;
   await interaction.deferReply({ ephemeral: true });
   try {
+    if (method === "ATM" && !isEcpayAtmAvailable()) throw new Error("綠界虛擬 ATM 將於 9 月 28 日開放");
     const { data: payment, error } = await supabase.from("ecpay_service_payments")
       .select("user_id,channel_id,status,amount,payment_kind").eq("merchant_trade_no", order).maybeSingle();
     if (error || !payment || payment.status !== "pending" ||
