@@ -61,8 +61,8 @@ function getCanonicalPaymentOptions({
       value: "綠界支付",
     }] : []),
     {
-      label: "匯款帳號",
-      description: "顯示銀行帳號，付款後上傳截圖",
+      label: includeEcpay ? "匯款／ATM 虛擬帳號" : "匯款帳號",
+      description: includeEcpay ? "綠界專屬虛擬帳號，繳費後自動核帳" : "顯示銀行帳號，付款後上傳截圖",
       value: "匯款",
     },
     {
@@ -171,14 +171,17 @@ function getPaymentMethodSelection(interaction, prefix) {
   if (!customId.startsWith(prefix)) return null;
   const remainder = customId.slice(prefix.length);
   if (Array.isArray(interaction?.values) && interaction.values[0]) {
-    return { entityId: remainder, paymentMethod: interaction.values[0] };
+    const selected = interaction.values[0];
+    return { entityId: remainder, paymentMethod: selected === "匯款" && process.env.ECPAY_ACCEPT_PAYMENTS === "true" ? "綠界支付" : selected,
+      ...(selected === "匯款" && process.env.ECPAY_ACCEPT_PAYMENTS === "true" ? { requestedMethod: "ATM" } : {}) };
   }
   const markerIndex = remainder.lastIndexOf(PAYMENT_BUTTON_MARKER);
   if (markerIndex < 0) return null;
   const code = remainder.slice(markerIndex + PAYMENT_BUTTON_MARKER.length);
   const paymentMethod = PAYMENT_METHOD_BY_CODE[code];
   if (!paymentMethod) return null;
-  return { entityId: remainder.slice(0, markerIndex), paymentMethod };
+  return { entityId: remainder.slice(0, markerIndex), paymentMethod: paymentMethod === "匯款" && process.env.ECPAY_ACCEPT_PAYMENTS === "true" ? "綠界支付" : paymentMethod,
+    ...(paymentMethod === "匯款" && process.env.ECPAY_ACCEPT_PAYMENTS === "true" ? { requestedMethod: "ATM" } : {}) };
 }
 
 async function ensurePaymentMethodEmojis(client) {

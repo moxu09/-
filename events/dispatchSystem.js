@@ -11,6 +11,7 @@ const {
   StringSelectMenuBuilder,
 } = require("discord.js");
 const path = require("node:path");
+const { buildEcpayPaymentRows, handleEcpayDirect, sendPreferredEcpayDirect } = require("../utils/ecpayDiscord");
 const {
   createWorkReportSystem,
   isStaffInteraction,
@@ -1408,13 +1409,14 @@ async function sendEcpayPaymentPrompt(channel, userId, amount, payment, label) {
     embeds: [new EmbedBuilder().setColor("#168B50").setTitle(`💳 ${label}綠界支付`).setDescription(
       `應付金額：NT$${Number(amount).toLocaleString("zh-TW")}\n` +
         `綠界訂單編號：${payment.platformOrderId}\n\n` +
-        "請按下方按鈕選擇適用的綠界付款方式；實際付款成功後才會自動核帳，請勿重複付款。",
+        "刷卡會在官網站內直接輸入卡號；匯款與超商繳費資訊會直接顯示在本頻道。實際付款成功後才會自動核帳。",
     ).setTimestamp()],
-    components: [new ActionRowBuilder().addComponents(
-      new ButtonBuilder().setLabel("使用綠界支付").setEmoji("💳").setStyle(ButtonStyle.Link).setURL(payment.paymentUrl),
-    )],
+    components: buildEcpayPaymentRows(payment, Number(amount), { topup: label.includes("儲值") }),
   });
   await paymentHelpers.attachEcpayPaymentMessage?.(payment.platformOrderId, message.id);
+  if (payment.preferredMethod === "ATM") {
+    await sendPreferredEcpayDirect(channel, userId, payment.platformOrderId, supabase, process.env.ECPAY_PUBLIC_BASE_URL);
+  }
   return message;
 }
 
@@ -6153,6 +6155,7 @@ async function handleQuotePaymentMethodSelect(interaction) {
         payment_method: "綠界支付", status: "waiting_payment", updated_at: new Date().toISOString(),
       }).eq("id", order.id).eq("paid", false);
       if (updateError) throw updateError;
+      payment.preferredMethod = selection?.requestedMethod;
       await sendEcpayPaymentPrompt(interaction.channel, order.customer_id, amount, payment, "訂單");
       return interaction.editReply({ content: "✅ 已建立綠界付款連結，付款完成後會自動核帳。" });
     } catch (err) {
@@ -7233,6 +7236,7 @@ async function handleExtensionPaymentMethodSelect(interaction) {
         payment_method: "綠界支付", status: "waiting_payment", updated_at: new Date().toISOString(),
       }).eq("id", extension.id).or("paid.eq.false,paid.is.null");
       if (updateError) throw updateError;
+      payment.preferredMethod = selection?.requestedMethod;
       await sendEcpayPaymentPrompt(interaction.channel, extension.customer_id, amount, payment, "加時");
       return interaction.editReply({ content: "✅ 已建立加時綠界付款連結，付款完成後會自動核帳。" });
     } catch (err) {
@@ -10942,6 +10946,7 @@ async function handleServicePaymentMethodSelect(interaction) {
         description: `陪玩訂單 ${orderGroup?.groupId || order.order_no || order.id}`,
         metadata: { flow: "service", orderIds: orders.map((current) => current.id), orderGroupId: orderGroup?.groupId || null },
       });
+      payment.preferredMethod = selection?.requestedMethod;
       await sendEcpayPaymentPrompt(interaction.channel, pending.customerId, amount, payment, "訂單");
       pendingServiceOrders.delete(flowId);
       return interaction.editReply({ content: "✅ 已建立綠界付款連結，付款完成後會自動核帳並派單。" });
@@ -11872,6 +11877,9 @@ async function handleDispatchInteraction(interaction) {
   }
 
   if (interaction.isButton()) {
+    if (interaction.customId.startsWith("ecpay_direct_")) {
+      return handleEcpayDirect(interaction, supabase, process.env.ECPAY_PUBLIC_BASE_URL);
+    }
     if (interaction.customId.startsWith("new_order_selection_extend_")) {
       await handleNewOrderSelectionExtend(interaction);
       return true;
