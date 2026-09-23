@@ -1408,7 +1408,7 @@ async function sendEcpayPaymentPrompt(channel, userId, amount, payment, label) {
     embeds: [new EmbedBuilder().setColor("#168B50").setTitle(`💳 ${label}綠界支付`).setDescription(
       `應付金額：NT$${Number(amount).toLocaleString("zh-TW")}\n` +
         `綠界訂單編號：${payment.platformOrderId}\n\n` +
-        "請按下方按鈕開啟綠界信用卡付款頁。付款成功後會自動核帳，請勿重複付款。",
+        "請按下方按鈕選擇適用的綠界付款方式；實際付款成功後才會自動核帳，請勿重複付款。",
     ).setTimestamp()],
     components: [new ActionRowBuilder().addComponents(
       new ButtonBuilder().setLabel("使用綠界支付").setEmoji("💳").setStyle(ButtonStyle.Link).setURL(payment.paymentUrl),

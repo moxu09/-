@@ -598,7 +598,7 @@ async function startEcpayTipPayment({ tipId, tipData, channel }) {
       `打賞明細：\n${getTipAllocationText(tipData)}\n` +
       `總金額：NT$${totalAmount.toLocaleString("zh-TW")}\n` +
       `綠界訂單編號：${payment.platformOrderId}\n\n` +
-      "請按下方按鈕前往綠界信用卡付款頁，成功後會自動核帳並寫入打賞薪資。",
+      "請按下方按鈕選擇適用的綠界付款方式；實際付款成功後才會核帳並寫入打賞薪資。",
     ).setTimestamp()],
     components: [new ActionRowBuilder().addComponents(new ButtonBuilder()
       .setLabel("使用綠界支付").setEmoji("💳").setStyle(ButtonStyle.Link).setURL(payment.paymentUrl))],

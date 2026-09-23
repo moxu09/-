@@ -57,7 +57,7 @@ function getCanonicalPaymentOptions({
     },
     ...(includeEcpay ? [{
       label: "綠界支付",
-      description: "使用綠界信用卡安全付款，成功後自動核帳",
+      description: "可選適用的信用卡、ATM 或超商付款，成功後自動核帳",
       value: "綠界支付",
     }] : []),
     {
