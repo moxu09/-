@@ -1,5 +1,9 @@
 module.exports = {
+  organization: "deepnight",
   brandName: "深夜不關燈",
+  signingBaseUrl:
+    process.env.EMPLOYMENT_SIGNING_BASE_URL ||
+    "https://salary.wearestilllhere.com",
   panelChannelId: "1530927944594227260",
   reviewChannelId: "1502056385255444671",
   archiveChannelId: "1530915224926818404",

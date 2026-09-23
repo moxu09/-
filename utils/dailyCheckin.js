@@ -1,5 +1,7 @@
 "use strict";
 
+const DAILY_CHECKIN_REWARD = 5;
+
 async function claimDailyCheckinReward({
   readUser,
   compareAndSwap,
@@ -84,6 +86,7 @@ function createSupabaseDailyCheckinClaimer({ supabase, getUser }) {
 }
 
 module.exports = {
+  DAILY_CHECKIN_REWARD,
   claimDailyCheckinReward,
   createSupabaseDailyCheckinClaimer,
 };

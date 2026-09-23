@@ -49,7 +49,20 @@ function createHealthServer(healthState, options = {}) {
     throw new Error("PORT 必須是 1 到 65535 的整數");
   }
 
-  const server = http.createServer((request, response) => {
+  const server = http.createServer(async (request, response) => {
+    if (options.requestHandler) {
+      try {
+        const handled = await options.requestHandler(request, response);
+        if (handled || response.writableEnded) return;
+      } catch (error) {
+        console.error("[RUNTIME] HTTP 請求處理失敗", error);
+        if (!response.writableEnded) {
+          response.statusCode = 500;
+          response.end(JSON.stringify({ error: "internal_error" }));
+        }
+        return;
+      }
+    }
     const pathname = new URL(request.url || "/", "http://localhost").pathname;
     const snapshot = healthState.snapshot();
 

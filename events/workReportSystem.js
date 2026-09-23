@@ -8,12 +8,17 @@ const {
   TextInputStyle,
   PermissionFlagsBits,
   UserSelectMenuBuilder,
+  ChannelType,
 } = require("discord.js");
 const { getOrderCommissionBase } = require("../utils/salaryCommission");
 const { ORDER_FLOW_TTL_MS } = require("../utils/orderFlow");
 
 function parseUserIds(value) {
   return [...new Set(String(value || "").match(/\d{17,20}/g) || [])];
+}
+
+function parseChannelId(value) {
+  return String(value || "").match(/\d{17,20}(?!.*\d)/)?.[0] || null;
 }
 
 function parseRoleIds(...values) {
@@ -24,6 +29,15 @@ function parseRoleIds(...values) {
   ];
 }
 
+function staffBelongsToGuild(staff, guildId) {
+  if (!staff || !guildId) return true;
+  if (staff.guild_id == null) return true;
+  return String(staff.guild_id)
+    .split(",")
+    .map((value) => value.trim())
+    .includes(String(guildId));
+}
+
 function normalizeStaffLookup(value) {
   return String(value || "")
     .normalize("NFKC")
@@ -31,6 +45,32 @@ function normalizeStaffLookup(value) {
     .replace(/^@/, "")
     .replace(/\s+/g, " ")
     .toLocaleLowerCase("zh-TW");
+}
+
+function reportChannelToken(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("zh-TW")
+    .replace(/^填單專區[-_－—\s]*/u, "")
+    .replace(/^𝓐𝓢[.．\s]*/u, "")
+    .split(/[|｜]/u)
+    .at(-1)
+    .replace(/[^\p{L}\p{N}]/gu, "");
+}
+
+function getStaffReportChannelName(staff) {
+  const raw =
+    staff?.display_name ||
+    staff?.discord_name ||
+    staff?.real_name ||
+    staff?.name ||
+    staff?.discord_id;
+  const shortName = String(raw || "陪陪")
+    .replace(/^𝓐𝓢[.．\s]*/u, "")
+    .split(/[|｜]/u)
+    .at(-1)
+    .trim();
+  return `填單專區-${shortName || staff?.discord_id || "陪陪"}`.slice(0, 100);
 }
 
 function splitStaffLookupInput(value) {
@@ -223,6 +263,69 @@ function canCorrectFirstSegmentStart(meta) {
   );
 }
 
+const EDITABLE_WORK_REPORT_STATUSES = ["work_draft", "工時待填"];
+const PENDING_REVIEW_WORK_REPORT_STATUSES = ["work_pending", "工時待審核"];
+
+function parseWorkReportMeta(report) {
+  try {
+    return JSON.parse(report?.note || report?.admin_note || "{}");
+  } catch {
+    return {};
+  }
+}
+
+function canEnterWorkReportTime(report, { isEnd = false } = {}) {
+  if (!report) return false;
+  if (EDITABLE_WORK_REPORT_STATUSES.includes(report.status)) return true;
+  return Boolean(
+    isEnd &&
+      PENDING_REVIEW_WORK_REPORT_STATUSES.includes(report.status) &&
+      parseWorkReportMeta(report).pendingSegmentStart,
+  );
+}
+
+function buildSavedWorkReportSupplement(meta, startedAt, endedAt, now = Date.now()) {
+  const start = startedAt?.getTime?.();
+  const end = endedAt?.getTime?.();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
+    throw new Error("補單結束時間必須晚於開始時間");
+  }
+  if (end > now + 5 * 60 * 1000) {
+    throw new Error("補單結束時間不能晚於現在");
+  }
+  const segments = Array.isArray(meta?.segments) ? meta.segments : [];
+  const latestEnd = Math.max(0, ...segments.map((segment) => Date.parse(segment.endedAt || "") || 0));
+  if (latestEnd && start < latestEnd) {
+    throw new Error("補單時間不能與先前的報時重疊");
+  }
+  const expectedMinutes = Number(meta?.expectedDurationMinutes || 0);
+  if (!Number.isFinite(expectedMinutes) || expectedMinutes <= 0) {
+    throw new Error("這筆存單沒有預定時長，請客服確認後再補單");
+  }
+  const nextSegments = [...segments, {
+    startedAt: startedAt.toISOString(),
+    endedAt: endedAt.toISOString(),
+    minutes: Math.round((end - start) / 60000),
+  }];
+  const totalMinutes = nextSegments.reduce((sum, segment) => sum + Number(segment.minutes || 0), 0);
+  const isComplete = totalMinutes >= expectedMinutes;
+  return {
+    isComplete,
+    totalMinutes,
+    shortageMinutes: Math.max(0, expectedMinutes - totalMinutes),
+    meta: {
+      ...meta,
+      segments: nextSegments,
+      startedAt: nextSegments[0].startedAt,
+      endedAt: endedAt.toISOString(),
+      durationMinutes: totalMinutes,
+      shortageMinutes: Math.max(0, expectedMinutes - totalMinutes),
+      pendingSegmentStart: null,
+      closedEarly: false,
+    },
+  };
+}
+
 function parseDurationMinutes(value) {
   const text = String(value || "")
     .trim()
@@ -309,6 +412,7 @@ function createWorkReportSystem({
   client,
   appKey,
   guildId,
+  reportGuildId,
   manualChannelId,
   staffTable,
   staffRoleId,
@@ -316,7 +420,191 @@ function createWorkReportSystem({
   salaryTable,
 }) {
   const pendingManualReports = new Map();
+  const reportChannelProvisionByStaffId = new Map();
   let crownReminderTimer = null;
+
+  async function provisionStaffReportChannel(staff) {
+    const staffId = String(staff?.discord_id || "").trim();
+    if (!staffId) throw new Error("員工資料缺少 Discord ID");
+
+    const targetReportGuild =
+      client.guilds.cache.get(String(reportGuildId || "")) ||
+      (await client.guilds.fetch(String(reportGuildId || "")).catch(() => null));
+    if (!targetReportGuild) {
+      throw new Error(`找不到員工群 ${reportGuildId || "未設定"}`);
+    }
+    await targetReportGuild.channels.fetch();
+    let channel = client.channels.cache.get(
+      parseChannelId(staff.report_channel_id || staff.salary_channel_id),
+    );
+    if (
+      channel?.type !== ChannelType.GuildText ||
+      String(channel.guildId) !== String(reportGuildId)
+    ) {
+      channel = null;
+    }
+    const staffTokens = [
+      staff.display_name,
+      staff.discord_name,
+      staff.real_name,
+      staff.name,
+    ]
+      .map(reportChannelToken)
+      .filter(Boolean);
+    const reportChannels = targetReportGuild.channels.cache.filter(
+      (channel) =>
+        channel.type === ChannelType.GuildText &&
+        String(channel.guildId) === String(reportGuildId) &&
+        String(channel.name || "").startsWith("填單專區-"),
+    );
+    if (!channel) {
+      // 員工改過暱稱後頻道名稱可能不再相同；權限覆寫才是最可靠的歸屬依據。
+      channel = reportChannels.find((candidate) =>
+        candidate.permissionOverwrites.cache.has(staffId),
+      );
+    }
+    if (!channel) {
+      // 若上次建立頻道後、寫回 EIP 前失敗，沿用同名頻道並補上權限，
+      // 不再因重試而建立第二個頻道。
+      channel = reportChannels.find((candidate) =>
+        staffTokens.includes(reportChannelToken(candidate.name)),
+      );
+    }
+
+    if (!channel) {
+      const { data: unfilteredStaffRows, error } = await supabase
+        .from(staffTable)
+        .select("*");
+      if (error) throw error;
+      const staffRows =
+        staffTable === "players"
+          ? (unfilteredStaffRows || []).filter((row) =>
+              staffBelongsToGuild(row, guildId),
+            )
+          : unfilteredStaffRows || [];
+      const knownChannels = (staffRows || [])
+        .map((row) => ({
+          row,
+          channel: client.channels.cache.get(
+            parseChannelId(row.report_channel_id || row.salary_channel_id),
+          ),
+        }))
+        .filter(
+          ({ channel: item }) =>
+            item?.type === ChannelType.GuildText &&
+            String(item.guildId) === String(reportGuildId),
+        );
+      const genderText = String(staff.gender || "");
+      let genderKey = genderText.includes("女") ? "女陪" : genderText.includes("男") ? "男陪" : "";
+      const targetGuild = targetReportGuild;
+      if (!genderKey) {
+        const member = await targetGuild.members.fetch(staffId).catch(() => null);
+        const roleNames = member?.roles.cache.map((role) => role.name).join(" ") || "";
+        genderKey = roleNames.includes("女陪") ? "女陪" : roleNames.includes("男陪") ? "男陪" : "";
+      }
+      const reportCategoryIds = new Set(
+        knownChannels.map(({ channel: item }) => item.parentId).filter(Boolean),
+      );
+      const categories = targetGuild.channels.cache
+        .filter(
+          (item) =>
+            item.type === ChannelType.GuildCategory &&
+            reportCategoryIds.has(item.id) &&
+            (!genderKey || String(item.name || "").includes(genderKey)) &&
+            item.children.cache.size < 50,
+        )
+        .sort((a, b) => a.children.cache.size - b.children.cache.size);
+      const category = categories.first();
+      if (!category) throw new Error(`找不到可建立陪陪 <@${staffId}> 填單區的分類`);
+      const template = knownChannels.find(
+        ({ channel: item }) => item.parentId === category.id,
+      );
+      if (!template) throw new Error(`找不到填單區權限範本：${category.name}`);
+      const permissionOverwrites = template.channel.permissionOverwrites.cache
+        // 範本只複製仍存在的身分組權限。舊員工/member overwrite 可能已離群，
+        // 直接複製會讓 Discord 回 Unknown Overwrite，接著觸發重複補建。
+        .filter(
+          (overwrite) =>
+            Number(overwrite.type) === 0 &&
+            targetGuild.roles.cache.has(String(overwrite.id)),
+        )
+        .map((overwrite) => ({
+          id: overwrite.id,
+          type: overwrite.type,
+          allow: overwrite.allow.bitfield,
+          deny: overwrite.deny.bitfield,
+        }));
+      permissionOverwrites.push({
+        id: staffId,
+        type: 1,
+        allow: PermissionFlagsBits.ViewChannel,
+        deny: 0n,
+      });
+      channel = await targetGuild.channels.create({
+        name: getStaffReportChannelName(staff),
+        type: ChannelType.GuildText,
+        parent: category.id,
+        permissionOverwrites,
+        reason: `自動補建 ${staffId} 的填單區`,
+      });
+    }
+
+    if (!channel.permissionOverwrites.cache.has(staffId)) {
+      await channel.permissionOverwrites.edit(
+        staffId,
+        { ViewChannel: true },
+        { reason: `自動補上 ${staffId} 的填單區權限` },
+      );
+    }
+
+    const updatePayload =
+      staffTable === "qiunai_staff"
+        ? { salary_channel_id: channel.id }
+        : { report_channel_id: channel.id, salary_channel_id: channel.id };
+    let updatedRows = [];
+    // 入職流程會先建頻道、再新增 EIP 員工資料；此時 staff.id 合理地尚未存在。
+    // 禁止用 undefined 查 UUID，否則頻道建成後仍被當成失敗並反覆重建。
+    if (staff.id) {
+      const updateQuery = supabase
+        .from(staffTable)
+        .update(updatePayload)
+        .eq("id", staff.id);
+      const { data, error: updateError } = await updateQuery.select("id");
+      if (updateError) throw updateError;
+      updatedRows = data || [];
+    }
+    Object.assign(staff, updatePayload);
+    if (updatedRows?.length) {
+      console.log(`[報單自動修復] ${staffId} 已綁定填單區 ${channel.id}`);
+    } else {
+      console.log(
+        `[報單自動修復] ${staffId} 填單區 ${channel.id} 已就緒，等待建立員工資料`,
+      );
+    }
+    return channel;
+  }
+
+  function ensureStaffReportChannel(staff) {
+    const staffId = String(staff?.discord_id || "").trim();
+    if (!staffId) return Promise.reject(new Error("員工資料缺少 Discord ID"));
+
+    const existing = reportChannelProvisionByStaffId.get(staffId);
+    if (existing) return existing;
+
+    let task;
+    try {
+      task = Promise.resolve(provisionStaffReportChannel(staff));
+    } catch (error) {
+      task = Promise.reject(error);
+    }
+    const trackedTask = task.finally(() => {
+      if (reportChannelProvisionByStaffId.get(staffId) === trackedTask) {
+        reportChannelProvisionByStaffId.delete(staffId);
+      }
+    });
+    reportChannelProvisionByStaffId.set(staffId, trackedTask);
+    return trackedTask;
+  }
 
   function readCrownMeta(order) {
     try {
@@ -392,28 +680,19 @@ function createWorkReportSystem({
   }
   async function findStaff(discordId) {
     const normalizedId = String(discordId || "").trim();
-    let query = supabase
+    const { data, error } = await supabase
       .from(staffTable)
       .select("*")
-      .eq("discord_id", normalizedId)
-      .limit(1);
-    if (staffTable === "players") query = query.eq("guild_id", guildId);
-    const { data, error } = await query;
+      .eq("discord_id", normalizedId);
     if (error) throw error;
-    if (data?.[0]) return data[0];
-
-    // 舊資料可能沒有 guild_id，或曾被寫入另一個環境的 guild_id。
-    // Discord ID 本身是全域唯一值，因此精準 ID 查詢可以安全作為備援。
-    if (staffTable === "players") {
-      const fallback = await supabase
-        .from(staffTable)
-        .select("*")
-        .eq("discord_id", normalizedId)
-        .limit(1);
-      if (fallback.error) throw fallback.error;
-      return fallback.data?.[0] || null;
-    }
-    return null;
+    if (staffTable !== "players") return data?.[0] || null;
+    return (
+      (data || []).find(
+        (row) => String(row.guild_id || "").trim() === String(guildId),
+      ) ||
+      (data || []).find((row) => staffBelongsToGuild(row, guildId)) ||
+      null
+    );
   }
 
   async function resolveManualStaffInput(interaction, input) {
@@ -452,11 +731,6 @@ function createWorkReportSystem({
       }
       const staff = uniqueMatches[0].staff;
       const staffId = String(staff.discord_id || "").trim();
-      if (!staff.report_channel_id && !staff.salary_channel_id) {
-        throw new Error(
-          `${lookup} 已有員工資料，但尚未填寫個人填單區／薪資頻道 ID。`,
-        );
-      }
       selectedIds.push(staffId);
     }
 
@@ -478,12 +752,67 @@ function createWorkReportSystem({
     staff,
     { completed = false } = {},
   ) {
-    const channelId = staff?.report_channel_id || staff?.salary_channel_id;
-    if (!channelId)
-      throw new Error(`陪陪 <@${report.staff_id}> 尚未設定個人薪資頻道 ID`);
-    const channel = await client.channels.fetch(channelId);
-    if (!channel?.isTextBased())
-      throw new Error(`找不到陪陪 <@${report.staff_id}> 的填單頻道`);
+    const channelId = parseChannelId(
+      staff?.report_channel_id || staff?.salary_channel_id,
+    );
+    let channelWasRepaired = false;
+    let channel = channelId
+      ? await client.channels.fetch(channelId).catch(() => null)
+      : null;
+    if (!channel?.isTextBased()) {
+      console.warn(`[報單自動修復] 陪陪 ${report.staff_id} 缺少有效填單區，開始修復`);
+      try {
+        channel = await ensureStaffReportChannel(staff);
+        channelWasRepaired = true;
+      } catch (error) {
+        throw new Error(
+          `陪陪 <@${report.staff_id}> 缺少有效填單區，且自動補建失敗：${error?.message || error}`,
+          { cause: error },
+        );
+      }
+    }
+
+    if (report.work_report_message_id) {
+      const storedMessage = await channel.messages
+        .fetch(String(report.work_report_message_id))
+        .catch(() => null);
+      if (storedMessage) return storedMessage;
+    }
+
+    // A Discord send can succeed immediately before the database checkpoint
+    // fails.  Recover that message by its report-specific component/footer so
+    // the next attempt stores the id instead of posting a duplicate panel.
+    const recentMessages = await channel.messages
+      .fetch({ limit: 100 })
+      .catch(() => null);
+    const existingMessage = recentMessages?.find?.((message) => {
+      if (message.author?.id !== client.user?.id) return false;
+      const hasReportComponent = message.components?.some?.((row) =>
+        row.components?.some?.((component) =>
+          String(component.customId || component.custom_id || "").endsWith(
+            `_${report.id}`,
+          ),
+        ),
+      );
+      const hasReportFooter = message.embeds?.some?.(
+        (embed) => embed.footer?.text === `報單識別碼 ${report.id}`,
+      );
+      return Boolean(hasReportComponent || hasReportFooter);
+    });
+    if (existingMessage) {
+      const { error: checkpointError } = await supabase
+        .from(salaryTable)
+        .update({
+          work_report_message_id: existingMessage.id,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", report.id);
+      if (checkpointError) {
+        throw new Error(`保存既有工時面板編號失敗：${checkpointError.message}`);
+      }
+      report.work_report_message_id = existingMessage.id;
+      return existingMessage;
+    }
 
     const isGift = isGiftOrderType(report.order_type);
     const isCrown = String(report.service_name || "").includes("冠名單｜");
@@ -540,7 +869,7 @@ function createWorkReportSystem({
     const components = initialButtons.length
       ? [new ActionRowBuilder().addComponents(...initialButtons)]
       : [];
-    await channel.send({
+    const message = await channel.send({
       content: isGift
         ? isCrown
           ? `<@${report.staff_id}> 你有一筆冠名單，請設定實際開始冠名及修改尾綴的時間。`
@@ -561,10 +890,29 @@ function createWorkReportSystem({
               : completed
                 ? "這是結束時間後追加的新報單，不會覆蓋原本的報單。"
               : "填寫完成後會自動計算時長，並送到薪資後台等待審核。",
-          ),
+          )
+          .setFooter({ text: `報單識別碼 ${report.id}` }),
       ],
       components,
+    }).catch((error) => {
+      throw new Error(
+        `陪陪 <@${report.staff_id}> 的報單${channelWasRepaired ? "重新" : ""}發送失敗：${error?.message || error}`,
+        { cause: error },
+      );
     });
+
+    const { error: checkpointError } = await supabase
+      .from(salaryTable)
+      .update({
+        work_report_message_id: message.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", report.id);
+    if (checkpointError) {
+      throw new Error(`保存工時面板編號失敗：${checkpointError.message}`);
+    }
+    report.work_report_message_id = message.id;
+    return message;
   }
 
   async function createReports(payload, staffIds) {
@@ -576,6 +924,36 @@ function createWorkReportSystem({
       staffIds.length,
       isGift,
     );
+
+    // 深夜的原始訂單只負責付款與訂單生命週期；陪陪薪資一律以 WORK 單為準。
+    // 先移除原始訂單上的薪資歸屬，避免原始單與工時單同時顯示、同時入帳。
+    if (
+      appKey === "deepnight" &&
+      payload.sourceKind === "bot_order" &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        String(payload.sourceOrderId || ""),
+      )
+    ) {
+      const { error: sourceSalaryError } = await supabase
+        .from(salaryTable)
+        .update({
+          discord_id: null,
+          staff_name: null,
+          staff_salary: 0,
+          bonus_amount: 0,
+          salary_rate: null,
+          salary_level: null,
+          platform_expense: 0,
+        })
+        .eq("id", payload.sourceOrderId);
+      if (sourceSalaryError) {
+        throw new Error(
+          `清除原始訂單的重複薪資資料失敗：${sourceSalaryError.message}`,
+          { cause: sourceSalaryError },
+        );
+      }
+    }
+
     for (const [staffIndex, staffId] of staffIds.entries()) {
       const perStaffAmount = reportAmounts[staffIndex];
       const staff = await findStaff(staffId);
@@ -646,6 +1024,7 @@ function createWorkReportSystem({
       if (error) throw error;
       const report = {
         id: data.id,
+        work_report_message_id: data.work_report_message_id || null,
         staff_id: String(staffId),
         customer_id: payload.customerId || null,
         customer_name: payload.customerName || null,
@@ -654,11 +1033,10 @@ function createWorkReportSystem({
         order_amount: perStaffAmount,
         expected_duration_minutes: Number(payload.expectedDurationMinutes || 0),
       };
-      // 資料庫已經有同一張工時單時，不要再次把相同面板送進填單區。
-      // 接單按鈕或事件重送時仍會走到這裡，因此資料庫與 Discord 都要冪等。
-      if (!existing) {
-        await sendReportCard(report, staff);
-      }
+      // The row may already exist because the first Discord send failed after
+      // insertion.  sendReportCard now checkpoints/fetches its message id, so
+      // retrying existing rows is both necessary and idempotent.
+      await sendReportCard(report, staff);
       reports.push(report);
     }
     return reports;
@@ -784,6 +1162,7 @@ function createWorkReportSystem({
       if (!staff) throw new Error(`找不到陪陪 <@${staffId}> 的員工資料`);
       const report = {
         id: order.id,
+        work_report_message_id: order.work_report_message_id || null,
         staff_id: staffId,
         customer_id: payload.customerId || order.customer_id || null,
         customer_name: payload.customerName || order.customer_name || null,
@@ -1670,6 +2049,116 @@ function createWorkReportSystem({
 
     if (
       interaction.isButton() &&
+      interaction.customId.startsWith("work_report_supplement_")
+    ) {
+      const reportId = interaction.customId.replace("work_report_supplement_", "");
+      const modal = new ModalBuilder()
+        .setCustomId(`submit_work_report_supplement_${reportId}_${interaction.message.id}`)
+        .setTitle("補登存單時間")
+        .addComponents(
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("supplement_start")
+              .setLabel("後續服務開始時間（台北）")
+              .setPlaceholder("2026-09-23 20:00")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true),
+          ),
+          new ActionRowBuilder().addComponents(
+            new TextInputBuilder()
+              .setCustomId("supplement_end")
+              .setLabel("後續服務結束時間（台北）")
+              .setPlaceholder("2026-09-23 21:00")
+              .setStyle(TextInputStyle.Short)
+              .setRequired(true),
+          ),
+        );
+      await interaction.showModal(modal);
+      return true;
+    }
+
+    if (
+      interaction.isModalSubmit() &&
+      interaction.customId.startsWith("submit_work_report_supplement_")
+    ) {
+      const [reportId, messageId] = interaction.customId
+        .replace("submit_work_report_supplement_", "").split("_");
+      await interaction.deferReply({ flags: 64 });
+      const { data: current, error: readError } = await supabase
+        .from(salaryTable).select("*").eq("id", reportId).maybeSingle();
+      if (readError || !current || current.status !== "work_saved") {
+        return interaction.editReply({ content: "這筆存單已結束或找不到，請重新查看報單。" });
+      }
+      const canSupplement = current.discord_id === interaction.user.id ||
+        interaction.guild?.ownerId === interaction.user.id ||
+        interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
+        interaction.member?.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+        parseRoleIds(customerServiceRoleId).some((roleId) => memberHasRole(interaction.member, roleId));
+      if (!canSupplement) {
+        return interaction.editReply({ content: "只有這筆訂單的陪陪或客服可以補單。" });
+      }
+      const startedAt = parseTaipeiWorkTime(interaction.fields.getTextInputValue("supplement_start"));
+      const endedAt = parseTaipeiWorkTime(interaction.fields.getTextInputValue("supplement_end"));
+      let supplement;
+      try {
+        supplement = buildSavedWorkReportSupplement(parseWorkReportMeta(current), startedAt, endedAt);
+      } catch (error) {
+        return interaction.editReply({ content: `補單失敗：${error.message}` });
+      }
+      const { data: updated, error: updateError } = await supabase
+        .from(salaryTable)
+        .update({
+          accepted_at: supplement.meta.startedAt,
+          completed_at: endedAt.toISOString(),
+          order_finished_at: endedAt.toISOString(),
+          duration_minutes: supplement.totalMinutes,
+          status: supplement.isComplete ? "work_pending" : "work_saved",
+          is_deleted: !supplement.isComplete,
+          note: JSON.stringify(supplement.meta),
+        })
+        .eq("id", reportId)
+        .eq("discord_id", current.discord_id)
+        .eq("status", "work_saved")
+        .eq("note", current.note)
+        .select()
+        .maybeSingle();
+      if (updateError || !updated) {
+        return interaction.editReply({ content: "補單狀態已更新，請重新查看後再試，避免重複登錄。" });
+      }
+      const panelMessage = interaction.message || await interaction.channel?.messages
+        ?.fetch(messageId).catch(() => null);
+      const panelPayload = {
+        content: supplement.isComplete
+          ? `✅ 補單後累積 ${durationText(supplement.totalMinutes)}，已完成訂單並送後台審核。`
+          : `📝 已補登 ${durationText(supplement.totalMinutes)}，尚差 ${durationText(supplement.shortageMinutes)}，訂單繼續存單。`,
+        ...(panelMessage?.embeds?.[0]
+          ? { embeds: [buildUpdatedReportEmbed(panelMessage, supplement.meta)] }
+          : {}),
+        components: supplement.isComplete ? [] : [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`work_report_supplement_${reportId}`)
+              .setLabel("補單").setStyle(ButtonStyle.Primary),
+          ),
+        ],
+      };
+      if (panelMessage) {
+        await panelMessage.edit(panelPayload).catch((error) =>
+          console.error("[工時補單] 更新訊息失敗", error),
+        );
+      } else if (!supplement.isComplete) {
+        await interaction.channel?.send(panelPayload).catch((error) =>
+          console.error("[工時補單] 重建補單按鈕失敗", error),
+        );
+      }
+      return interaction.editReply({
+        content: supplement.isComplete
+          ? `✅ 已補足 ${durationText(supplement.totalMinutes)}，訂單已進入完成與薪資審核流程。`
+          : `✅ 已補登時間，累積 ${durationText(supplement.totalMinutes)}；尚差 ${durationText(supplement.shortageMinutes)}。`,
+      });
+    }
+
+    if (
+      interaction.isButton() &&
       (interaction.customId.startsWith("work_report_save_") ||
         interaction.customId.startsWith("work_report_close_"))
     ) {
@@ -1712,6 +2201,7 @@ function createWorkReportSystem({
         appKey === "deepnight"
           ? {
               status: isClose ? "work_pending" : "work_saved",
+              is_deleted: !isClose,
               duration_minutes: totalMinutes,
               note: JSON.stringify({
                 ...meta,
@@ -1721,20 +2211,23 @@ function createWorkReportSystem({
             }
           : {
               status: isClose ? "工時待審核" : "工時已存單",
+              is_deleted: !isClose,
               admin_note: JSON.stringify({
                 ...meta,
                 shortageMinutes,
                 closedEarly: isClose,
               }),
             };
-      const { error } = await supabase
+      const { data: savedReport, error } = await supabase
         .from(salaryTable)
         .update(updatePayload)
         .eq("id", reportId)
-        .in("status", ["work_draft", "工時待填"]);
-      if (error) {
+        .in("status", ["work_draft", "工時待填"])
+        .select("id")
+        .maybeSingle();
+      if (error || !savedReport) {
         return interaction.reply({
-          content: `操作失敗：${error.message}`,
+          content: `操作失敗：${error?.message || "單據狀態已變更，請重新查看"}`,
           flags: 64,
         });
       }
@@ -1750,7 +2243,12 @@ function createWorkReportSystem({
           ? `已由客服結單，實際工時 ${durationText(totalMinutes)}，已送後台審核。`
           : `已存單，尚差 ${durationText(shortageMinutes)}，系統已通知客戶。`,
         embeds: [buildUpdatedReportEmbed(interaction.message, meta)],
-        components: [],
+        components: isClose ? [] : [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId(`work_report_supplement_${reportId}`)
+              .setLabel("補單").setStyle(ButtonStyle.Primary),
+          ),
+        ],
       });
       return true;
     }
@@ -1895,20 +2393,8 @@ function createWorkReportSystem({
         isStart ? "work_report_start_" : "work_report_end_",
         "",
       );
-      const { data: report } = await supabase
-        .from(salaryTable)
-        .select("*")
-        .eq("id", reportId)
-        .maybeSingle();
-      if (
-        !report ||
-        report.discord_id !== interaction.user.id ||
-        !["work_draft", "工時待填"].includes(report.status)
-      )
-        return interaction.reply({
-          content: "這筆申報無法填寫，可能已送出或不是你的訂單。",
-          flags: 64,
-        });
+      // 先回應 Discord 並立即開啟 Modal；報單存在性與狀態在送出時驗證。
+      // 避免 Supabase 偶發延遲超過互動期限，造成使用者看到「互動失敗」。
       const modal = new ModalBuilder()
         .setCustomId(
           `submit_work_report_${isStart ? "start" : "end"}_${reportId}`,
@@ -1952,15 +2438,24 @@ function createWorkReportSystem({
             "時間格式不正確，請使用 YYYY-MM-DD HH:mm，例如 2026-07-19 20:30；也可只輸入 HH:mm。",
           flags: 64,
         });
-      const { data: current } = await supabase
+      const { data: current, error: readError } = await supabase
         .from(salaryTable)
         .select("*")
         .eq("id", reportId)
         .maybeSingle();
-      let meta = {};
-      try {
-        meta = JSON.parse(current?.note || current?.admin_note || "{}");
-      } catch {}
+      if (readError || !current) {
+        return interaction.reply({
+          content: "讀取工時申報失敗，請稍後再試。",
+          flags: 64,
+        });
+      }
+      if (!canEnterWorkReportTime(current, { isEnd: !isStart })) {
+        return interaction.reply({
+          content: "這筆工時申報已送出或目前不能再填寫時間。",
+          flags: 64,
+        });
+      }
+      const meta = parseWorkReportMeta(current);
       const segments = Array.isArray(meta.segments) ? [...meta.segments] : [];
       const segmentStart = isStart
         ? enteredTime
@@ -2007,6 +2502,7 @@ function createWorkReportSystem({
                 : {}),
               duration_minutes: totalMinutes || null,
               status: isComplete ? "work_pending" : "work_draft",
+              is_deleted: !isComplete,
               note: JSON.stringify(nextMeta),
             }
           : {
@@ -2015,14 +2511,14 @@ function createWorkReportSystem({
                 ? { order_finished_at: segmentEnd.toISOString() }
                 : {}),
               status: isComplete ? "工時待審核" : "工時待填",
+              is_deleted: !isComplete,
               admin_note: JSON.stringify(nextMeta),
             };
       const { data, error } = await supabase
         .from(salaryTable)
         .update(updatePayload)
         .eq("id", reportId)
-        .eq("discord_id", interaction.user.id)
-        .in("status", ["work_draft", "工時待填"])
+        .eq("status", current.status)
         .select()
         .maybeSingle();
       if (error || !data)
@@ -2103,6 +2599,7 @@ function createWorkReportSystem({
 
   return {
     handleInteraction,
+    ensureStaffReportChannel,
     startCrownReminderScheduler,
     sendForAcceptedOrder,
     sendForPaidExtension,
@@ -2115,6 +2612,8 @@ function createWorkReportSystem({
 module.exports = {
   buildReportAmounts,
   canCorrectFirstSegmentStart,
+  canEnterWorkReportTime,
+  buildSavedWorkReportSupplement,
   calculateCrownEndAt,
   createWorkReportSystem,
   isStaffInteraction,

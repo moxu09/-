@@ -32,11 +32,17 @@ function createAccountingLedger(supabase, options = {}) {
   }
 
   async function recordAccountingLedger(entry = {}) {
-    if (tableMissingLogged) return;
+    const strict = entry.strict === true;
+    if (tableMissingLogged) {
+      if (strict) throw new Error("accounting_ledger 尚未建立");
+      return { saved: false, reason: "table_missing" };
+    }
 
     if (!entry.entry_type) {
+      const error = new Error("會計流水缺少 entry_type");
+      if (strict) throw error;
       console.error("[會計流水] 缺少 entry_type", entry);
-      return;
+      return { saved: false, reason: "missing_entry_type" };
     }
 
     const payload = {
@@ -77,11 +83,15 @@ function createAccountingLedger(supabase, options = {}) {
         console.error(
           "[會計流水] accounting_ledger 尚未建立，請先執行 salary-app/supabase/accounting_ledger.sql"
         );
-        return;
+        if (strict) throw new Error("accounting_ledger 尚未建立");
+        return { saved: false, reason: "table_missing" };
       }
 
       console.error("[會計流水] 寫入失敗", error);
+      if (strict) throw new Error(error.message || "會計流水寫入失敗");
+      return { saved: false, reason: "database_error", error };
     }
+    return { saved: true, dedupeKey: payload.dedupe_key };
   }
 
   return {
