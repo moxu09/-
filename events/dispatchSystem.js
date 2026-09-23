@@ -12,6 +12,7 @@ const {
 } = require("discord.js");
 const path = require("node:path");
 const { buildEcpayPaymentRows, handleEcpayDirect, sendPreferredEcpayDirect } = require("../utils/ecpayDiscord");
+const { isEcpayAtmAvailable } = require("../utils/ecpayAtmSchedule");
 const {
   createWorkReportSystem,
   isStaffInteraction,
@@ -1409,7 +1410,7 @@ async function sendEcpayPaymentPrompt(channel, userId, amount, payment, label) {
     embeds: [new EmbedBuilder().setColor("#168B50").setTitle(`💳 ${label}綠界支付`).setDescription(
       `應付金額：NT$${Number(amount).toLocaleString("zh-TW")}\n` +
         `綠界訂單編號：${payment.platformOrderId}\n\n` +
-        "刷卡會在官網站內直接輸入卡號；虛擬 ATM 於 9 月 28 日開放；超商繳費資訊會直接顯示在本頻道。實際付款成功後才會自動核帳。",
+      `刷卡會在官網站內直接輸入卡號；${isEcpayAtmAvailable() ? "匯款虛擬帳號與" : "虛擬 ATM 於 9 月 28 日開放，"}超商繳費資訊會直接顯示在本頻道。實際付款成功後才會自動核帳。`,
     ).setTimestamp()],
     components: buildEcpayPaymentRows(payment, Number(amount), { topup: label.includes("儲值") }),
   });
