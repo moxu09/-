@@ -1422,6 +1422,7 @@ async function sendEcpayPaymentPrompt(channel, userId, amount, payment, label) {
 }
 
 async function sendBankTransferInfo(channel) {
+  if (isEcpayAtmAvailable()) throw new Error("原銀行匯款已停用，請改用綠界虛擬 ATM");
   const embed = new EmbedBuilder()
     .setColor("#ffd166")
     .setTitle("🏦 匯款轉帳資訊")
