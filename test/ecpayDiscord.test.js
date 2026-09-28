@@ -1,7 +1,9 @@
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
 const test = require("node:test");
 const { buildEcpayPaymentRows, handleEcpayDirect, sendPreferredEcpayDirect } = require("../utils/ecpayDiscord");
-const { getPaymentMethodSelection } = require("../utils/paymentMethodEmojis");
+const { getCanonicalPaymentOptions, getPaymentMethodSelection } = require("../utils/paymentMethodEmojis");
 const { ECPAY_ATM_START, isEcpayAtmAvailable } = require("../utils/ecpayAtmSchedule");
 
 const order = "QN123456789012345678";
@@ -45,18 +47,30 @@ test("虛擬 ATM 開放日前，按鈕隱藏且匯款仍走原帳號", () => {
   }
 });
 
-test("選擇匯款時改走綠界虛擬 ATM，不再提供固定帳號", () => {
+test("人工訂單與舊按鈕匯款回到連線銀行，其他流程仍可使用綠界 ATM", () => {
   const original = process.env.ECPAY_ACCEPT_PAYMENTS;
   const originalNow = Date.now;
   Date.now = () => ECPAY_ATM_START;
   process.env.ECPAY_ACCEPT_PAYMENTS = "true";
   try {
     const selected = getPaymentMethodSelection({ customId: "quote_payment_method_123", values: ["匯款"] }, "quote_payment_method_");
-    assert.equal(selected.paymentMethod, "綠界支付");
-    assert.equal(selected.requestedMethod, "ATM");
+    assert.equal(selected.paymentMethod, "匯款");
+    assert.equal(selected.requestedMethod, undefined);
     const oldButton = getPaymentMethodSelection({ customId: "quote_payment_method_123__pm_bank_account" }, "quote_payment_method_");
-    assert.equal(oldButton.paymentMethod, "綠界支付");
-    assert.equal(oldButton.requestedMethod, "ATM");
+    assert.equal(oldButton.paymentMethod, "匯款");
+    assert.equal(oldButton.requestedMethod, undefined);
+    const service = getPaymentMethodSelection({ customId: "service_payment_method_123__pm_bank_transfer" }, "service_payment_method_");
+    assert.equal(service.paymentMethod, "匯款");
+    const extension = getPaymentMethodSelection({ customId: "extension_payment_method_123__pm_bank" }, "extension_payment_method_");
+    assert.equal(extension.paymentMethod, "綠界支付");
+    assert.equal(extension.requestedMethod, "ATM");
+    const manualButtons = buildEcpayPaymentRows(payment, 100, { allowAtm: false })[0].components.map(button => button.toJSON());
+    assert.equal(manualButtons.some(button => button.custom_id?.includes("_ATM_")), false);
+    const manualOptions = getCanonicalPaymentOptions({ includeEcpay: true, manualOrder: true });
+    assert.equal(manualOptions.find(option => option.value === "匯款").label, "匯款帳號");
+    const dispatch = readFileSync(join(__dirname, "..", "events", "dispatchSystem.js"), "utf8");
+    assert.match(dispatch, /topup: label\.includes\("儲值"\), allowAtm: label !== "訂單"/);
+    assert.match(dispatch, /async function sendBankTransferInfo\(channel\) \{[\s\S]*?銀行：824連線銀行/);
   } finally {
     Date.now = originalNow;
     if (original === undefined) delete process.env.ECPAY_ACCEPT_PAYMENTS;

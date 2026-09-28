@@ -9,7 +9,7 @@ const METHODS = Object.freeze({
   BARCODE: { label: "超商條碼", min: 18, max: 20_000 },
 });
 
-function buildEcpayPaymentRows(payment, amount, { topup = false } = {}) {
+function buildEcpayPaymentRows(payment, amount, { topup = false, allowAtm = true } = {}) {
   const order = String(payment.platformOrderId || "");
   const base = String(payment.paymentUrl || "").split("/payments/ecpay/service/checkout")[0];
   if (!/^[A-Za-z0-9]{1,20}$/.test(order) || !/^https:\/\//.test(base))
@@ -17,7 +17,7 @@ function buildEcpayPaymentRows(payment, amount, { topup = false } = {}) {
   const buttons = [new ButtonBuilder().setLabel("站內刷卡").setEmoji("💳")
     .setStyle(ButtonStyle.Link).setURL(`${base}/payments/ecpay/service/insite?order=${encodeURIComponent(order)}`)];
   for (const [method, limit] of Object.entries(METHODS)) {
-    if (method === "ATM" && !isEcpayAtmAvailable()) continue;
+    if (method === "ATM" && (!allowAtm || !isEcpayAtmAvailable())) continue;
     if (topup && method !== "ATM") continue;
     if (amount < limit.min || amount > limit.max) continue;
     buttons.push(new ButtonBuilder().setCustomId(`ecpay_direct_${method}_${order}`)

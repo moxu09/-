@@ -49,6 +49,7 @@ function getCanonicalPaymentOptions({
   includeSalary = false,
   includeUsd = true,
   includeCrypto = true,
+  manualOrder = false,
 } = {}) {
   return [
     {
@@ -58,12 +59,12 @@ function getCanonicalPaymentOptions({
     },
     ...(includeEcpay ? [{
       label: "綠界支付",
-      description: isEcpayAtmAvailable() ? "可選適用的信用卡、ATM 或超商付款，成功後自動核帳" : "可選站內刷卡或超商付款，成功後自動核帳",
+      description: !manualOrder && isEcpayAtmAvailable() ? "可選適用的信用卡、ATM 或超商付款，成功後自動核帳" : "可選站內刷卡或超商付款，成功後自動核帳",
       value: "綠界支付",
     }] : []),
     {
-      label: includeEcpay && isEcpayAtmAvailable() ? "匯款／ATM 虛擬帳號" : "匯款帳號",
-      description: includeEcpay && isEcpayAtmAvailable() ? "綠界專屬虛擬帳號，繳費後自動核帳" : "顯示銀行帳號，付款後上傳截圖",
+      label: !manualOrder && includeEcpay && isEcpayAtmAvailable() ? "匯款／ATM 虛擬帳號" : "匯款帳號",
+      description: !manualOrder && includeEcpay && isEcpayAtmAvailable() ? "綠界專屬虛擬帳號，繳費後自動核帳" : "顯示銀行帳號，付款後上傳截圖",
       value: "匯款",
     },
     {
@@ -171,10 +172,13 @@ function getPaymentMethodSelection(interaction, prefix) {
   const customId = String(interaction?.customId || "");
   if (!customId.startsWith(prefix)) return null;
   const remainder = customId.slice(prefix.length);
-  // 舊付款訊息也依台灣時間切換，不讓「匯款帳號」繞過虛擬 ATM。
+  // 人工報價與人工開單的舊付款訊息仍走原銀行匯款。
   const resolveBankMethod = (method) => {
     const bank = ["匯款", "匯款帳號", "匯款轉帳", "匯款 / 轉帳"].includes(method);
     if (!bank) return { paymentMethod: method };
+    if (prefix === "quote_payment_method_" || prefix === "service_payment_method_") {
+      return { paymentMethod: "匯款" };
+    }
     if (process.env.ECPAY_ACCEPT_PAYMENTS === "true" && isEcpayAtmAvailable()) {
       return { paymentMethod: "綠界支付", requestedMethod: "ATM" };
     }
