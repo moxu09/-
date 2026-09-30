@@ -726,6 +726,15 @@ async function sendTipStaffSelectionStatus(channel, tipId, tipData) {
   tipData.staffSelectionMessageId = message.id;
   setPendingTip(tipId, tipData);
 }
+async function sendTipStaffSelectionMenus(channel, content, rows) {
+  // 每頁獨立訊息，避免大量元件合併後超出 Discord 請求大小。
+  for (const [index, row] of rows.entries()) {
+    await channel.send({
+      content: index === 0 ? content : `陪陪選單續頁 ${index + 1}/${rows.length}（可跨頁繼續複選）`,
+      components: [row],
+    });
+  }
+}
 async function updateTipStaffSelectionStatus(channel, tipId, tipData) {
   const payload = {
     content: getTipStaffSelectionContent(tipData),
@@ -1123,15 +1132,15 @@ async function handleCrownPackageSelect(interaction) {
       ),
     );
   }
-  await interaction.channel.send({
-    content:
-      `✅ 已選擇：${crownPackage.name}\n` +
+  await sendTipStaffSelectionMenus(
+    interaction.channel,
+    `✅ 已選擇：${crownPackage.name}\n` +
       (crownPackage.custom
         ? "價格、贈送還單時數與冠名時長需由客服議定。"
         : `價格：${crownPackage.price} 元｜贈送還單：${crownPackage.giftedHours}hrs｜冠名時長：${crownPackage.durationHours}hrs`) +
       "\n\n請選擇一位冠名陪陪：",
-    components: rows.slice(0, 5),
-  });
+    rows,
+  );
   await sendTipStaffSelectionStatus(interaction.channel, tipId, tipData);
   return interaction.editReply({ content: "✅ 已選擇冠名方案" });
 }
@@ -1234,12 +1243,12 @@ async function handleTipGiftSelect(interaction) {
       .addOptions(group);
     rows.push(new ActionRowBuilder().addComponents(menu));
   }
-  await interaction.channel.send({
-    content:
-      `✅ 已選擇 ${gifts.length} 項禮物：\n${getTipGiftListText(tipData)}\n\n` +
+  await sendTipStaffSelectionMenus(
+    interaction.channel,
+    `✅ 已選擇 ${gifts.length} 項禮物：\n${getTipGiftListText(tipData)}\n\n` +
       `請選擇要打賞的陪陪：`,
-    components: rows.slice(0, 5),
-  });
+    rows,
+  );
   await sendTipStaffSelectionStatus(interaction.channel, tipId, tipData);
   return interaction.editReply({
     content: `✅ 已選擇 ${gifts.length} 項打賞禮物`,

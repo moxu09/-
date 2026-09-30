@@ -88,6 +88,29 @@ test("熱感紙收據有鋸齒紙邊、已付款章與逐項打賞金額", () =>
   const svg = receiptSvg(data);
   assert.match(svg, /已付款/);
   assert.match(svg, /polygon points=/);
-  assert.match(svg, /NT\$440/);
+  assert.match(svg, /440 ASD/);
   assert.match(svg, /客製打賞/);
+});
+
+test("長暱稱與大量明細仍可產生完整直式 PNG，不遺失總額", () => {
+  const items = Array.from({ length: 30 }, (_, index) => ({
+    to: `陪陪${index + 1}的超長暱稱測試資料`,
+    name: "客製語音陪玩與特殊需求".repeat(3),
+    quantity: 2,
+    amount: 100,
+  }));
+  const data = {
+    kind: "tip", reference: "TIP-LONG-1", payer: "闆闆".repeat(20),
+    recipient: items.map((item) => item.to).join("、"), items,
+    amount: 3000, currency: "TWD", payment: "街口支付",
+    time: "2026-09-30T04:00:00.000Z",
+  };
+  const svg = receiptSvg(data);
+  assert.match(svg, /另有 18 位陪陪/);
+  assert.match(svg, /NT\$3,000/);
+  assert.match(svg, /A 熱感紙收據/);
+  const png = renderReceiptPng(data);
+  assert.equal(png.readUInt32BE(16), 720);
+  assert.ok(png.readUInt32BE(20) > 3000);
+  assert.ok(png.length < 8_000_000);
 });

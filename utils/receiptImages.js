@@ -112,26 +112,31 @@ function receiptSvg({ kind, reference, payer, recipient, details, items, amount,
     const row = `<text x="82" y="${y}" class="muted">${String(index + 1).padStart(2, "0")}</text><text x="126" y="${y}" class="bold">${escapeXml(wrapText(name, 25, 1)[0])}</text>`;
     y += 43;
     return row;
-  }).join("");
+  }).join("") + (recipients.length > 12
+    ? `<text x="82" y="${y}" class="muted">另有 ${recipients.length - 12} 位陪陪</text>`
+    : "");
+  if (recipients.length > 12) y += 43;
   y += 24;
   const detailsTop = y;
   y += 65;
   const itemRows = lines.map((item) => {
-    const itemName = wrapText(item.name || details || label, 20, 2);
+    const itemName = wrapText(item.name || details || label, 14, 2);
     const to = wrapText(item.to || recipients[0] || "陪陪", 30, 1)[0];
     const row = `<text x="82" y="${y}" class="muted">${escapeXml(to)}</text>`;
     y += 38;
     const title = itemName.map((name, index) => `<text x="82" y="${y + index * 32}" class="bold">${escapeXml(name)}</text>`).join("");
     const subtotal = Number(item.amount ?? 0);
     const qty = Math.max(1, Number(item.quantity || 1));
-    const amountText = Number.isFinite(subtotal) && subtotal >= 0 ? money(subtotal, currency) : "—";
+    const amountText = Number.isFinite(subtotal) && subtotal >= 0
+      ? (isTip ? `${Math.round(subtotal).toLocaleString("zh-TW")} ASD` : money(subtotal, currency))
+      : "—";
     const price = `<text x="637" y="${y + (itemName.length - 1) * 32}" class="bold" text-anchor="end">${escapeXml(amountText)}</text>`;
     const quantity = `<text x="82" y="${y + itemName.length * 32}" class="muted">×${qty}</text>`;
     y += itemName.length * 32 + 66;
     return row + title + price + quantity;
   }).join("");
   const summaryY = y + 24;
-  const paperBottom = summaryY + 222;
+  const paperBottom = summaryY + 255;
   const height = paperBottom + 100;
   const topTeeth = Array.from({ length: 58 }, (_, i) => `${42 + i * 11},${i % 2 ? 34 : 25}`).join(" ");
   const bottomTeeth = Array.from({ length: 58 }, (_, i) => `${678 - i * 11},${i % 2 ? paperBottom + 9 : paperBottom}`).join(" ");
@@ -162,7 +167,8 @@ function receiptSvg({ kind, reference, payer, recipient, details, items, amount,
     <path d="M80 ${summaryY + 104} H640" stroke="#c6bca9" stroke-dasharray="6 5"/>
     <text x="360" y="${summaryY + 150}" text-anchor="middle" font-size="20">${escapeXml(taipeiTime(time))}</text>
     <text x="360" y="${summaryY + 184}" text-anchor="middle" fill="#827567" font-size="19">感謝您的支持 · ${escapeXml(shop)}</text>
-    <text x="360" y="${height - 39}" text-anchor="middle" fill="#bd9a58" font-size="24">${escapeXml(wrapText(reference || "—", 26, 1)[0])}</text>
+    <text x="360" y="${summaryY + 216}" text-anchor="middle" fill="#827567" font-size="16">編號 ${escapeXml(wrapText(reference || "—", 28, 1)[0])}</text>
+    <text x="360" y="${height - 39}" text-anchor="middle" fill="#bd9a58" font-size="24">A 熱感紙收據</text>
   </svg>`;
 }
 
