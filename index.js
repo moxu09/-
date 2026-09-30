@@ -22,6 +22,8 @@ const {
 } = require("./utils/runtime");
 const { createJkopayService } = require("./utils/jkopay");
 const { createEcpayService } = require("./utils/ecpay");
+const { buildOrderReceiptData, buildTipReceiptData, renderReceiptPng } = require("./utils/receiptImages");
+const { createReceiptDelivery } = require("./utils/receiptDelivery");
 const { isEcpayAtmAvailable } = require("./utils/ecpayAtmSchedule");
 const {
   syncApplicationCommands,
@@ -364,6 +366,7 @@ async function startDeepNightDeliveryRecoveryScheduler() {
 }
 
 dispatchSystem.setup(supabase, client, {
+  sendOrderReceiptSafely,
   payOrderByWallet,
   payOrderByMonthly,
   payExtensionByMonthly,
@@ -402,6 +405,74 @@ dispatchSystem.setup(supabase, client, {
     }),
 });
 // ===== 轉帳冷卻 =====
+const sendReceipt = createReceiptDelivery({ client, render: renderReceiptPng });
+
+async function getReceiptDisplayName(userId, guild) {
+  const id = String(userId || "").trim();
+  if (!id) return "未提供";
+  const member = await guild?.members?.fetch(id).catch(() => null);
+  if (member?.displayName) return member.displayName;
+  const user = await client.users.fetch(id).catch(() => null);
+  return user?.globalName || user?.username || id;
+}
+
+async function sendOrderReceiptSafely(order) {
+  if (!order?.paid || !order.channel_id || !order.id || order.order_type === "打賞") return false;
+  try {
+    const channel = await client.channels.fetch(String(order.channel_id)).catch(() => null);
+    const playerIds = String(order.assigned_player || order.preferred_player || "")
+      .split(",").map((id) => id.trim()).filter(Boolean);
+    const [payer, ...players] = await Promise.all([
+      getReceiptDisplayName(order.customer_id, channel?.guild),
+      ...playerIds.map((id) => getReceiptDisplayName(id, channel?.guild)),
+    ]);
+    return sendReceipt({
+      channelId: order.channel_id,
+      key: order.order_no || order.id,
+      label: "訂單付款收據",
+      data: buildOrderReceiptData({
+        order, payerName: payer, playerNames: players,
+        amount: Number(order.final_price ?? order.price ?? 0),
+      }),
+    });
+  } catch (error) {
+    console.error(`[深夜訂單收據處理失敗] ${order.id}`, error);
+    return false;
+  }
+}
+
+async function sendTipReceiptSafely(orders) {
+  const paidOrders = (orders || []).filter((order) => order?.paid && order.channel_id && order.id);
+  if (!paidOrders.length) return false;
+  try {
+    const first = paidOrders[0];
+    const channel = await client.channels.fetch(String(first.channel_id)).catch(() => null);
+    const allocations = paidOrders.map((order) => ({
+      staffId: order.assigned_player,
+      item: order.order_item || order.service || "打賞",
+      amount: Number(order.final_price ?? order.price ?? 0),
+    }));
+    const staffNames = await Promise.all(allocations.map(({ staffId }) =>
+      getReceiptDisplayName(staffId, channel?.guild),
+    ));
+    const payer = await getReceiptDisplayName(first.customer_id, channel?.guild);
+    const tipData = {
+      flowId: paidOrders.map((order) => order.id).sort().join("-"),
+      paymentMethod: first.payment_method,
+      createdAt: first.paid_at,
+    };
+    return sendReceipt({
+      channelId: first.channel_id,
+      key: tipData.flowId,
+      label: "打賞收據",
+      data: buildTipReceiptData({ tipData, allocations, staffNames, payerName: payer }),
+    });
+  } catch (error) {
+    console.error("[深夜打賞收據處理失敗]", error);
+    return false;
+  }
+}
+
 const transferCooldown = new Map();
 const STAR_COIN_PLAYER_TRANSFERS_ENABLED = false;
 // ===== 訂單系統設定 =====
@@ -2649,6 +2720,7 @@ async function payTipAllocationsWithWalletAtomic({
 }
 
 async function processTipPaymentJobs(orders) {
+  await sendTipReceiptSafely(orders);
   for (const order of orders || []) {
     await dispatchSystem.processRecoveryJobNow(
       order.id,

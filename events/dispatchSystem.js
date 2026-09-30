@@ -2588,6 +2588,11 @@ async function processDeliveryRecoveryJob(job) {
       if (orderError) throw orderError;
       if (!data) throw new Error("找不到深夜訂單，未執行跨店補償");
       order = data;
+      if (order.paid && !order.is_deleted &&
+          !["cancelled", "refunded", "refund_pending"].includes(String(order.status || "")) &&
+          order.order_type !== "打賞") {
+        await paymentHelpers.sendOrderReceiptSafely?.(order);
+      }
     }
 
     if (jobType === "order_dispatch") {
