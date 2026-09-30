@@ -34,6 +34,7 @@ test("匿名打賞收據不包含打賞人名稱，錢包與街口金額單位�
 test("收據會跳脫使用者文字並限制長欄位，不把輸入當成 SVG 執行", () => {
   assert.equal(escapeXml('<img onload="x"> &'), '&lt;img onload=&quot;x&quot;&gt; &amp;');
   assert.equal(wrapText("陪玩".repeat(90), 24, 2).length, 2);
+  assert.deepEqual(wrapText("@𝓐𝓢.店長🦊", 20), ["@AS.店長"]);
   const svg = receiptSvg({
     kind: "order",
     reference: "ORD-123",
@@ -44,7 +45,7 @@ test("收據會跳脫使用者文字並限制長欄位，不把輸入當成 SVG 
     payment: "街口支付",
     time: "2026-09-30T04:00:00.000Z",
   });
-  assert.match(svg, /ORD-123/);
+  assert.doesNotMatch(svg, /ORD-123/);
   assert.match(svg, /&lt;script&gt;/);
   assert.doesNotMatch(svg, /<script>/);
   assert.match(svg, /NT\$250/);
@@ -64,7 +65,7 @@ test("訂單與打賞都產生可辨識的 PNG，且 ASD 不標成新台幣", ()
       time: "2026-09-30T04:00:00.000Z",
     });
     assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
-    assert.equal(png.readUInt32BE(16), 636);
+    assert.equal(png.readUInt32BE(16), 500);
     assert.ok(png.readUInt32BE(20) > png.readUInt32BE(16));
     assert.ok(png.length > 15_000);
   }
@@ -88,10 +89,16 @@ test("熱感紙收據有鋸齒紙邊、已付款章與逐項打賞金額", () =>
   const svg = receiptSvg(data);
   assert.match(svg, /已付款/);
   assert.match(svg, /polygon points=/);
-  assert.match(svg, /viewBox="42 25 636 /);
+  assert.match(svg, /viewBox="0 0 500 /);
   assert.doesNotMatch(svg, /A 熱感紙收據|fill="#151413"/);
+  assert.match(svg, /感謝您的支持/);
+  assert.doesNotMatch(svg, /編號 |秋奈電競陪玩|深夜不關燈/);
   assert.match(svg, /440 ASD/);
   assert.match(svg, /客製打賞/);
+  assert.match(svg, /客製打賞<tspan class="muted"> ×2<\/tspan>/);
+  assert.match(receiptSvg({
+    ...data, time: "2026-09-29T20:56:00.000Z",
+  }), /2026\/09\/30 \(三\) 上午 04:56/);
 });
 
 test("長暱稱與大量明細仍可產生完整直式 PNG，不遺失總額", () => {
@@ -112,7 +119,7 @@ test("長暱稱與大量明細仍可產生完整直式 PNG，不遺失總額", (
   assert.match(svg, /NT\$3,000/);
   assert.doesNotMatch(svg, /A 熱感紙收據/);
   const png = renderReceiptPng(data);
-  assert.equal(png.readUInt32BE(16), 636);
-  assert.ok(png.readUInt32BE(20) > 3000);
+  assert.equal(png.readUInt32BE(16), 500);
+  assert.ok(png.readUInt32BE(20) > 2000);
   assert.ok(png.length < 8_000_000);
 });

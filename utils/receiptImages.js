@@ -2,9 +2,10 @@ const path = require("node:path");
 const { Resvg } = require("@resvg/resvg-js");
 
 const FONT_FILE = path.join(__dirname, "..", "assets", "fonts", "NotoSansCJKtc-Regular.otf");
-const PAPER_LEFT = 42;
-const PAPER_TOP = 25;
-const PAPER_WIDTH = 636;
+const PAPER_WIDTH = 500;
+// The 𝓐𝓢 mark uses two STIX Two Math glyph outlines.
+// Copyright 2001-2021 The STIX Fonts Project Authors; SIL Open Font License 1.1.
+const AS_MARK = `<g transform="translate(220 77) scale(0.043 -0.043)"><path d="M512 220C500 168 489 116 489 79C489 31 518 -14 591 -14C650 -14 738 22 784 69L759 102C731 80 702 62 678 62C651 62 642 78 642 112C642 147 651 192 658 226L733 595C737 613 760 625 791 633L792 673C645 656 494 624 407 496C271 296 222 37 101 37C47 37 98 128 22 128C-21 128 -39 95 -39 65C-39 15 4 -14 67 -14C201 -14 269 91 331 220ZM355 271C396 358 426 421 452 464C492 529 527 556 590 574L593 569L524 273C524 272 524 272 524 271Z"/><path transform="translate(827 0)" d="M385 468C401 465 417 464 428 464C504 464 557 508 557 570C557 642 484 669 397 669C274 669 133 616 133 480C133 370 227 327 289 293C361 254 389 225 389 169C389 88 331 40 233 40C157 40 118 68 118 143C118 202 143 228 167 228C202 228 196 174 239 174C259 174 282 185 282 214C282 251 244 267 194 267C108 267 25 221 25 127C25 29 117 -12 229 -12C375 -12 531 57 531 216C531 336 443 367 365 410C301 445 275 473 275 520C275 576 311 625 389 625C440 625 472 604 472 563C472 519 436 506 385 504Z"/></g>`;
 
 function escapeXml(value) {
   return String(value ?? "")
@@ -20,7 +21,12 @@ function textUnits(value) {
 }
 
 function wrapText(value, maxUnits, maxLines = 3) {
-  const source = String(value ?? "").replace(/\s+/gu, " ").trim();
+  // The bundled font has no emoji or mathematical-script glyphs; avoid tofu boxes.
+  const source = String(value ?? "")
+    .normalize("NFKC")
+    .replace(/\p{Extended_Pictographic}|[\u200d\ufe0e\ufe0f]/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
   if (!source) return ["—"];
   const lines = [];
   let current = "";
@@ -48,11 +54,13 @@ function money(amount, currency) {
 function taipeiTime(value) {
   const date = value ? new Date(value) : new Date();
   if (Number.isNaN(date.getTime())) throw new Error("收據時間無效");
-  return new Intl.DateTimeFormat("zh-TW", {
+  const parts = new Intl.DateTimeFormat("zh-TW", {
     timeZone: "Asia/Taipei",
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(date);
+    year: "numeric", month: "2-digit", day: "2-digit", weekday: "short",
+    hour: "2-digit", minute: "2-digit", hour12: true,
+  }).formatToParts(date);
+  const part = (type) => parts.find((entry) => entry.type === type)?.value || "";
+  return `${part("year")}/${part("month")}/${part("day")} (${part("weekday").replace("週", "")}) ${part("dayPeriod")} ${part("hour")}:${part("minute")}`;
 }
 
 function buildTipReceiptData({ tipData, allocations, staffNames, payerName }) {
@@ -100,75 +108,93 @@ function buildOrderReceiptData({ order, payerName, playerNames, amount }) {
   };
 }
 
-function receiptSvg({ kind, reference, payer, recipient, details, items, amount, currency = "TWD", payment, time, shop = "深夜不關燈" }) {
+function receiptSvg({ kind, payer, recipient, details, items, amount, currency = "TWD", payment, time }) {
   if (!["order", "tip"].includes(kind)) throw new Error("收據類型無效");
   const isTip = kind === "tip";
+  const label = isTip ? "打賞" : "訂單";
   const recipients = String(recipient || "待選陪陪").split("、").filter(Boolean);
   const lines = Array.isArray(items) && items.length
     ? items.slice(0, 30)
     : [{ to: recipients[0], name: details || (isTip ? "打賞" : "陪玩訂單"), quantity: 1, amount }];
   const safeMoney = money(amount, currency);
-  const label = isTip ? "打賞" : "訂單";
-  let y = 463;
+  const paymentText = payment && payment !== "已確認付款"
+    ? `${label}已使用${payment}付款`
+    : `${label}已付款`;
+  const status = wrapText(paymentText, 26, 1)[0];
+  const statusFont = Math.max(12, Math.min(17, Math.floor(385 / textUnits(status))));
+  const statusLeft = Math.max(43, (PAPER_WIDTH - (26 + textUnits(status) * statusFont)) / 2);
+  let recipientY = 350;
   const recipientRows = recipients.slice(0, 12).map((name, index) => {
-    const row = `<text x="82" y="${y}" class="muted">${String(index + 1).padStart(2, "0")}</text><text x="126" y="${y}" class="bold">${escapeXml(wrapText(name, 25, 1)[0])}</text>`;
-    y += 43;
+    const row = `<text x="35" y="${recipientY}" class="muted">${String(index + 1).padStart(2, "0")}</text><text x="65" y="${recipientY}" class="bold">${escapeXml(wrapText(name, 20, 1)[0])}</text>`;
+    recipientY += 32;
     return row;
-  }).join("") + (recipients.length > 12
-    ? `<text x="82" y="${y}" class="muted">另有 ${recipients.length - 12} 位陪陪</text>`
-    : "");
-  if (recipients.length > 12) y += 43;
-  y += 24;
-  const detailsTop = y;
-  y += 65;
+  });
+  if (recipients.length > 12) {
+    recipientRows.push(`<text x="35" y="${recipientY}" class="muted">另有 ${recipients.length - 12} 位陪陪</text>`);
+    recipientY += 32;
+  }
+  const dividerY = recipientY + 14;
+  const detailLabelY = dividerY + 39;
+  let itemY = detailLabelY + 37;
+  let previousStaff = null;
   const itemRows = lines.map((item) => {
+    const staff = wrapText(item.to || recipients[0] || "陪陪", 30, 1)[0];
+    let row = "";
+    if (staff !== previousStaff) {
+      if (previousStaff !== null) itemY += 12;
+      row += `<text x="35" y="${itemY}" class="muted">${escapeXml(staff)}</text>`;
+      itemY += 27;
+      previousStaff = staff;
+    }
     const itemName = wrapText(item.name || details || label, 14, 2);
-    const to = wrapText(item.to || recipients[0] || "陪陪", 30, 1)[0];
-    const row = `<text x="82" y="${y}" class="muted">${escapeXml(to)}</text>`;
-    y += 38;
-    const title = itemName.map((name, index) => `<text x="82" y="${y + index * 32}" class="bold">${escapeXml(name)}</text>`).join("");
+    const quantity = Math.max(1, Number(item.quantity || 1));
     const subtotal = Number(item.amount ?? 0);
-    const qty = Math.max(1, Number(item.quantity || 1));
     const amountText = Number.isFinite(subtotal) && subtotal >= 0
       ? (isTip ? `${Math.round(subtotal).toLocaleString("zh-TW")} ASD` : money(subtotal, currency))
       : "—";
-    const price = `<text x="637" y="${y + (itemName.length - 1) * 32}" class="bold" text-anchor="end">${escapeXml(amountText)}</text>`;
-    const quantity = `<text x="82" y="${y + itemName.length * 32}" class="muted">×${qty}</text>`;
-    y += itemName.length * 32 + 66;
-    return row + title + price + quantity;
+    itemName.forEach((name, index) => {
+      const last = index === itemName.length - 1;
+      const baseline = itemY + index * 27;
+      if (last && textUnits(name) < 11) {
+        row += `<path d="M${Math.max(165, 35 + textUnits(name) * 18 + 40)} ${baseline - 4} H${Math.max(365, 465 - textUnits(amountText) * 10 - 15)}" stroke="#c8bda9" stroke-dasharray="2 3"/>`;
+      }
+      row += `<text x="35" y="${baseline}" class="item">${escapeXml(name)}${last ? `<tspan class="muted"> ×${quantity}</tspan>` : ""}</text>`;
+      if (last) row += `<text x="465" y="${baseline}" class="price" style="font-size:${amountText.length > 11 ? 14 : 18}px" text-anchor="end">${escapeXml(amountText)}</text>`;
+    });
+    itemY += itemName.length * 28;
+    return row;
   }).join("");
-  const summaryY = y + 24;
-  const paperBottom = summaryY + 255;
-  const height = paperBottom + 9 - PAPER_TOP;
-  const topTeeth = Array.from({ length: 58 }, (_, i) => `${42 + i * 11},${i % 2 ? 34 : 25}`).join(" ");
-  const bottomTeeth = Array.from({ length: 58 }, (_, i) => `${678 - i * 11},${i % 2 ? paperBottom + 9 : paperBottom}`).join(" ");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PAPER_WIDTH}" height="${height}" viewBox="${PAPER_LEFT} ${PAPER_TOP} ${PAPER_WIDTH} ${height}">
+  const summaryY = Math.max(itemY + 32, 590);
+  const height = summaryY + 199;
+  const topTeeth = Array.from({ length: 51 }, (_, index) => `${index * 10},${index % 2 ? 0 : 8}`).join(" ");
+  const bottomTeeth = Array.from({ length: 51 }, (_, index) => `${PAPER_WIDTH - index * 10},${index % 2 ? height : height - 8}`).join(" ");
+  const totalFont = safeMoney.length > 11 ? 31 : 40;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PAPER_WIDTH}" height="${height}" viewBox="0 0 ${PAPER_WIDTH} ${height}">
     <defs><linearGradient id="paper" x2="0" y2="1"><stop stop-color="#fcfaf5"/><stop offset="1" stop-color="#f4efe2"/></linearGradient></defs>
-    <style>text{font-family:'Noto Sans CJK TC',sans-serif}.muted{fill:#777066;font-size:21px}.bold{font-size:25px;font-weight:700}</style>
-    <polygon points="42,34 ${topTeeth} 678,34 ${bottomTeeth} 42,${paperBottom}" fill="url(#paper)"/>
-    <text x="360" y="128" text-anchor="middle" font-size="46" font-style="italic" font-weight="700">AS</text>
-    <text x="360" y="174" text-anchor="middle" font-size="30" font-weight="700" letter-spacing="8">${label}收據</text>
-    <text x="360" y="204" text-anchor="middle" fill="#827567" font-size="18" letter-spacing="7">${isTip ? "TIP RECEIPT" : "ORDER RECEIPT"}</text>
-    <g transform="rotate(-14 580 115)"><circle cx="580" cy="115" r="57" fill="none" stroke="#c53228" stroke-width="2"/><circle cx="580" cy="115" r="52" fill="none" stroke="#c53228" stroke-width="2"/><text x="580" y="114" text-anchor="middle" fill="#c53228" font-size="25">已付款</text><text x="580" y="139" text-anchor="middle" fill="#c53228" font-size="15" letter-spacing="3">PAID</text></g>
-    <rect x="80" y="239" width="560" height="59" rx="6" fill="none" stroke="#c53228" stroke-width="2"/>
-    <circle cx="222" cy="268" r="14" fill="#c53228"/><text x="222" y="276" fill="#fff" text-anchor="middle" font-size="19">✓</text>
-    <text x="244" y="277" fill="#b62720" font-size="23" font-weight="700">${label}已使用${escapeXml(wrapText(payment || "已確認付款", 17, 1)[0])}付款</text>
-    <path d="M80 328 H640" stroke="#c6bca9" stroke-dasharray="6 5"/>
-    <text x="82" y="376" class="muted">${isTip ? "打賞人" : "闆闆"}</text>
-    <text x="638" y="376" class="bold" text-anchor="end">${escapeXml(wrapText(payer || "闆闆", 19, 1)[0])}</text>
-    <text x="82" y="426" class="muted">${isTip ? "受賞陪陪" : "接單陪陪"}</text>
-    ${recipientRows}
-    <path d="M80 ${detailsTop - 35} H640" stroke="#c6bca9" stroke-dasharray="6 5"/>
-    <text x="82" y="${detailsTop + 20}" class="muted">${isTip ? "打賞明細" : "訂單明細"}</text>
+    <style>text{font-family:'Noto Sans CJK TC',sans-serif}.muted{fill:#817a70;font-size:15px}.bold{fill:#292621;font-size:18px;font-weight:700}.item{fill:#292621;font-size:17px;font-weight:700}.price{fill:#292621;font-size:18px;font-weight:700}</style>
+    <polygon points="${topTeeth} ${bottomTeeth}" fill="url(#paper)"/>
+    ${AS_MARK}
+    <text x="250" y="124" text-anchor="middle" font-size="24" font-weight="700" letter-spacing="7">${label}收據</text>
+    <text x="250" y="151" text-anchor="middle" fill="#827567" font-size="12" letter-spacing="6">${isTip ? "TIP RECEIPT" : "ORDER RECEIPT"}</text>
+    <g transform="rotate(-14 410 100)"><circle cx="410" cy="100" r="45" fill="none" stroke="#c53228" stroke-width="1.5"/><circle cx="410" cy="100" r="41" fill="none" stroke="#c53228" stroke-width="1.5"/><text x="410" y="99" text-anchor="middle" fill="#c53228" font-size="21">已付款</text><text x="410" y="120" text-anchor="middle" fill="#c53228" font-size="12" letter-spacing="2">PAID</text></g>
+    <rect x="35" y="177" width="430" height="44" rx="6" fill="none" stroke="#c53228" stroke-width="1.5"/>
+    <circle cx="${statusLeft + 9}" cy="199" r="11" fill="#c53228"/><text x="${statusLeft + 9}" y="205" fill="#fff" text-anchor="middle" font-size="15">✓</text>
+    <text x="${statusLeft + 27}" y="206" fill="#b62720" font-size="${statusFont}" font-weight="700">${escapeXml(status)}</text>
+    <path d="M35 244 H465" stroke="#c6bca9" stroke-dasharray="5 4"/>
+    <text x="35" y="286" class="muted">${isTip ? "打賞人" : "闆闆"}</text>
+    <text x="465" y="286" class="bold" text-anchor="end">${escapeXml(wrapText(payer || "闆闆", 21, 1)[0])}</text>
+    <text x="35" y="321" class="muted">${isTip ? "受賞陪陪" : "接單陪陪"}</text>
+    ${recipientRows.join("")}
+    <path d="M35 ${dividerY} H465" stroke="#c6bca9" stroke-dasharray="5 4"/>
+    <text x="35" y="${detailLabelY}" class="muted">${isTip ? "打賞明細" : "訂單明細"}</text>
     ${itemRows}
-    <path d="M80 ${summaryY} H640" stroke="#2d2a26" stroke-width="3"/>
-    <path d="M80 ${summaryY + 5} H640" stroke="#2d2a26" stroke-width="1"/>
-    <text x="82" y="${summaryY + 76}" font-size="24" letter-spacing="6">總金額</text>
-    <text x="638" y="${summaryY + 78}" text-anchor="end" font-size="49" font-weight="700">${escapeXml(safeMoney)}</text>
-    <path d="M80 ${summaryY + 104} H640" stroke="#c6bca9" stroke-dasharray="6 5"/>
-    <text x="360" y="${summaryY + 150}" text-anchor="middle" font-size="20">${escapeXml(taipeiTime(time))}</text>
-    <text x="360" y="${summaryY + 184}" text-anchor="middle" fill="#827567" font-size="19">感謝您的支持 · ${escapeXml(shop)}</text>
-    <text x="360" y="${summaryY + 216}" text-anchor="middle" fill="#827567" font-size="16">編號 ${escapeXml(wrapText(reference || "—", 28, 1)[0])}</text>
+    <path d="M35 ${summaryY} H465" stroke="#292621" stroke-width="3"/>
+    <path d="M35 ${summaryY + 4} H465" stroke="#292621" stroke-width="1"/>
+    <text x="35" y="${summaryY + 70}" font-size="18" letter-spacing="5">總金額</text>
+    <text x="465" y="${summaryY + 72}" text-anchor="end" font-size="${totalFont}" font-weight="700">${escapeXml(safeMoney)}</text>
+    <path d="M35 ${summaryY + 101} H465" stroke="#c6bca9" stroke-dasharray="5 4"/>
+    <text x="250" y="${summaryY + 145}" text-anchor="middle" font-size="15">${escapeXml(taipeiTime(time))}</text>
+    <text x="250" y="${summaryY + 174}" text-anchor="middle" fill="#827567" font-size="16" letter-spacing="4">感謝您的支持</text>
   </svg>`;
 }
 
