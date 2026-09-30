@@ -2,7 +2,9 @@ const path = require("node:path");
 const { Resvg } = require("@resvg/resvg-js");
 
 const FONT_FILE = path.join(__dirname, "..", "assets", "fonts", "NotoSansCJKtc-Regular.otf");
-const WIDTH = 720;
+const PAPER_LEFT = 42;
+const PAPER_TOP = 25;
+const PAPER_WIDTH = 636;
 
 function escapeXml(value) {
   return String(value ?? "")
@@ -137,13 +139,12 @@ function receiptSvg({ kind, reference, payer, recipient, details, items, amount,
   }).join("");
   const summaryY = y + 24;
   const paperBottom = summaryY + 255;
-  const height = paperBottom + 100;
+  const height = paperBottom + 9 - PAPER_TOP;
   const topTeeth = Array.from({ length: 58 }, (_, i) => `${42 + i * 11},${i % 2 ? 34 : 25}`).join(" ");
   const bottomTeeth = Array.from({ length: 58 }, (_, i) => `${678 - i * 11},${i % 2 ? paperBottom + 9 : paperBottom}`).join(" ");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${height}" viewBox="0 0 ${WIDTH} ${height}">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${PAPER_WIDTH}" height="${height}" viewBox="${PAPER_LEFT} ${PAPER_TOP} ${PAPER_WIDTH} ${height}">
     <defs><linearGradient id="paper" x2="0" y2="1"><stop stop-color="#fcfaf5"/><stop offset="1" stop-color="#f4efe2"/></linearGradient></defs>
     <style>text{font-family:'Noto Sans CJK TC',sans-serif}.muted{fill:#777066;font-size:21px}.bold{font-size:25px;font-weight:700}</style>
-    <rect width="720" height="${height}" fill="#151413"/>
     <polygon points="42,34 ${topTeeth} 678,34 ${bottomTeeth} 42,${paperBottom}" fill="url(#paper)"/>
     <text x="360" y="128" text-anchor="middle" font-size="46" font-style="italic" font-weight="700">AS</text>
     <text x="360" y="174" text-anchor="middle" font-size="30" font-weight="700" letter-spacing="8">${label}收據</text>
@@ -168,7 +169,6 @@ function receiptSvg({ kind, reference, payer, recipient, details, items, amount,
     <text x="360" y="${summaryY + 150}" text-anchor="middle" font-size="20">${escapeXml(taipeiTime(time))}</text>
     <text x="360" y="${summaryY + 184}" text-anchor="middle" fill="#827567" font-size="19">感謝您的支持 · ${escapeXml(shop)}</text>
     <text x="360" y="${summaryY + 216}" text-anchor="middle" fill="#827567" font-size="16">編號 ${escapeXml(wrapText(reference || "—", 28, 1)[0])}</text>
-    <text x="360" y="${height - 39}" text-anchor="middle" fill="#bd9a58" font-size="24">A 熱感紙收據</text>
   </svg>`;
 }
 

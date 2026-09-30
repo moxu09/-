@@ -64,7 +64,7 @@ test("訂單與打賞都產生可辨識的 PNG，且 ASD 不標成新台幣", ()
       time: "2026-09-30T04:00:00.000Z",
     });
     assert.equal(png.subarray(0, 8).toString("hex"), "89504e470d0a1a0a");
-    assert.equal(png.readUInt32BE(16), 720);
+    assert.equal(png.readUInt32BE(16), 636);
     assert.ok(png.readUInt32BE(20) > png.readUInt32BE(16));
     assert.ok(png.length > 15_000);
   }
@@ -88,6 +88,8 @@ test("熱感紙收據有鋸齒紙邊、已付款章與逐項打賞金額", () =>
   const svg = receiptSvg(data);
   assert.match(svg, /已付款/);
   assert.match(svg, /polygon points=/);
+  assert.match(svg, /viewBox="42 25 636 /);
+  assert.doesNotMatch(svg, /A 熱感紙收據|fill="#151413"/);
   assert.match(svg, /440 ASD/);
   assert.match(svg, /客製打賞/);
 });
@@ -108,9 +110,9 @@ test("長暱稱與大量明細仍可產生完整直式 PNG，不遺失總額", (
   const svg = receiptSvg(data);
   assert.match(svg, /另有 18 位陪陪/);
   assert.match(svg, /NT\$3,000/);
-  assert.match(svg, /A 熱感紙收據/);
+  assert.doesNotMatch(svg, /A 熱感紙收據/);
   const png = renderReceiptPng(data);
-  assert.equal(png.readUInt32BE(16), 720);
+  assert.equal(png.readUInt32BE(16), 636);
   assert.ok(png.readUInt32BE(20) > 3000);
   assert.ok(png.length < 8_000_000);
 });
