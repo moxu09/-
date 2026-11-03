@@ -8551,6 +8551,7 @@ async function acceptPlayOrder(interaction) {
 
     if (playerError) {
       console.log("[接單錯誤 players]", playerError);
+      return interaction.editReply({ content: "❌ 讀取陪陪資料失敗，請稍後再試。" });
     }
 
     if (!player) {
