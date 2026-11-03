@@ -29,6 +29,9 @@ async function claimDailyCheckinReward({
       nextCheckin: date,
     });
 
+    if (data?.linkedAccountClaimed) {
+      return { claimed: false, reason: "linked_account", balance: currentCoins };
+    }
     if (data?.last_checkin === date) {
       return {
         claimed: true,
@@ -73,6 +76,8 @@ function createSupabaseDailyCheckinClaimer({ supabase, getUser }) {
         const { data, error } = await update
           .select("coins, last_checkin")
           .maybeSingle();
+
+        if (error?.code === "PDC01") return { linkedAccountClaimed: true };
 
         if (error) {
           console.error("[DB] 原子簽到失敗:", error);

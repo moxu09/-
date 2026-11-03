@@ -120,6 +120,8 @@ function memberHasRole(member, roleId) {
   return false;
 }
 
+const { interactionHasPermission } = require("../utils/interactionPermissions");
+
 function isStaffInteraction(interaction, ...configuredRoleIds) {
   const roleIds = parseRoleIds(
     ...configuredRoleIds,
@@ -131,8 +133,7 @@ function isStaffInteraction(interaction, ...configuredRoleIds) {
   );
   return (
     interaction.guild?.ownerId === interaction.user.id ||
-    interaction.memberPermissions?.has(PermissionFlagsBits.Administrator) ||
-    interaction.member?.permissions?.has?.(PermissionFlagsBits.Administrator) ||
+    interactionHasPermission(interaction, PermissionFlagsBits.Administrator) ||
     roleIds.some((roleId) => memberHasRole(interaction.member, roleId))
   );
 }

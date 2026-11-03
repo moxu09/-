@@ -31,27 +31,6 @@ const FONT_PATH = path.join(
 const pendingApplications = new Map();
 const processingReviews = new Set();
 
-async function hasPaidOrderAtStore({ supabase, discordUserId, guildId }) {
-  if (!supabase || !discordUserId || !guildId) {
-    throw new Error("目前無法確認申請人的消費身分，請稍後再試");
-  }
-
-  const { data, error } = await supabase
-    .from("play_orders")
-    .select("id")
-    .eq("guild_id", guildId)
-    .eq("customer_id", discordUserId)
-    .eq("paid", true)
-    .limit(1);
-
-  if (error) {
-    console.error("[入職申請] 查詢同店消費紀錄失敗", error);
-    throw new Error("目前無法確認申請人的消費身分，請稍後再試");
-  }
-
-  return Array.isArray(data) && data.length > 0;
-}
-
 async function hasActiveCompanionAtStore({
   supabase,
   discordUserId,
@@ -1096,7 +1075,7 @@ function createEmploymentSystem(client, config, supabase) {
       .setTitle(`🪪 ${config.brandName}｜陪玩入職申請`)
       .setDescription(
         "歡迎申請加入陪玩團隊。\n\n" +
-          "請先閱讀完整陪玩共同守則；同意後選擇考取遊戲與類型，再依畫面完成所有資料。",
+          "請先閱讀完整陪玩共同守則；同意後選擇考取遊戲與類型，依畫面完成資料。",
       )
       .setFooter({ text: "送出前請再次確認資料正確" });
     const components = [
@@ -1401,26 +1380,6 @@ function createEmploymentSystem(client, config, supabase) {
     try {
       if (customId === "employment_start") {
         await interaction.deferReply({ flags: 64 });
-        const guildId = interaction.guildId || interaction.guild?.id || config.guildId;
-        const [isStoreCustomer, isActiveCompanion] = await Promise.all([
-          hasPaidOrderAtStore({
-            supabase,
-            discordUserId: interaction.user.id,
-            guildId,
-          }),
-          hasActiveCompanionAtStore({
-            supabase,
-            discordUserId: interaction.user.id,
-            guildId,
-            organization: config.organization,
-          }),
-        ]);
-        if (isStoreCustomer && !isActiveCompanion) {
-          await interaction.editReply({
-            content: "老闆身分不給予申請陪陪，別間店消費則不受影響",
-          });
-          return true;
-        }
         createFlow(interaction.user);
         await interaction.editReply({
           content:
@@ -1608,7 +1567,6 @@ module.exports = {
   getCompletedThreadDeleteDelay,
   getApplicationFields,
   hasActiveCompanionAtStore,
-  hasPaidOrderAtStore,
   normalizeRoleName,
   requestEmploymentSigningInvitation,
 };

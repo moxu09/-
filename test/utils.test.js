@@ -124,13 +124,13 @@ test("深夜訂單、加時與打賞均顯示正式街口付款並保留可用�
   assert.match(dispatchSource, /attachment:\s*JKOPAY_QR_CODE_PATH/);
 });
 
-test("街口支付合併為單一選項且加時保留月結付款", () => {
+test("街口支付合併為單一選項，加時採指定版面且保留舊月結處理", () => {
   const indexSource = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
   const dispatchSource = fs.readFileSync(path.join(__dirname, "..", "events", "dispatchSystem.js"), "utf8");
   const paymentUtils = fs.readFileSync(path.join(__dirname, "..", "utils", "paymentMethodEmojis.js"), "utf8");
   assert.match(paymentUtils, /label: "街口支付"/);
   assert.doesNotMatch(`${indexSource}\n${dispatchSource}`, /label: "街口掃碼（可刷卡）"|label: "街口支付線上付款"/);
-  assert.match(dispatchSource, /extension_payment_method_[\s\S]*?includeMonthly: true/);
+  assert.match(dispatchSource, /extension_payment_method_[\s\S]*?getGeneralOrderPaymentOptions\(\{/);
   assert.match(dispatchSource, /deepnight_pay_extension_with_monthly/);
   assert.match(dispatchSource, /customer_extension_monthly/);
   assert.match(indexSource, /const jkopayPayment = paymentMethod === "街口支付"/);
@@ -138,7 +138,7 @@ test("街口支付合併為單一選項且加時保留月結付款", () => {
   assert.ok(fs.existsSync(path.join(__dirname, "..", "assets", "payments", "jkopay-deepnight.png")));
 });
 
-test("深夜所有匯款入口使用與秋奈相同的 LINE Bank 帳號", () => {
+test("深夜一般匯款使用 LINE Bank，人工加時例外使用原星展帳號", () => {
   const indexSource = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
   const dispatchSource = fs.readFileSync(
     path.join(__dirname, "..", "events", "dispatchSystem.js"),
@@ -152,8 +152,17 @@ test("深夜所有匯款入口使用與秋奈相同的 LINE Bank 帳號", () => 
     assert.match(source, /帳號：312000002665/);
     assert.match(source, /戶名：深夜不關燈工作室/);
     assert.match(source, /備註：（麻煩空白即可）/);
-    assert.doesNotMatch(source, /60108039566|902960949/);
+    assert.doesNotMatch(source, /902960949/);
   }
+
+  assert.doesNotMatch(indexSource, /60108039566/);
+  assert.match(dispatchSource, /銀行：星展銀行/);
+  assert.match(dispatchSource, /銀行代碼：810/);
+  assert.match(dispatchSource, /帳號：60108039566/);
+  assert.match(
+    dispatchSource,
+    /handleExtensionPaymentMethodSelect[\s\S]*?sendExtensionBankTransferInfo\(interaction\.channel\)/,
+  );
 
   assert.ok(
     fs.existsSync(
@@ -1222,8 +1231,8 @@ test("深夜自助下單選人可延長五分鐘或手動棄單", () => {
   assert.match(source, /\.setLabel\("棄單"\)/);
   assert.match(source, /process\.env\.PLAYER_ORDER_CHANNEL/);
   assert.match(source, /這次自助下單在選人期限內沒有完成選擇，已自動棄單/);
-  assert.match(source, /只有下單者可以延長選人時間/);
-  assert.match(source, /只有下單者可以棄單/);
+  assert.match(source, /只有下單者、客服或管理員可以延長選人時間/);
+  assert.match(source, /只有下單者、客服或管理員可以棄單/);
 });
 
 test("employment PDF generation returns a valid Chinese PDF", async () => {

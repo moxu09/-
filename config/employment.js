@@ -1,5 +1,6 @@
 module.exports = {
   organization: "deepnight",
+  guildId: process.env.GUILD_ID || "1501098191813214312",
   brandName: "深夜不關燈",
   signingBaseUrl:
     process.env.EMPLOYMENT_SIGNING_BASE_URL ||
