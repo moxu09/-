@@ -13,6 +13,7 @@ const {
 const path = require("node:path");
 const { buildEcpayPaymentRows, handleEcpayDirect, sendPreferredEcpayDirect } = require("../utils/ecpayDiscord");
 const { isEcpayAtmAvailable } = require("../utils/ecpayAtmSchedule");
+const { canStaffAcceptOrder } = require("../utils/staffAcceptanceEligibility");
 const {
   createWorkReportSystem,
   isStaffInteraction,
@@ -1894,7 +1895,6 @@ async function getAvailablePlayerOptions(service) {
   let playerQuery = supabase
     .from(STAFF_TABLE)
     .select("*")
-    .eq("status", "available")
     .not("discord_id", "is", null);
 
   playerQuery = applyStaffGuildFilter(playerQuery);
@@ -1914,7 +1914,7 @@ async function getAvailablePlayerOptions(service) {
     .filter((player) => {
       const id = String(player.discord_id || "").trim();
 
-      if (!id) return false;
+      if (!id || !canStaffAcceptOrder(player, DEEPNIGHT_GUILD_ID)) return false;
 
       if (seenPlayerIds.has(id)) {
         return false;
@@ -8540,15 +8540,14 @@ async function acceptPlayOrder(interaction) {
     let playerQuery = supabase
       .from(STAFF_TABLE)
       .select("*")
-      .eq("discord_id", interaction.user.id)
-      .eq("status", "available")
-      .limit(1);
+      .eq("discord_id", interaction.user.id);
 
     playerQuery = applyStaffGuildFilter(playerQuery);
 
     const { data: playerRows, error: playerError } = await playerQuery;
 
-    const player = playerRows?.[0];
+    const player = playerRows?.find((row) =>
+      canStaffAcceptOrder(row, DEEPNIGHT_GUILD_ID));
 
     if (playerError) {
       console.log("[接單錯誤 players]", playerError);
@@ -8556,7 +8555,7 @@ async function acceptPlayOrder(interaction) {
 
     if (!player) {
       return interaction.editReply({
-        content: "❌ 你目前不是可接單狀態，請先按「開始接單」",
+        content: "❌ 你目前沒有這家店的在職接單資格，請聯繫主管確認。",
       });
     }
 

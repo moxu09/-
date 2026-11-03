@@ -25,6 +25,7 @@ const { createEcpayService } = require("./utils/ecpay");
 const { buildOrderReceiptData, buildTipReceiptData, renderReceiptPng } = require("./utils/receiptImages");
 const { createReceiptDelivery } = require("./utils/receiptDelivery");
 const { isEcpayAtmAvailable } = require("./utils/ecpayAtmSchedule");
+const { canStaffAcceptOrder } = require("./utils/staffAcceptanceEligibility");
 const {
   syncApplicationCommands,
 } = require("./runtime/commandRegistry");
@@ -7412,12 +7413,7 @@ async function getAvailablePlayerOptions(
 
   return (players || [])
     .filter((player) => {
-      if (!player.discord_id) return false;
-
-      const isAvailable =
-        player.status === "available" || player.is_online === true;
-
-      if (!isAvailable) return false;
+      if (!canStaffAcceptOrder(player, guildId)) return false;
 
       const allowedServices = Array.isArray(player.allowed_services)
         ? player.allowed_services
