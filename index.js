@@ -29,6 +29,7 @@ const {
   syncApplicationCommands,
 } = require("./runtime/commandRegistry");
 const { runStartupGroup } = require("./runtime/startupOrchestrator");
+const { createServiceProxyQueue } = require("./utils/serviceProxyQueue");
 const {
   startDailySelfCheckScheduler,
 } = require("./utils/dailySelfCheck");
@@ -1075,7 +1076,7 @@ async function handleCrownPackageSelect(interaction) {
   if (!tipData || !tipData.crownOrder) {
     return interaction.editReply({ content: "❌ 冠名單流程已過期，請重新建立。" });
   }
-  if (interaction.user.id !== tipData.createdBy) {
+  if (!canAdvanceTipFlow(interaction, tipData)) {
     return interaction.editReply({ content: "❌ 只有建立冠名單的人可以操作。" });
   }
   const crownPackage = getCrownPackageByKey(
@@ -1161,7 +1162,7 @@ async function handleTipGiftSelect(interaction) {
     });
   }
 
-  if (interaction.user.id !== tipData.createdBy) {
+  if (!canAdvanceTipFlow(interaction, tipData)) {
     return interaction.editReply({
       content: "❌ 只有建立這筆打賞的人可以操作。",
     });
@@ -1279,7 +1280,7 @@ async function handleTipStaffSelect(interaction) {
     });
   }
 
-  if (interaction.user.id !== tipData.createdBy) {
+  if (!canAdvanceTipFlow(interaction, tipData)) {
     return interaction.editReply({
       content: "❌ 只有建立這筆打賞的人可以操作。",
     });
@@ -1331,7 +1332,7 @@ async function openTipStaffSearchModal(interaction) {
       flags: 64,
     });
   }
-  if (interaction.user.id !== tipData.createdBy) {
+  if (!canAdvanceTipFlow(interaction, tipData)) {
     return interaction.reply({
       content: "❌ 只有建立這筆打賞的人可以操作。",
       flags: 64,
@@ -1370,7 +1371,7 @@ async function handleTipStaffSearchModal(interaction) {
       content: "❌ 這筆打賞流程已過期，請重新建立打賞頻道。",
     });
   }
-  if (interaction.user.id !== tipData.createdBy) {
+  if (!canAdvanceTipFlow(interaction, tipData)) {
     return interaction.editReply({
       content: "❌ 只有建立這筆打賞的人可以操作。",
     });
@@ -1712,7 +1713,7 @@ async function handleCrownSuffixChoice(interaction) {
     "",
   );
   const tipData = pendingTips.get(tipId);
-  if (!tipData?.crownOrder || interaction.user.id !== tipData.createdBy) {
+  if (!tipData?.crownOrder || !canAdvanceTipFlow(interaction, tipData)) {
     return interaction.reply({ content: "❌ 冠名單已失效或你不是建立者。", flags: 64 });
   }
   if (wantsSuffix) {
@@ -1756,7 +1757,7 @@ async function handleCrownSuffixModal(interaction) {
   await interaction.deferReply({ flags: 64 });
   const tipId = interaction.customId.replace("crown_suffix_modal_", "");
   const tipData = pendingTips.get(tipId);
-  if (!tipData?.crownOrder || interaction.user.id !== tipData.createdBy) {
+  if (!tipData?.crownOrder || !canAdvanceTipFlow(interaction, tipData)) {
     return interaction.editReply({ content: "❌ 冠名單已失效或你不是建立者。" });
   }
   tipData.changeSuffixes = true;
@@ -2006,7 +2007,7 @@ async function handleTipStaffClear(interaction) {
     });
   }
 
-  if (interaction.user.id !== tipData.createdBy) {
+  if (!canAdvanceTipFlow(interaction, tipData)) {
     return interaction.editReply({
       content: "❌ 只有建立這筆打賞的人可以操作。",
     });
@@ -7149,6 +7150,10 @@ client.once(Events.ClientReady, async () => {
     60 * 1000,
   );
 
+  createServiceProxyQueue({
+    db: supabase, client, organization: 'deepnight', guildId: '1501098191813214312',
+    createTicket: payload => dispatchSystem.createServiceProxyTicket(payload),
+  }).start();
   runtimeHealth.markReady();
   console.log("🌧️ 星雨機器人已完成啟動");
 });
@@ -11673,9 +11678,9 @@ async function handleButtonInteraction(interaction) {
           components: [],
         });
       }
-      if (interaction.user.id !== tipData.createdBy) {
+      if (!canAdvanceTipFlow(interaction, tipData)) {
         return await interaction.editReply({
-          content: "❌ 只有填寫這筆打賞的人可以取消",
+          content: "❌ 只有打賞人或客服可以取消",
         });
       }
       pendingTips.delete(tipConfirmId);
@@ -11805,9 +11810,9 @@ async function handleButtonInteraction(interaction) {
           content: "❌ 這筆打賞流程已過期，請重新建立打賞頻道。",
         });
       }
-      if (interaction.user.id !== tipData.tipperId) {
+      if (!canAdvanceTipFlow(interaction, tipData)) {
         return await interaction.editReply({
-          content: "❌ 只有打賞人可以確認儲值卡付款",
+          content: "❌ 只有打賞人或客服可以確認儲值卡付款",
         });
       }
       const { tipperId } = tipData;

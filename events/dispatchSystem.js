@@ -998,7 +998,7 @@ async function handleOtherGameStyleSelect(interaction) {
   const pending = pendingPanelOrders.get(flowId);
   await resetSelectMenuMessage(interaction);
 
-  if (!pending || pending.userId !== interaction.user.id) {
+  if (!pending || !canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.editReply({
       content: "❌ 這個選單已過期，請回其他項目下單區重新選擇。",
       components: [],
@@ -1051,7 +1051,7 @@ async function handleLolStyleSelect(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return await interaction.editReply({
       content: "❌ 只有剛剛選擇英雄聯盟項目的人可以操作。",
       components: [],
@@ -4254,7 +4254,7 @@ async function handleNewOrderGameSelect(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個選單。",
       flags: 64,
@@ -4365,7 +4365,7 @@ async function handleNewOrderItemSelect(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個選單。",
       flags: 64,
@@ -4436,7 +4436,7 @@ async function handleNewOrderRankSelect(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個選單。",
       flags: 64,
@@ -4495,7 +4495,7 @@ async function handleNewOrderCountSelect(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個選單。",
       flags: 64,
@@ -4559,7 +4559,7 @@ async function handleNewOrderGenderSelect(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個選單。",
       flags: 64,
@@ -4633,7 +4633,7 @@ async function handleNewOrderPlayerSelect(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個選單。",
       flags: 64,
@@ -4805,7 +4805,7 @@ async function handleNewOrderDurationSelect(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個選單。",
       flags: 64,
@@ -4856,7 +4856,7 @@ async function submitNewOrderReserveTime(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個表單。",
       flags: 64,
@@ -5253,7 +5253,7 @@ async function openNewOrderNoteModal(interaction) {
     });
   }
 
-  if (pending.userId !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.userId)) {
     return interaction.reply({
       content: "❌ 只有下單者可以操作這個按鈕。",
       flags: 64,
@@ -5749,7 +5749,7 @@ async function handleQuoteNoCoupon(interaction) {
     });
   }
 
-  if (order.customer_id !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, order.customer_id)) {
     return interaction.editReply({
       content: "❌ 只有下單的闆闆可以選擇優惠券",
     });
@@ -5887,7 +5887,7 @@ async function handleQuoteUseCoupon(interaction) {
     });
   }
 
-  if (order.customer_id !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, order.customer_id)) {
     return interaction.editReply({
       content: "❌ 只有下單的闆闆可以選擇優惠券",
     });
@@ -5966,7 +5966,7 @@ async function handleQuoteSelectCoupon(interaction) {
     });
   }
 
-  if (order.customer_id !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, order.customer_id)) {
     return interaction.editReply({
       content: "❌ 只有下單的闆闆可以使用優惠券",
     });
@@ -6720,7 +6720,7 @@ async function handleCustomerOrderWrong(interaction) {
     });
   }
 
-  if (order.customer_id !== interaction.user.id) {
+  if (!canCustomerOrStaffSubmit(interaction, order.customer_id)) {
     return interaction.editReply({
       content: "❌ 只有下單的闆闆可以回報內容有誤",
     });
@@ -7581,9 +7581,9 @@ async function handleConfirmExtensionWallet(interaction) {
     });
   }
 
-  if (interaction.user.id !== extension.customer_id) {
+  if (!canCustomerOrStaffSubmit(interaction, extension.customer_id)) {
     return interaction.editReply({
-      content: "❌ 只有下單闆闆可以確認加時儲值卡付款",
+      content: "❌ 只有下單闆闆或客服可以確認加時儲值卡付款",
     });
   }
 
@@ -10088,7 +10088,7 @@ async function handleServiceNoCoupon(interaction) {
     });
   }
 
-  if (interaction.user.id !== pending.customerId) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.customerId)) {
     return interaction.editReply({
       content: "❌ 只有下單的闆闆可以選擇優惠券。",
     });
@@ -10120,7 +10120,7 @@ async function handleServiceUseCoupon(interaction) {
     });
   }
 
-  if (interaction.user.id !== pending.customerId) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.customerId)) {
     return interaction.editReply({
       content: "❌ 只有下單的闆闆可以選擇優惠券。",
     });
@@ -10191,7 +10191,7 @@ async function handleServiceSelectCoupon(interaction) {
     });
   }
 
-  if (interaction.user.id !== pending.customerId) {
+  if (!canCustomerOrStaffSubmit(interaction, pending.customerId)) {
     return interaction.editReply({
       content: "❌ 只有下單的闆闆可以使用優惠券。",
     });
@@ -11205,9 +11205,9 @@ async function handleServiceConfirmWallet(interaction) {
     });
   }
 
-  if (interaction.user.id !== order.customer_id) {
+  if (!canCustomerOrStaffSubmit(interaction, order.customer_id)) {
     return interaction.editReply({
-      content: "❌ 只有下單的闆闆可以確認付款",
+      content: "❌ 只有下單的闆闆或客服可以確認付款",
     });
   }
 
@@ -11303,9 +11303,9 @@ async function handleServiceConfirmMonthly(interaction) {
     });
   }
 
-  if (interaction.user.id !== order.customer_id) {
+  if (!canCustomerOrStaffSubmit(interaction, order.customer_id)) {
     return interaction.editReply({
-      content: "❌ 只有下單的闆闆可以確認付款",
+      content: "❌ 只有下單的闆闆或客服可以確認付款",
     });
   }
 
@@ -11407,9 +11407,9 @@ async function handleServiceConfirmWalletGroup(interaction) {
 
   const customerId = orders[0].customer_id;
 
-  if (interaction.user.id !== customerId) {
+  if (!canCustomerOrStaffSubmit(interaction, customerId)) {
     return interaction.editReply({
-      content: "❌ 只有下單的闆闆可以確認付款",
+      content: "❌ 只有下單的闆闆或客服可以確認付款",
     });
   }
 
@@ -11533,9 +11533,9 @@ async function handleServiceConfirmMonthlyGroup(interaction) {
 
   const customerId = orders[0].customer_id;
 
-  if (interaction.user.id !== customerId) {
+  if (!canCustomerOrStaffSubmit(interaction, customerId)) {
     return interaction.editReply({
-      content: "❌ 只有下單的闆闆可以確認付款",
+      content: "❌ 只有下單的闆闆或客服可以確認付款",
     });
   }
 
@@ -12446,7 +12446,51 @@ async function handleJkopayServicePaid({ payment, transaction }) {
   throw new Error(`不支援的街口付款類型：${payment.payment_kind}`);
 }
 
+async function createServiceProxyTicket({ flowId, guild, member, actorId, kind }) {
+  const topic = `owner:${member.id};proxy:${flowId}`;
+  const channels = await guild.channels.fetch();
+  let channel = channels.find(item => item?.type === ChannelType.GuildText && item.topic === topic);
+  if (!channel) {
+    await guild.roles.fetch();
+    const roleIds = [process.env.STAFF_ROLE, process.env.CUSTOMER_SERVICE_ROLE_ID,
+      ...String(process.env.CUSTOMER_SERVICE_ROLE_IDS || '').split(','),
+      ...String(process.env.SUPPORT_ROLE_IDS || '').split(',')]
+      .map(value => String(value || '').trim()).filter(value => guild.roles.cache.has(value));
+    if (!roleIds.length) throw Error('尚未設定有效客服身分組');
+    channel = await guild.channels.create({
+      name: `客服代建-${flowId.slice(-8)}`,
+      type: ChannelType.GuildText,
+      parent: process.env.ORDER_CATEGORY || null,
+      topic,
+      permissionOverwrites: [
+        { id: guild.id, deny: ['ViewChannel'] },
+        { id: client.user.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'ManageChannels'] },
+        { id: member.id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'AttachFiles'] },
+        ...[...new Set(roleIds)].map(id => ({ id, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'AttachFiles'] })),
+      ],
+    });
+  }
+  const messages = await channel.messages.fetch({ limit: 100 });
+  const hasBanner = messages.some(message => message.author.id === client.user.id && message.content.includes(`代建單編號：${flowId}`));
+  if (!hasBanner) await channel.send({
+    content: `客服 <@${actorId}> 代 <@${member.id}> 建立${kind === 'order' ? '訂單' : kind.includes('crown') ? '冠名' : '打賞'}。\n代建單編號：${flowId}\n付款方式仍須由老闆本人選擇。`,
+    allowedMentions: { users: [actorId, member.id], parse: [] },
+  });
+  const hasFlow = messages.some(message => message.author.id === client.user.id &&
+    message.components?.some(row => row.components?.some(component =>
+      /^(new_order_game_|tip_gift_|crown_package_)/.test(component.customId || ''))));
+  if (!hasFlow) {
+    if (kind === 'order') await startNewOrderFlow(channel, member.user);
+    else if (kind === 'tip' || kind === 'custom-tip') await paymentHelpers.startTipFlowInChannel(channel, member.user);
+    else await paymentHelpers.startCrownFlowInChannel(channel, member.user);
+    if (kind === 'custom-tip' || kind === 'custom-crown') await channel.send(
+      kind === 'custom-tip' ? '請選擇「客製打賞」，金額由客服填寫。' : '請選擇「自定冠名」，內容與金額由客服填寫。');
+  }
+  return { channelId: channel.id };
+}
+
 module.exports = {
+  createServiceProxyTicket,
   setup,
   handleDispatchInteraction,
   sendPlayerPanel,
