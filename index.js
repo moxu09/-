@@ -6939,15 +6939,6 @@ client.once(Events.ClientReady, async () => {
   const startupSummary = await runStartupGroup(
     [
       {
-        name: "陪玩控制面板",
-        run: async () => {
-          const playerChannel = await client.channels.fetch(
-            process.env.PLAYER_CONTROL_CHANNEL,
-          );
-          await dispatchSystem.sendPlayerPanel(playerChannel);
-        },
-      },
-      {
         name: "付款方式圖片",
         run: async () => {
           const result = await ensurePaymentMethodEmojis(client);
