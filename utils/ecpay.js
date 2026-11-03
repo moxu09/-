@@ -17,7 +17,7 @@ function getEcpayConfig(env = process.env, organizationCode = "deepnight") {
 function createEcpayService({ supabase, onServicePaid, env = process.env, organizationCode = "deepnight" }) {
   const config = getEcpayConfig(env, organizationCode);
 
-  async function createServicePayment({ kind, entityKey, userId, amount, channelId, description, metadata = {} }) {
+  async function createServicePayment({ kind, entityKey, userId, amount, channelId, description, metadata = {}, requestedMethod = null }) {
     if (!config.available) throw new Error("綠界信用卡付款尚未開放");
     if (!["order", "extension", "tip", "topup"].includes(kind)) throw new Error("綠界付款類型錯誤");
     if (!entityKey || !userId) throw new Error("綠界付款資料不完整");
@@ -32,6 +32,9 @@ function createEcpayService({ supabase, onServicePaid, env = process.env, organi
       if (existing.user_id !== String(userId) || Number(existing.amount) !== amount)
         throw new Error("綠界付款單與目前訂單資料不一致");
       if (existing.status !== "pending") throw new Error("這筆綠界付款已完成或不可付款");
+      const issuedMethod = existing.raw_result?.PaymentType || existing.metadata?.ecpay_direct_method;
+      if (issuedMethod && requestedMethod && issuedMethod !== requestedMethod)
+        throw new Error("原付款單已產生其他方式繳費資訊，請勿重複付款，請聯繫客服處理");
       const createdAt = Date.parse(existing.created_at || "");
       if (!Number.isFinite(createdAt) || Date.now() - createdAt > 24 * 60 * 60 * 1000)
         throw new Error("綠界付款連結已過期，請聯絡客服建立新付款單");

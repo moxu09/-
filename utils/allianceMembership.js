@@ -100,8 +100,9 @@ function createAllianceMembership(supabase, guildId) {
           : input;
     const delta = newTotal - oldTotal;
 
+    let appliedMember = member;
     if (delta !== 0) {
-      await applyActivity({
+      appliedMember = await applyActivity({
         discordUserId,
         activityType,
         amount: delta,
@@ -110,7 +111,7 @@ function createAllianceMembership(supabase, guildId) {
       });
     }
 
-    return { oldTotal, newTotal };
+    return { oldTotal, newTotal: Number(appliedMember?.[field] ?? oldTotal) };
   }
 
   function formatSummary({ member, currentTier, nextTier }) {

@@ -9,20 +9,23 @@ const METHODS = Object.freeze({
   BARCODE: { label: "超商條碼", min: 18, max: 20_000 },
 });
 
-function buildEcpayPaymentRows(payment, amount, { topup = false, allowAtm = true } = {}) {
+function buildEcpayPaymentRows(payment, amount, { topup = false, allowAtm = true, onlyMethod = null } = {}) {
   const order = String(payment.platformOrderId || "");
   const base = String(payment.paymentUrl || "").split("/payments/ecpay/service/checkout")[0];
   if (!/^[A-Za-z0-9]{1,20}$/.test(order) || !/^https:\/\//.test(base))
     throw new Error("綠界付款連結不正確");
-  const buttons = [new ButtonBuilder().setLabel("站內刷卡").setEmoji("💳")
-    .setStyle(ButtonStyle.Link).setURL(`${base}/payments/ecpay/service/insite?order=${encodeURIComponent(order)}`)];
+  const buttons = [];
+  if (!onlyMethod || onlyMethod === "CARD") buttons.push(new ButtonBuilder().setLabel("線上刷卡").setEmoji("💳")
+    .setStyle(ButtonStyle.Link).setURL(`${base}/payments/ecpay/service/insite?order=${encodeURIComponent(order)}`));
   for (const [method, limit] of Object.entries(METHODS)) {
+    if (onlyMethod && onlyMethod !== method) continue;
     if (method === "ATM" && (!allowAtm || !isEcpayAtmAvailable())) continue;
     if (topup && method !== "ATM") continue;
     if (amount < limit.min || amount > limit.max) continue;
     buttons.push(new ButtonBuilder().setCustomId(`ecpay_direct_${method}_${order}`)
       .setLabel(limit.label).setStyle(ButtonStyle.Primary));
   }
+  if (!buttons.length) throw new Error("此訂單金額不適用所選付款方式");
   return [new ActionRowBuilder().addComponents(buttons)];
 }
 
@@ -34,7 +37,7 @@ async function handleEcpayDirect(interaction, supabase, baseUrl) {
   try {
     if (method === "ATM" && !isEcpayAtmAvailable()) throw new Error("綠界虛擬 ATM 將於 9 月 28 日開放");
     const { data: payment, error } = await supabase.from("ecpay_service_payments")
-      .select("user_id,channel_id,status,amount,payment_kind").eq("merchant_trade_no", order).maybeSingle();
+      .select("user_id,channel_id,status,amount,payment_kind,metadata,raw_result").eq("merchant_trade_no", order).maybeSingle();
     if (error || !payment || payment.status !== "pending" ||
         payment.user_id !== interaction.user.id || String(payment.channel_id) !== String(interaction.channelId))
       throw new Error("這筆付款不屬於你，或已完成付款");
@@ -42,6 +45,11 @@ async function handleEcpayDirect(interaction, supabase, baseUrl) {
     if (payment.amount < limit.min || payment.amount > limit.max ||
         (payment.payment_kind === "topup" && method !== "ATM"))
       throw new Error("此付款方式不適用這筆金額或訂單");
+    const issuedMethod = payment.raw_result?.PaymentType || payment.metadata?.ecpay_direct_method;
+    // 人工單的歷史 ATM 按鈕不得新取號；保留已發出的 ATM 資訊及授權自助／差額流程。
+    if (method === "ATM" && ["order", "extension", "tip"].includes(payment.payment_kind) &&
+        payment.metadata?.flow !== "self_service" && issuedMethod !== "ATM")
+      throw new Error("人工訂單、人工續單與人工打賞請使用原銀行匯款，並由客服確認入帳；此按鈕不再提供新的綠界 ATM 帳號");
     const body = JSON.stringify({ order, method, timestamp: Math.floor(Date.now() / 1000) });
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new Error("付款服務尚未完成設定");
     const signature = createHmac("sha256", process.env.SUPABASE_SERVICE_ROLE_KEY).update(body).digest("hex");

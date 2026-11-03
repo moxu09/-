@@ -33,7 +33,7 @@ test("打賞可單獨移除陪陪且文字搜尋可一次輸入多人", () => {
   assert.match(source, /resolveStaffSearchInput\(staffRecords, rawQuery/);
 });
 
-test("打賞陪陪清單分頁獨立送出，不裁掉第六頁以後的員工", () => {
+test("打賞陪陪清單每頁分開送出避免 Discord 請求過大", () => {
   assert.match(source, /async function sendTipStaffSelectionMenus/);
   assert.match(source, /components: \[row\]/);
   assert.doesNotMatch(source, /components: rows\.slice\(0, 5\)/);

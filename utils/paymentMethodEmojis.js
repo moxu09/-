@@ -8,6 +8,9 @@ const PAYMENT_METHOD_CODES = Object.freeze({
   "街口掃碼（可刷卡）": "jks",
   街口支付: "jko",
   綠界支付: "ecp",
+  線上刷卡: "ecp_card",
+  超商代碼: "ecp_cvs",
+  超商條碼: "ecp_barcode",
   匯款: "bank",
   匯款轉帳: "bank_transfer",
   匯款帳號: "bank_account",
@@ -30,7 +33,9 @@ const PAYMENT_METHOD_BY_CODE = Object.freeze(Object.fromEntries(
 const PAYMENT_EMOJI_DEFINITIONS = Object.freeze([
   // 新版只使用品牌 Logo。保留舊 pay_jkopay 應用程式表情，避免既有訂單訊息失效。
   { key: "jkopay", name: "pay_jkopay_logo", file: "jkopay.png", fallback: "📱", matches: ["街口"] },
-  { key: "ecpay", name: null, file: null, fallback: "💳", matches: ["綠界"] },
+  { key: "ecpay", name: null, file: null, fallback: "💳", matches: ["綠界", "線上刷卡"] },
+  { key: "cvs_code", name: null, file: null, fallback: "🧾", matches: ["超商代碼"] },
+  { key: "cvs_barcode", name: null, file: null, fallback: "🏪", matches: ["超商條碼"] },
   { key: "bank_transfer", name: "pay_bank_transfer_v2", file: "bank-transfer.png", fallback: "🏦", matches: ["匯款", "轉帳"] },
   { key: "crypto", name: "pay_crypto_v2", file: "crypto.png", fallback: "🪙", matches: ["加密貨幣"] },
   { key: "monthly", name: "pay_monthly_v2", file: "monthly.png", fallback: "🌙", matches: ["月結"] },
@@ -58,9 +63,9 @@ function getCanonicalPaymentOptions({
       value: "街口支付",
     },
     ...(includeEcpay ? [{
-      label: "綠界支付",
-      description: !manualOrder && isEcpayAtmAvailable() ? "可選適用的信用卡、ATM 或超商付款，成功後自動核帳" : "可選站內刷卡或超商付款，成功後自動核帳",
-      value: "綠界支付",
+      label: "線上刷卡",
+      description: "在官網站內輸入卡號，付款成功後自動核帳",
+      value: "線上刷卡",
     }] : []),
     {
       label: !manualOrder && includeEcpay && isEcpayAtmAvailable() ? "匯款／ATM 虛擬帳號" : "匯款帳號",
@@ -110,6 +115,35 @@ function getCanonicalPaymentOptions({
   ];
 }
 
+function getGeneralOrderPaymentOptions({ ecpayAvailable = false, salaryEligible = false, amount = null } = {}) {
+  const cardAvailable = ecpayAvailable && (amount == null || isGeneralEcpayAmountAllowed("CARD", amount));
+  const cvsAvailable = ecpayAvailable && (amount == null || isGeneralEcpayAmountAllowed("CVS", amount));
+  const barcodeAvailable = ecpayAvailable && (amount == null || isGeneralEcpayAmountAllowed("BARCODE", amount));
+  return [
+    { label: "街口支付", value: "街口支付", style: ButtonStyle.Danger },
+    { label: "線上刷卡", value: "線上刷卡", style: ButtonStyle.Danger, disabled: !cardAvailable },
+    { label: "轉帳匯款", value: "匯款", style: ButtonStyle.Success },
+    { label: "中信無卡", value: "無卡", style: ButtonStyle.Success },
+    { label: "錢包扣款", value: "儲值卡", style: ButtonStyle.Primary },
+    { label: "加密貨幣", value: "加密貨幣", style: ButtonStyle.Primary },
+    { label: "超商代碼", value: "超商代碼", style: ButtonStyle.Danger, disabled: !cvsAvailable },
+    { label: "超商條碼", value: "超商條碼", style: ButtonStyle.Danger, disabled: !barcodeAvailable },
+    { label: "美金轉帳", value: "美金轉帳", style: ButtonStyle.Success },
+    ...(salaryEligible ? [{ label: "員工扣薪", value: "扣薪", style: ButtonStyle.Success }] : []),
+  ];
+}
+
+function isGeneralEcpayAmountAllowed(method, amount) {
+  const limits = { CARD: [6, 199_999], ATM: [16, 49_999], CVS: [34, 20_000], BARCODE: [18, 20_000] };
+  const range = limits[method];
+  const value = Number(amount);
+  return Boolean(range && Number.isInteger(value) && value >= range[0] && value <= range[1]);
+}
+
+function getTipPaymentOptions({ includeEcpay = false, includeSalary = false, amount = null } = {}) {
+  return getGeneralOrderPaymentOptions({ ecpayAvailable: includeEcpay, salaryEligible: includeSalary, amount });
+}
+
 function findDefinition(value) {
   const text = String(value || "");
   return PAYMENT_EMOJI_DEFINITIONS.find((definition) =>
@@ -157,7 +191,8 @@ function buildPaymentMethodButtonRows(baseCustomId, options = []) {
     const button = new ButtonBuilder()
       .setCustomId(`${baseCustomId}${PAYMENT_BUTTON_MARKER}${code}`)
       .setLabel(String(option.label || method))
-      .setStyle(getPaymentButtonStyle(Math.floor(index / 2)));
+      .setStyle(option.style || getPaymentButtonStyle(Math.floor(index / 2)));
+    if (option.disabled) button.setDisabled(true);
     if (option.emoji) button.setEmoji(option.emoji);
     return button;
   });
@@ -174,9 +209,15 @@ function getPaymentMethodSelection(interaction, prefix) {
   const remainder = customId.slice(prefix.length);
   // 人工報價與人工開單的舊付款訊息仍走原銀行匯款。
   const resolveBankMethod = (method) => {
+    const methods = { 線上刷卡: "CARD", 超商代碼: "CVS", 超商條碼: "BARCODE" };
+    if (methods[method]) return { paymentMethod: "綠界支付", requestedMethod: methods[method] };
     const bank = ["匯款", "匯款帳號", "匯款轉帳", "匯款 / 轉帳"].includes(method);
     if (!bank) return { paymentMethod: method };
-    if (prefix === "quote_payment_method_" || prefix === "service_payment_method_") {
+    if (
+      prefix === "quote_payment_method_" ||
+      prefix === "service_payment_method_" ||
+      prefix === "extension_payment_method_"
+    ) {
       return { paymentMethod: "匯款" };
     }
     if (process.env.ECPAY_ACCEPT_PAYMENTS === "true" && isEcpayAtmAvailable()) {
@@ -236,6 +277,9 @@ module.exports = {
   ensurePaymentMethodEmojis,
   buildPaymentMethodButtonRows,
   getCanonicalPaymentOptions,
+  getTipPaymentOptions,
+  getGeneralOrderPaymentOptions,
+  isGeneralEcpayAmountAllowed,
   getPaymentMethodDisplayName,
   getPaymentMethodSelection,
   getPaymentMethodEmoji,

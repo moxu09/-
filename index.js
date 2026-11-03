@@ -1,7 +1,8 @@
 require("dotenv").config();
-const { buildRedeemPrizeCommand, createPrizeRedemption } = require("./utils/prizeRedemption");
-const { buildTimedRoleCommand, buildExtendTimedRoleCommand, createTimedRoleManager } = require("./utils/timedRoles");
+const { createHash } = require("node:crypto");
 const fs = require("node:fs/promises");
+const { formatWalletPaymentName } = require("./utils/paymentDisplay");
+const { buildEcpayPaymentRows: buildEcpayTipPaymentRows } = require("./utils/ecpayDiscord");
 const os = require("node:os");
 const path = require("node:path");
 const {
@@ -37,6 +38,8 @@ const {
   startDailySelfCheckScheduler,
 } = require("./utils/dailySelfCheck");
 const { createClient } = require("@supabase/supabase-js");
+const { buildRedeemPrizeCommand, createPrizeRedemption } = require("./utils/prizeRedemption");
+const { buildTimedRoleCommand, buildExtendTimedRoleCommand, createTimedRoleManager } = require("./utils/timedRoles");
 const { createAccountingLedger } = require("./utils/accounting");
 const { createCompanyAi, isDirectBotMention } = require("./utils/companyAi");
 const { createAllianceMembership } = require("./utils/allianceMembership");
@@ -77,6 +80,8 @@ const {
   buildPaymentMethodButtonRows,
   ensurePaymentMethodEmojis,
   getCanonicalPaymentOptions,
+  getGeneralOrderPaymentOptions,
+  getTipPaymentOptions,
   getPaymentMethodDisplayName,
   getPaymentMethodSelection,
 } = require("./utils/paymentMethodEmojis");
@@ -202,14 +207,6 @@ const client = new Client({
   ],
 });
 const timedRoleManager = createTimedRoleManager({ db: supabase, client, guildId: process.env.GUILD_ID });
-const serviceGiftCatalog = require("./utils/serviceGiftCatalog.cjs").createServiceGiftCatalog({
-  organization: "deepnight", tipGifts: TIP_GIFTS,
-  readMessage: path => client.rest.get(path), token: process.env.TOKEN,
-});
-const serviceTemplatePanel = require("./utils/serviceTemplatePanel.cjs").createServiceTemplatePanel({
-  client, supabase, organization: "deepnight", tipGifts: TIP_GIFTS,
-  loadHeartGifts: serviceGiftCatalog.heart,
-});
 const deviceAuditReviewerSync = createDeviceAuditReviewerSync({
   client,
   supabase,
@@ -217,6 +214,13 @@ const deviceAuditReviewerSync = createDeviceAuditReviewerSync({
   roleId:
     process.env.DEVICE_AUDIT_REVIEWER_ROLE_ID || "1507002894355009649",
 });
+const serviceGiftCatalog = require("./utils/serviceGiftCatalog.cjs").createServiceGiftCatalog({
+  organization: "deepnight",
+  tipGifts: TIP_GIFTS,
+  readMessage: path => client.rest.get(path),
+  token: process.env.TOKEN,
+});
+const serviceTemplatePanel = require("./utils/serviceTemplatePanel.cjs").createServiceTemplatePanel({ client, supabase, tipGifts: TIP_GIFTS, loadHeartGifts: serviceGiftCatalog.heart, organization: "deepnight" });
 const employmentSystem = createEmploymentSystem(client, employmentConfig, supabase);
 const complaintSystem = createComplaintSystem(client, complaintConfig);
 const runtimeHealth = createHealthState("rainbot-deepnight");
@@ -314,6 +318,7 @@ async function listStaffByService(serviceKey) {
 }
 // ===== 陪玩排單系統 =====
 const dispatchSystem = require("./events/dispatchSystem");
+const { applyTemporaryLegacyVipCredit } = require("./utils/temporaryQualificationCap");
 
 jkopayService = createJkopayService({
   supabase,
@@ -428,7 +433,9 @@ dispatchSystem.setup(supabase, client, {
     }),
 });
 // ===== 轉帳冷卻 =====
-const sendReceipt = createReceiptDelivery({ client, render: renderReceiptPng });
+const { createReceiptStore, startReceiptRecovery } = require("./utils/receiptRecovery");
+const sendReceipt = createReceiptDelivery({ client, render: renderReceiptPng, brand: "deepnight",
+  store: createReceiptStore(supabase, "deepnight") });
 
 async function getReceiptDisplayName(userId, guild) {
   const id = String(userId || "").trim();
@@ -677,9 +684,12 @@ async function startEcpayTipPayment({ tipId, tipData, channel }) {
   const allocations = refreshTipTotals(tipData);
   const totalAmount = getTipAllocationTotal(tipData);
   if (!allocations.length || totalAmount <= 0) throw new Error("打賞資料不完整");
+  const method = tipData.requestedMethod || "CARD";
+  buildEcpayTipPaymentRows({ platformOrderId: "TIPPREVIEW", paymentUrl: "https://preview.invalid/payments/ecpay/service/checkout" }, totalAmount, { onlyMethod: method });
   const payment = await ecpayService.createServicePayment({
     kind: "tip", entityKey: String(tipId), userId: tipData.tipperId,
     amount: totalAmount, channelId: channel.id,
+    requestedMethod: method,
     description: `深夜不關燈打賞 ${allocations.map((item) => item.item).join("、")}`,
     metadata: {
       tipId: String(tipId), guildId: tipData.guildId || channel.guildId || process.env.GUILD_ID,
@@ -688,15 +698,14 @@ async function startEcpayTipPayment({ tipId, tipData, channel }) {
   });
   const message = await channel.send({
     content: `<@${tipData.tipperId}>`,
-    embeds: [new EmbedBuilder().setColor("#168B50").setTitle("💳 打賞綠界支付").setDescription(
+    embeds: [new EmbedBuilder().setColor("#168B50").setTitle(`💳 打賞${({ CARD: "線上刷卡", ATM: "ATM 轉帳", CVS: "超商代碼", BARCODE: "超商條碼" })[method]}`).setDescription(
       `受賞陪陪：${formatTipStaffMentions(getTipStaffIds(tipData))}\n` +
       `打賞明細：\n${getTipAllocationText(tipData)}\n` +
       `總金額：NT$${totalAmount.toLocaleString("zh-TW")}\n` +
       `綠界訂單編號：${payment.platformOrderId}\n\n` +
-      "請按下方按鈕選擇適用的綠界付款方式；實際付款成功後才會核帳並寫入打賞薪資。",
+      "請使用下方所選付款方式；實際付款成功後才會核帳並寫入打賞薪資。",
     ).setTimestamp()],
-    components: [new ActionRowBuilder().addComponents(new ButtonBuilder()
-      .setLabel("使用綠界支付").setEmoji("💳").setStyle(ButtonStyle.Link).setURL(payment.paymentUrl))],
+    components: buildEcpayTipPaymentRows(payment, totalAmount, { onlyMethod: method }),
   });
   await ecpayService.attachPaymentMessage(payment.platformOrderId, message.id);
   return payment;
@@ -778,13 +787,13 @@ async function updateTipStaffSelectionStatus(channel, tipId, tipData) {
   await sendTipStaffSelectionStatus(channel, tipId, tipData);
 }
 async function buildTipPaymentMenu(tipId, tipData) {
-  const staff = await getStaffByDiscordId(tipData?.tipperId);
+  const salaryEligible = await dispatchSystem.isActivePaymentStaff(tipData?.tipperId);
   return buildPaymentMethodButtonRows(
     `tip_payment_${tipId}`,
-    getCanonicalPaymentOptions({
+    getTipPaymentOptions({
       includeWallet: true,
       includeEcpay: ecpayService.config.available,
-      includeSalary: Boolean(staff && staff.is_active !== false),
+      includeSalary: salaryEligible,
     }),
   );
 }
@@ -1233,8 +1242,6 @@ async function handleTipGiftSelect(interaction) {
       return true;
     })
     .map((player) => {
-      const statusText =
-        player.status === "available" ? "在線" : "離線 / 未接單";
       return {
         label: `${
           player.display_name ||
@@ -1243,7 +1250,7 @@ async function handleTipGiftSelect(interaction) {
           player.name ||
           player.discord_id
         }`.slice(0, 100),
-        description: `${statusText}｜都可以打賞`.slice(0, 100),
+        description: "可打賞".slice(0, 100),
         value: String(player.discord_id),
       };
     });
@@ -2104,6 +2111,7 @@ async function handleTipPaymentSelect(interaction) {
   }
 
   tipData.paymentMethod = paymentMethod;
+  tipData.requestedMethod = selection?.requestedMethod || null;
   setPendingTip(tipId, tipData);
 
   const walletPayment =
@@ -3996,7 +4004,7 @@ async function payOrderByWallet(order) {
   );
 
   if (error) {
-    console.error("[儲值卡付款] 原子付款失敗", error);
+    console.error("[錢包付款] 原子付款失敗", error);
     throw new Error(error.message || "錢包付款失敗");
   }
 
@@ -4213,14 +4221,13 @@ async function handleSlashExtendOrder(interaction) {
         `提示：${insertError?.hint || "無"}`,
     });
   }
-  const extensionCustomerStaff = await getStaffByDiscordId(order.customer_id);
+  const salaryEligible = await dispatchSystem.isActivePaymentStaff(order.customer_id);
   const rows = buildPaymentMethodButtonRows(
     `extension_payment_method_${extension.id}`,
-    getCanonicalPaymentOptions({
-      includeWallet: true,
-      includeMonthly: true,
-      includeEcpay: ecpayService.config.available,
-      includeSalary: Boolean(extensionCustomerStaff && extensionCustomerStaff.is_active !== false),
+    getGeneralOrderPaymentOptions({
+      ecpayAvailable: ecpayService.config.available,
+      salaryEligible,
+      amount: Number(extension.amount || 0),
     }),
   );
 
@@ -4532,10 +4539,16 @@ async function checkAndUpgradeVip(
   // Durable order effects have already changed totals in one DB transaction.
   // The returned absolute value is only a snapshot; always use this fresh read
   // and never write the snapshot back over a newer concurrent payment.
-  const useAtomicVipTotals = strict && useAbsoluteTotal;
+  let useAtomicVipTotals = strict && useAbsoluteTotal;
 
   if (!userId || !guildId) {
     return null;
+  }
+
+  if (!useAbsoluteTotal && triggerAmount > 0) {
+    useAtomicVipTotals = await applyTemporaryLegacyVipCredit(supabase, {
+      userId, guildId, triggerType, amount: triggerAmount,
+    });
   }
 
   const { data: currentVip, error: vipReadError } = await getUserVipRecord(
@@ -5246,6 +5259,7 @@ async function addUserItem(
 ) {
   const { error } = await supabase.from("user_items").insert([
     {
+      guild_id: DEEPNIGHT_BUSINESS_GUILD_ID,
       user_id: userId,
       item_name: itemName,
       rarity,
@@ -5656,6 +5670,7 @@ async function performGacha(userId, guildId, amount, poolId = null) {
 
     const rewardName = String(selected.reward_name || "");
     const itemType =
+      rewardName.includes("禮券") ? "gacha" :
       rewardName.includes("優惠券") ||
       rewardName.includes("折券") ||
       rewardName.includes("券")
@@ -5901,7 +5916,7 @@ async function sendCheckinPanel(client) {
     .setDescription(
       `✨ 每日簽到系統\n\n` +
         `每天可在秋奈或深夜其中一間領取 5 星雨幣！\n` +
-        `兩間店共用每日簽到次數，一天只能簽到一次。\n` +
+        `兩間店共用每日簽到次數，一天只能簽到一次。\n主帳號與已確認綁定的小號也共用一次。\n` +
         `連續簽到可能會有額外驚喜 🎁\n\n` +
         `━━━━━━━━━━━━━━\n` +
         `🪙 每日領取星雨幣\n` +
@@ -6959,6 +6974,7 @@ async function reconcileExistingSignedEmploymentMembers() {
 
 client.once(Events.ClientReady, async () => {
   timedRoleManager.start();
+  startReceiptRecovery({ supabase, guildId: process.env.GUILD_ID, sendOrderReceipt: sendOrderReceiptSafely, sendReceipt });
   console.log("🚀 星雨系統啟動中...");
 
   const startupSummary = await runStartupGroup(
@@ -6982,7 +6998,6 @@ client.once(Events.ClientReady, async () => {
             commands,
           }),
       },
-      { name: "客服套模板面板", run: () => serviceTemplatePanel.ensurePanel() },
       { name: "分區下單面板", run: () => dispatchSystem.sendGameOrderPanels() },
       { name: "打賞下單面板", run: () => dispatchSystem.sendTipOrderPanel() },
       { name: "報單面板", run: () => dispatchSystem.sendWorkReportPanel() },
@@ -6993,6 +7008,7 @@ client.once(Events.ClientReady, async () => {
       { name: "扭蛋面板", run: () => sendGachaPanel(client) },
       { name: "私人房間面板", run: () => sendPrivateRoomPanel(client) },
       { name: "入職申請面板", run: () => employmentSystem.sendPanel() },
+      { name: "客服套模板面板", run: () => serviceTemplatePanel.ensurePanel() },
       { name: "執行長投訴面板", run: () => complaintSystem.sendPanel() },
       {
         name: "電腦稽核審核員權限",
@@ -7058,6 +7074,7 @@ client.once(Events.ClientReady, async () => {
               { name: "打賞下單面板", run: () => dispatchSystem.sendTipOrderPanel() },
               { name: "報單面板", run: () => dispatchSystem.sendWorkReportPanel() },
               { name: "入職申請面板", run: () => employmentSystem.sendPanel() },
+      { name: "客服套模板面板", run: () => serviceTemplatePanel.ensurePanel() },
               { name: "投訴面板", run: () => complaintSystem.sendPanel() },
             ],
           }),
@@ -7482,10 +7499,18 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isButton() && interaction.customId.startsWith("accept_play_order_")) {
+      if (!interaction.deferred && !interaction.replied) {
+        await interaction.deferReply({ flags: 64 });
+      }
+      return await dispatchSystem.handleDispatchInteraction(interaction);
+    }
+
+    if (await prizeRedemption.handleInteraction(interaction)) return;
+
     if (await complaintSystem.handleInteraction(interaction)) return;
     if (await employmentSystem.handleInteraction(interaction)) return;
     if (await serviceTemplatePanel.handleInteraction(interaction)) return;
-    if (await prizeRedemption.handleInteraction(interaction)) return;
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
@@ -7849,12 +7874,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ) {
         return await dispatchSystem.handleDispatchInteraction(interaction);
       }
-      // ===== 派單 / 陪玩狀態按鈕：先處理，避免 interaction 過期 =====
+      // ===== 陪玩狀態按鈕 =====
       if (
         interaction.customId === "player_online" ||
         interaction.customId === "player_offline" ||
-        interaction.customId === "player_status" ||
-        interaction.customId.startsWith("accept_play_order_")
+        interaction.customId === "player_status"
       ) {
         if (!interaction.deferred && !interaction.replied) {
           await interaction.deferReply({
@@ -8214,7 +8238,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const tipPaymentInput = new TextInputBuilder()
           .setCustomId("tip_payment_method")
           .setLabel("付款方式")
-          .setPlaceholder("街口 / 轉帳 / 無卡 / 儲值卡 / 員工扣薪")
+          .setPlaceholder("街口 / 轉帳 / 無卡 / 錢包 / 員工扣薪")
           .setStyle(TextInputStyle.Short)
           .setRequired(true);
         modal.addComponents(
@@ -10170,7 +10194,7 @@ async function claimRedPacket(interaction) {
       .catch(() => {});
   }
 
-  return interaction.editReply({
+  const reply = await interaction.editReply({
     content:
       `🧧 恭喜你搶到 ${Number(result.claim_amount || 0).toLocaleString(
         "zh-TW",
@@ -10182,6 +10206,30 @@ async function claimRedPacket(interaction) {
         "zh-TW",
       )} 星雨幣 / ${Number(result.left_count || 0).toLocaleString("zh-TW")} 份`,
   });
+
+  // 公開領取結果只包含領取金額，不能把私人錢包餘額帶到頻道。
+  await interaction.message.channel.send({
+    content: `🧧 <@${interaction.user.id}> 搶到了 **${Number(result.claim_amount).toLocaleString("zh-TW")} 星雨幣**！`,
+    reply: { messageReference: interaction.message.id, failIfNotExists: false },
+    allowedMentions: { parse: [], repliedUser: false },
+    nonce: createHash("sha256").update(`red-packet-claim:${packetId}:${interaction.user.id}`).digest("hex").slice(0, 24),
+    enforceNonce: true,
+  }).catch((error) => {
+    console.error("[搶紅包頻道通知失敗]", error.code || "unknown");
+  });
+
+  // 領取 RPC 已完成入帳與明細；此處只補私訊，不再次加款或寫入明細。
+  await sendWalletLog(
+    interaction.user.id,
+    "搶紅包",
+    Number(result.claim_amount),
+    Number(result.new_balance),
+    `🧧 領取紅包成功｜紅包識別碼：${packetId}`,
+    false,
+  ).catch((error) => {
+    console.error("[搶紅包通知失敗]", error.code || "unknown");
+  });
+  return reply;
 }
 
 async function createPrivateRoom(interaction) {
@@ -10729,7 +10777,9 @@ async function handleButtonInteraction(interaction) {
 
         if (!result.claimed) {
           return await interaction.editReply({
-            content: "❌ 今天已在秋奈或深夜簽到過了，每天合計只能簽到一次。",
+            content: result.reason === "linked_account"
+              ? "❌ 你或同組綁定帳號今天已領取簽到獎勵。主帳號與小號在秋奈、深夜合計每天限領一次。"
+              : "❌ 今天已在秋奈或深夜簽到過了，每天合計只能簽到一次。",
           });
         }
 
@@ -10805,7 +10855,7 @@ async function handleButtonInteraction(interaction) {
       modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
       return await interaction.showModal(modal);
     }
-    // ===== 月結儲值卡繳費確認 =====
+    // ===== 月結錢包繳費確認 =====
     if (customId.startsWith("monthly_bill_wallet_confirm_")) {
       const billId = customId.replace("monthly_bill_wallet_confirm_", "");
       try {
@@ -10844,7 +10894,7 @@ async function handleButtonInteraction(interaction) {
     }
     if (customId.startsWith("monthly_bill_wallet_cancel_")) {
       return await interaction.editReply({
-        content: "已取消月結儲值卡繳費。",
+        content: "已取消月結錢包繳費。",
         components: [],
       });
     }
@@ -11581,7 +11631,7 @@ async function handleButtonInteraction(interaction) {
           });
         } catch (error) {
           return await interaction.editReply({
-            content: `❌ 儲值卡打賞失敗：${error.message || error}`,
+            content: `❌ 錢包打賞失敗：${error.message || error}`,
           });
         }
         deductText = `已從 <@${tipperId}> 餘額扣除 ${totalAmount} 星雨幣`;
@@ -11662,7 +11712,7 @@ async function handleButtonInteraction(interaction) {
           await processTipPaymentJobs(walletPayment?.orders || []);
           await interaction.channel.send({
             content:
-              `✅ 儲值卡打賞已完成，並已寫入薪資網\n` +
+              `✅ 錢包打賞已完成，並已寫入薪資網\n` +
               `打賞人：<@${tipperId}>\n` +
               `受賞陪陪：${selectedStaffText}\n` +
               `品項：${item}\n` +
@@ -11671,10 +11721,10 @@ async function handleButtonInteraction(interaction) {
           });
           await sendTipCloseButtons(interaction.channel);
         } catch (error) {
-          console.error("[儲值卡打賞寫入薪資網失敗]", error);
+          console.error("[錢包打賞寫入薪資網失敗]", error);
           await interaction.channel.send({
             content:
-              `⚠️ 儲值卡已扣款，但寫入薪資網失敗。\n` +
+              `⚠️ 錢包已扣款，但寫入薪資網失敗。\n` +
               `錯誤：${error.message || error}`,
           });
         }
@@ -11830,7 +11880,7 @@ async function handleButtonInteraction(interaction) {
       }
       if (!canAdvanceTipFlow(interaction, tipData)) {
         return await interaction.editReply({
-          content: "❌ 只有打賞人或客服可以確認儲值卡付款",
+          content: "❌ 只有打賞人或客服可以確認錢包付款",
         });
       }
       const { tipperId } = tipData;
@@ -11861,9 +11911,9 @@ async function handleButtonInteraction(interaction) {
           channelId: interaction.channel.id,
         });
       } catch (error) {
-        console.error("[儲值卡打賞交易失敗]", error);
+        console.error("[錢包打賞交易失敗]", error);
         return await interaction.editReply({
-          content: `❌ 儲值卡打賞失敗：${error.message || error}`,
+          content: `❌ 錢包打賞失敗：${error.message || error}`,
         });
       }
       const finalCoins = Number(payment.balance);
@@ -11907,7 +11957,7 @@ async function handleButtonInteraction(interaction) {
       });
       await interaction.channel.send({
         content:
-          `✅ 儲值卡打賞已完成，並已寫入薪資網\n` +
+          `✅ 錢包打賞已完成，並已寫入薪資網\n` +
           `打賞人：<@${tipperId}>\n` +
           `受賞陪陪：${selectedStaffText}\n` +
           `打賞明細：\n${getTipAllocationText(tipData)}\n` +
@@ -11926,7 +11976,7 @@ async function handleButtonInteraction(interaction) {
     if (customId.startsWith("cancel_tip_wallet_")) {
       const tipId = customId.replace("cancel_tip_wallet_", "");
       return await interaction.editReply({
-        content: "已取消儲值卡付款，請重新選擇付款方式或聯繫客服。",
+        content: "已取消錢包付款，請重新選擇付款方式或聯繫客服。",
         components: [],
       });
     }
@@ -12427,7 +12477,7 @@ async function handleButtonInteraction(interaction) {
           return await safeReply(interaction, {
             content:
               "❌ 這張訂單尚未確認付款，不能完成訂單。\n" +
-              "請先讓客服按「客服確認已付款」，或確認儲值卡 / 月結是否已成功扣款。",
+              "請先讓客服按「客服確認已付款」，或確認錢包 / 月結是否已成功扣款。",
             ephemeral: true,
           });
         }
@@ -12846,7 +12896,7 @@ async function handleStringSelectInteraction(interaction) {
           embeds: [
             new EmbedBuilder()
               .setColor("#57F287")
-              .setTitle("🌙 確認月結儲值卡繳費")
+              .setTitle("🌙 確認月結錢包繳費")
               .setDescription(
                 `結帳月份：${bill.billing_month}\n` +
                   `扣款金額：NT$${Number(bill.total_amount || 0).toLocaleString(

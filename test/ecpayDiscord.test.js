@@ -16,7 +16,7 @@ test("綠界刷卡留在站內；ATM 與超商由機器人直接取號", () => {
   const rows = buildEcpayPaymentRows(payment, 100);
   const buttons = rows[0].components.map(button => button.toJSON());
   assert.equal(buttons[0].url, `https://pay.example/payments/ecpay/service/insite?order=${order}`);
-  assert.equal(buttons[0].label, "站內刷卡");
+  assert.equal(buttons[0].label, "線上刷卡");
   assert.deepEqual(buttons.slice(1).map(button => button.custom_id), [
     `ecpay_direct_ATM_${order}`, `ecpay_direct_CVS_${order}`, `ecpay_direct_BARCODE_${order}`,
   ]);
@@ -47,7 +47,7 @@ test("虛擬 ATM 開放日前，按鈕隱藏且匯款仍走原帳號", () => {
   }
 });
 
-test("人工訂單與舊按鈕匯款回到連線銀行，其他流程仍可使用綠界 ATM", () => {
+test("人工訂單與人工加時匯款保留指定銀行，其他流程仍可使用綠界 ATM", () => {
   const original = process.env.ECPAY_ACCEPT_PAYMENTS;
   const originalNow = Date.now;
   Date.now = () => ECPAY_ATM_START;
@@ -62,8 +62,8 @@ test("人工訂單與舊按鈕匯款回到連線銀行，其他流程仍可使�
     const service = getPaymentMethodSelection({ customId: "service_payment_method_123__pm_bank_transfer" }, "service_payment_method_");
     assert.equal(service.paymentMethod, "匯款");
     const extension = getPaymentMethodSelection({ customId: "extension_payment_method_123__pm_bank" }, "extension_payment_method_");
-    assert.equal(extension.paymentMethod, "綠界支付");
-    assert.equal(extension.requestedMethod, "ATM");
+    assert.equal(extension.paymentMethod, "匯款");
+    assert.equal(extension.requestedMethod, undefined);
     const manualButtons = buildEcpayPaymentRows(payment, 100, { allowAtm: false })[0].components.map(button => button.toJSON());
     assert.equal(manualButtons.some(button => button.custom_id?.includes("_ATM_")), false);
     const manualOptions = getCanonicalPaymentOptions({ includeEcpay: true, manualOrder: true });
@@ -71,6 +71,8 @@ test("人工訂單與舊按鈕匯款回到連線銀行，其他流程仍可使�
     const dispatch = readFileSync(join(__dirname, "..", "events", "dispatchSystem.js"), "utf8");
     assert.match(dispatch, /topup: label\.includes\("儲值"\), allowAtm: label !== "訂單"/);
     assert.match(dispatch, /async function sendBankTransferInfo\(channel\) \{[\s\S]*?銀行：824連線銀行/);
+    assert.match(dispatch, /async function sendExtensionBankTransferInfo\(channel\) \{[\s\S]*?銀行：星展銀行[\s\S]*?銀行代碼：810[\s\S]*?帳號：60108039566/);
+    assert.match(dispatch, /handleExtensionPaymentMethodSelect[\s\S]*?sendExtensionBankTransferInfo\(interaction\.channel\)/);
   } finally {
     Date.now = originalNow;
     if (original === undefined) delete process.env.ECPAY_ACCEPT_PAYMENTS;
@@ -86,7 +88,7 @@ test("虛擬 ATM 取號後直接發到原付款頻道，未標記已付款", asy
   const supabase = { from(table) {
     assert.equal(table, "ecpay_service_payments");
     return { select() { return this; }, eq() { return this; },
-      async maybeSingle() { return { data: { user_id: "123", channel_id: "456", status: "pending", amount: 100, payment_kind: "order" }, error: null }; } };
+      async maybeSingle() { return { data: { user_id: "123", channel_id: "456", status: "pending", amount: 100, payment_kind: "topup" }, error: null }; } };
   } };
   const originalFetch = global.fetch;
   const originalSecret = process.env.SUPABASE_SERVICE_ROLE_KEY;
