@@ -1,4 +1,6 @@
 require("dotenv").config();
+const { buildRedeemPrizeCommand, createPrizeRedemption } = require("./utils/prizeRedemption");
+const { buildTimedRoleCommand, buildExtendTimedRoleCommand, createTimedRoleManager } = require("./utils/timedRoles");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -154,6 +156,14 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY,
 );
+const prizeRedemption = createPrizeRedemption({
+  db: supabase, guildId: process.env.GUILD_ID, organization: "deepnight",
+  customerServiceRoleIds: [
+    "1501271090918326362",
+    ...(String(process.env.CUSTOMER_SERVICE_ROLE_ID || "").match(/\d{17,20}/g) || []),
+    ...(String(process.env.CUSTOMER_SERVICE_ROLE_IDS || "").match(/\d{17,20}/g) || []),
+  ],
+});
 const companyAi = createCompanyAi({
   supabase,
   organization: "deepnight",
@@ -191,6 +201,15 @@ const client = new Client({
     GatewayIntentBits.MessageContent,
   ],
 });
+const timedRoleManager = createTimedRoleManager({ db: supabase, client, guildId: process.env.GUILD_ID });
+const serviceGiftCatalog = require("./utils/serviceGiftCatalog.cjs").createServiceGiftCatalog({
+  organization: "deepnight", tipGifts: TIP_GIFTS,
+  readMessage: path => client.rest.get(path), token: process.env.TOKEN,
+});
+const serviceTemplatePanel = require("./utils/serviceTemplatePanel.cjs").createServiceTemplatePanel({
+  client, supabase, organization: "deepnight", tipGifts: TIP_GIFTS,
+  loadHeartGifts: serviceGiftCatalog.heart,
+});
 const deviceAuditReviewerSync = createDeviceAuditReviewerSync({
   client,
   supabase,
@@ -203,8 +222,10 @@ const complaintSystem = createComplaintSystem(client, complaintConfig);
 const runtimeHealth = createHealthState("rainbot-deepnight");
 let jkopayService;
 const runtimeServer = createHealthServer(runtimeHealth, {
-  requestHandler: (request, response) =>
-    jkopayService?.handleHttpRequest(request, response) || false,
+  requestHandler: async (request, response) => {
+    if (await serviceGiftCatalog.handleHttpRequest(request, response)) return true;
+    return jkopayService?.handleHttpRequest(request, response) || false;
+  },
 });
 const shutdownRuntime = installProcessHandlers({
   client,
@@ -6206,6 +6227,9 @@ async function sendPrivateRoomPanel(client) {
 // ===== 指令定義 =====
 
 const commands = sortCommandDefinitions([
+  buildRedeemPrizeCommand(),
+  buildTimedRoleCommand(),
+  buildExtendTimedRoleCommand(),
   new SlashCommandBuilder()
     .setName("指令")
     .setDescription("查看分類後的指令清單"),
@@ -6934,6 +6958,7 @@ async function reconcileExistingSignedEmploymentMembers() {
 }
 
 client.once(Events.ClientReady, async () => {
+  timedRoleManager.start();
   console.log("🚀 星雨系統啟動中...");
 
   const startupSummary = await runStartupGroup(
@@ -6957,6 +6982,7 @@ client.once(Events.ClientReady, async () => {
             commands,
           }),
       },
+      { name: "客服套模板面板", run: () => serviceTemplatePanel.ensurePanel() },
       { name: "分區下單面板", run: () => dispatchSystem.sendGameOrderPanels() },
       { name: "打賞下單面板", run: () => dispatchSystem.sendTipOrderPanel() },
       { name: "報單面板", run: () => dispatchSystem.sendWorkReportPanel() },
@@ -7458,6 +7484,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (await complaintSystem.handleInteraction(interaction)) return;
     if (await employmentSystem.handleInteraction(interaction)) return;
+    if (await serviceTemplatePanel.handleInteraction(interaction)) return;
+    if (await prizeRedemption.handleInteraction(interaction)) return;
 
     // ===== Modal Submit：交給 dispatchSystem =====
     if (interaction.isModalSubmit()) {
@@ -8406,6 +8434,9 @@ async function ensureCompletedOrderChannelAccess(channel, customerId) {
   }
 }
 async function handleSlashCommand(interaction) {
+  if (interaction.commandName === "兌換獎品") return prizeRedemption.handleCommand(interaction);
+  if (interaction.commandName === "限時身分組") return timedRoleManager.handle(interaction);
+  if (interaction.commandName === "延長限時身分組") return timedRoleManager.extend(interaction);
   if (interaction.commandName === "指令") {
     return interaction.editReply({ content: buildCommandHelp(commands) });
   }

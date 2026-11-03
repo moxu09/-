@@ -28,6 +28,9 @@ function parseVipCouponReward(rewardCoupon = "") {
 function isCouponInventoryItem(item) {
   const itemName = String(item?.item_name || "");
 
+  // Gift vouchers are physical/digital prizes, not order discount coupons.
+  if (itemName.includes("禮券")) return false;
+
   return (
     item?.item_type === "coupon" ||
     itemName.includes("折券") ||

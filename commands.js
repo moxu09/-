@@ -1,6 +1,8 @@
 const { SlashCommandBuilder } = require("discord.js");
+const { buildRedeemPrizeCommand } = require("./utils/prizeRedemption");
 
 module.exports = [
+  buildRedeemPrizeCommand(),
   new SlashCommandBuilder().setName("ping").setDescription("測試機器人"),
 
   new SlashCommandBuilder().setName("rank").setDescription("查看排名"),
