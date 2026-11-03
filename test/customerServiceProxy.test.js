@@ -68,3 +68,56 @@ test("代客選人不放寬錢包扣款與退款", () => {
     assert.ok(extract("cancelAndRefundSelfServiceOrder").includes("interaction.user.id !== order.customer_id"));
   }
 });
+test("客服代客略過優惠券時仍更新原客人的訂單", async () => {
+  const calls = [];
+  const order = { id: "order-1", customer_id: "customer", original_price: 500 };
+  const query = {
+    select() { return this; },
+    update() { return this; },
+    eq(column, value) { calls.push([column, value]); return this; },
+    async single() { return { data: order, error: null }; },
+  };
+  const c = {
+    supabase: { from: () => query },
+    DEEPNIGHT_GUILD_ID: "guild",
+    canCustomerOrStaffSubmit: () => true,
+    sendPaymentMethodSelect: async () => {},
+    console,
+  };
+  vm.createContext(c);
+  vm.runInContext(extract("handleQuoteNoCoupon"), c);
+  const interaction = {
+    user: { id: "support" }, customId: "quote_no_coupon_order-1",
+    deferReply: async () => {}, editReply: async payload => payload,
+  };
+  const result = await c.handleQuoteNoCoupon(interaction);
+  assert.match(result.content, /不使用優惠券/);
+  assert.ok(calls.some(([column, value]) => column === "customer_id" && value === "customer"));
+  assert.ok(!calls.some(([column, value]) => column === "customer_id" && value === "support"));
+});
+test("客服代客使用優惠券時只能讀取原客人的背包", async () => {
+  const userIds = [];
+  const order = { id: "order-1", customer_id: "customer", original_price: 500 };
+  const query = {
+    select() { return this; },
+    eq(column, value) { if (column === "user_id") userIds.push(value); return this; },
+    or() { return this; },
+    order: async () => ({ data: [], error: null }),
+    async single() { return { data: order, error: null }; },
+  };
+  const c = {
+    supabase: { from: () => query },
+    DEEPNIGHT_GUILD_ID: "guild",
+    canCustomerOrStaffSubmit: () => true,
+    isCouponInventoryItem: () => true,
+    console,
+  };
+  vm.createContext(c);
+  vm.runInContext(extract("handleQuoteUseCoupon"), c);
+  const result = await c.handleQuoteUseCoupon({
+    user: { id: "support" }, customId: "quote_use_coupon_order-1",
+    deferReply: async () => {}, editReply: async payload => payload,
+  });
+  assert.deepEqual(userIds, ["customer"]);
+  assert.match(result.content, /沒有可使用的優惠券/);
+});

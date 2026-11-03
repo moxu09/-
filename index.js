@@ -1490,7 +1490,7 @@ async function openTipStaffRemoveMenu(interaction) {
   if (!tipData) {
     return interaction.reply({ content: "❌ 這筆打賞流程已過期，請重新建立打賞頻道。", flags: 64 });
   }
-  if (interaction.user.id !== tipData.createdBy) {
+  if (!canAdvanceTipFlow(interaction, tipData)) {
     return interaction.reply({ content: "❌ 只有建立這筆打賞的人可以操作。", flags: 64 });
   }
   if (tipData.staffSelectionCompleted) {
@@ -1526,7 +1526,7 @@ async function handleTipStaffRemoveSelect(interaction) {
   await interaction.deferUpdate();
   const tipId = interaction.customId.replace("tip_staff_remove_select_", "");
   const tipData = pendingTips.get(tipId);
-  if (!tipData || interaction.user.id !== tipData.createdBy) {
+  if (!tipData || !canAdvanceTipFlow(interaction, tipData)) {
     return interaction.editReply({
       content: "❌ 這筆打賞流程已過期，或你沒有操作權限。",
       components: [],

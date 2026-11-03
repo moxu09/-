@@ -5714,7 +5714,7 @@ async function handleQuoteNoCoupon(interaction) {
       final_price: originalPrice,
     })
     .eq("id", orderId)
-    .eq("customer_id", interaction.user.id)
+    .eq("customer_id", order.customer_id)
     .select()
     .single();
 
@@ -5839,7 +5839,7 @@ async function handleQuoteUseCoupon(interaction) {
   const { data: coupons, error: couponError } = await supabase
     .from("user_items")
     .select("*")
-    .eq("user_id", interaction.user.id)
+    .eq("user_id", order.customer_id)
     .eq("guild_id", DEEPNIGHT_GUILD_ID)
     .or("item_type.eq.coupon,item_name.ilike.%折券%,item_name.ilike.%優惠券%")
     .order("created_at", { ascending: false });
@@ -5920,7 +5920,7 @@ async function handleQuoteSelectCoupon(interaction) {
     .from("user_items")
     .select("*")
     .eq("id", Number(couponId))
-    .eq("user_id", interaction.user.id)
+    .eq("user_id", order.customer_id)
     .eq("guild_id", DEEPNIGHT_GUILD_ID)
     .maybeSingle();
   if (
@@ -9983,6 +9983,7 @@ async function sendServicePaymentMethodSelect(channel, flowId, pending) {
     getGeneralOrderPaymentOptions({
       ecpayAvailable: paymentHelpers.ecpayAvailable,
       salaryEligible: includeSalary,
+      amount: getServiceFinalPrice(pending),
     }),
   );
 
@@ -10071,7 +10072,7 @@ async function handleServiceUseCoupon(interaction) {
   const { data: coupons, error: couponError } = await supabase
     .from("user_items")
     .select("*")
-    .eq("user_id", interaction.user.id)
+    .eq("user_id", pending.customerId)
     .eq("guild_id", DEEPNIGHT_GUILD_ID)
     .or("item_type.eq.coupon,item_name.ilike.%折券%,item_name.ilike.%優惠券%")
     .order("created_at", { ascending: false });
@@ -10146,7 +10147,7 @@ async function handleServiceSelectCoupon(interaction) {
     .from("user_items")
     .select("*")
     .eq("id", Number(couponId))
-    .eq("user_id", interaction.user.id)
+    .eq("user_id", pending.customerId)
     .eq("guild_id", DEEPNIGHT_GUILD_ID)
     .maybeSingle();
 
