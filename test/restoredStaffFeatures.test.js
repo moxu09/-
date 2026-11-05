@@ -4,11 +4,14 @@ const { parseDuration } = require('../utils/timedRoles');
 const { isGachaPrize, isIchibanPrize } = require('../utils/prizeRedemption');
 const { createServiceGiftCatalog } = require('../utils/serviceGiftCatalog.cjs');
 
-test('限時身分組支援混合時分秒，拒絕重複或無效單位', () => {
+test('限時身分組支援混合天、時、分、秒，拒絕重複或無效單位', () => {
   assert.equal(parseDuration('1h12m').ms, 4_320_000);
   assert.equal(parseDuration('2m30s').ms, 150_000);
   assert.equal(parseDuration('45s').ms, 45_000);
-  for (const value of ['1h1h', '0s', '12', '1d', '1h-1m'])
+  assert.equal(parseDuration('30d').ms, parseDuration('720h').ms);
+  assert.deepEqual(parseDuration('1D 12H'), { ms: 129_600_000, label: '1d12h' });
+  assert.equal(parseDuration('365d').ms, parseDuration('8760h').ms);
+  for (const value of ['1h1h', '0s', '12', '1d1d', '366d', '365d1s', '1h-1m'])
     assert.equal(parseDuration(value), null);
 });
 

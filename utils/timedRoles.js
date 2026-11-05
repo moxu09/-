@@ -9,9 +9,9 @@ function parseDuration(input) {
   if (typeof input !== 'string') return null;
   const text = input.trim().toLowerCase();
   if (!text || text.length > 32) return null;
-  const units = { h: 3_600_000, m: 60_000, s: 1_000 };
+  const units = { d: 86_400_000, h: 3_600_000, m: 60_000, s: 1_000 };
   const seen = new Set();
-  const token = /\s*(\d+)\s*([hms])/gy;
+  const token = /\s*(\d+)\s*([dhms])/gy;
   const label = [];
   let position = 0;
   let ms = 0;
@@ -37,7 +37,7 @@ function buildTimedRoleCommand() {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
     .addRoleOption(o => o.setName('身分組').setDescription('到期後要移除的身分組').setRequired(true))
     .addUserOption(o => o.setName('老闆').setDescription('必填，領取限時身分組的老闆').setRequired(true))
-    .addStringOption(o => o.setName('時長').setDescription('輸入 h、m、s，例如 1h12m、30s').setMaxLength(32).setRequired(true))
+    .addStringOption(o => o.setName('時長').setDescription('輸入 d（天）、h（小時）、m（分鐘）、s（秒），例如 2d、1d12h、30s').setMaxLength(32).setRequired(true))
     .addUserOption(o => o.setName('陪陪').setDescription('選填，一起領取限時身分組的陪陪'));
 }
 
@@ -48,7 +48,7 @@ function buildExtendTimedRoleCommand() {
     .setDefaultMemberPermissions(PermissionFlagsBits.ManageRoles)
     .addRoleOption(o => o.setName('身分組').setDescription('要延長的身分組').setRequired(true))
     .addUserOption(o => o.setName('延長的人').setDescription('要延長期限的成員').setRequired(true))
-    .addStringOption(o => o.setName('延長多久').setDescription('輸入 h、m、s，例如 1h12m、30s').setMaxLength(32).setRequired(true));
+    .addStringOption(o => o.setName('延長多久').setDescription('輸入 d（天）、h（小時）、m（分鐘）、s（秒），例如 2d、1d12h、30s').setMaxLength(32).setRequired(true));
 }
 
 function assertDb(result, action) {
@@ -200,7 +200,7 @@ function createTimedRoleManager({ db, client, guildId, logger = console, now = (
     const duration = parseDuration(interaction.options.getString('時長', true));
     const boss = interaction.options.getUser('老闆', true);
     const player = interaction.options.getUser('陪陪');
-    if (!duration) return interaction.editReply('❌ 時長格式錯誤，請輸入 h、m、s 或其組合，例如 1h12m、30s；最多 8760h。');
+    if (!duration) return interaction.editReply('❌ 時長格式錯誤。可用 d、h、m、s，例如 2d 或 1d12h。最多 365 天。');
     if (role.id === guildId || role.managed) return interaction.editReply('❌ 不能使用 @everyone 或系統管理的身分組。');
     const botMember = await interaction.guild.members.fetchMe();
     if (role.position >= botMember.roles.highest.position) return interaction.editReply('❌ 請把機器人的身分組移到選定身分組的上方。');
@@ -245,7 +245,7 @@ function createTimedRoleManager({ db, client, guildId, logger = console, now = (
     const role = interaction.options.getRole('身分組', true);
     const person = interaction.options.getUser('延長的人', true);
     const duration = parseDuration(interaction.options.getString('延長多久', true));
-    if (!duration) return interaction.editReply('❌ 延長時長格式錯誤，請輸入 h、m、s 或其組合，例如 1h12m、30s；最多 8760h。');
+    if (!duration) return interaction.editReply('❌ 延長時長格式錯誤。可用 d、h、m、s，例如 2d 或 1d12h。每次最多延長 365 天。');
     if (role.id === guildId || role.managed) return interaction.editReply('❌ 不能使用 @everyone 或系統管理的身分組。');
     const botMember = await interaction.guild.members.fetchMe();
     if (role.position >= botMember.roles.highest.position) return interaction.editReply('❌ 請把機器人的身分組移到選定身分組的上方。');
