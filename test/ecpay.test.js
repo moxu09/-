@@ -44,7 +44,7 @@ test("停止接受新付款後仍會補處理已入帳的綠界訂單", async ()
   const supabase = {
     from(table) {
       assert.equal(table, "ecpay_service_payments");
-      return { select() { return this; }, eq() { return this; }, in() { return this; }, order() { return this; },
+      return { select() { return this; }, eq() { return this; }, neq() { return this; }, in() { return this; }, order() { return this; },
         async limit() { return { data: [payment], error: null }; } };
     },
     async rpc(name, args) {

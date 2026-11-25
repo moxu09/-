@@ -106,6 +106,7 @@ function createEcpayService({ supabase, onServicePaid, env = process.env, organi
   async function recoverPaidFulfillments({ limit = 20 } = {}) {
     const { data: payments, error } = await supabase.from("ecpay_service_payments")
       .select("*").eq("organization_code", config.organizationCode).eq("status", "paid")
+      .neq("payment_kind", "draw") // APP 付款抽由秋奈 bot 入帳，深夜 bot 不 claim
       .in("fulfillment_status", ["pending", "failed", "processing"])
       .order("fulfillment_updated_at", { ascending: true }).limit(Math.max(1, Math.min(limit, 100)));
     if (error) throw new Error(error.message || "無法查詢待處理綠界付款");
